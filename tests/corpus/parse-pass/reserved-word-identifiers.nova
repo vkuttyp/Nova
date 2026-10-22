@@ -1,0 +1,2 @@
+// Primitive type names and 'self' are identifiers, not keywords.
+fn i32(self: u8, u64: bool) -> void => self;

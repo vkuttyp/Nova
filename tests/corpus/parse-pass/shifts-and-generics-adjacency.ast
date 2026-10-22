@@ -1,0 +1,10 @@
+(unit
+  (fn default shifts (params (a u32)) (returns u32)
+    (block
+      (var x = (>> a 2))
+      (>>= x 1)
+      (let y = (> a b))
+      (return x)
+    )
+  )
+)

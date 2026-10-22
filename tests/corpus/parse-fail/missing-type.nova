@@ -1,0 +1,4 @@
+fn f(x: ) { } // error[N0105]
+const K: = 5; // error[N0105]
+fn g() -> { } // error[N0105]
+fn h() { let v: = 1; } // error[N0105]

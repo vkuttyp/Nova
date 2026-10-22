@@ -1,0 +1,6 @@
+(unit
+  (const default A bool (|| a (&& b c)))
+  (const default B bool (|| (&& (not a) (not b)) (== c d)))
+  (const default C bool (|| (&& (< a b) (>= c d)) (!= e f)))
+  (const default D bool (not (paren (|| a b))))
+)

@@ -1,0 +1,3 @@
+fn f() {
+    let s = "never closed; // error[N0005] // error[N0100]
+}

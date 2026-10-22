@@ -1,0 +1,23 @@
+(unit
+  (namespace Demo)
+  (fn default gcd (params (a u64) (b u64)) (returns u64)
+    (block
+      (var x = a)
+      (var y = b)
+      (while (!= y 0)
+        (block
+          (let t = (% x y))
+          (= x y)
+          (= y t)
+        )
+      )
+      (return x)
+    )
+  )
+  (fn default main (params) (returns i32)
+    (block
+      (expr (call (. Console writeLine) (call gcd 1071 462)))
+      (return 0)
+    )
+  )
+)

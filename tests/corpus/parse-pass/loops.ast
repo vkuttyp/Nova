@@ -1,0 +1,30 @@
+(unit
+  (fn default loops (params (n u32)) (returns u32)
+    (block
+      (var i : u32 = 0)
+      (var total : u32 = 0)
+      (while (< i n)
+        (block
+          (+= i 1)
+          (if (== (% i 2) 0)
+            (block
+              (continue)
+            )
+          )
+          (+= total i)
+        )
+      )
+      (loop
+        (block
+          (if (> total 100)
+            (block
+              (break)
+            )
+          )
+          (*= total 2)
+        )
+      )
+      (return total)
+    )
+  )
+)

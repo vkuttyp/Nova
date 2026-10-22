@@ -1,0 +1,13 @@
+(unit
+  (fn default blocks (params)
+    (block
+      (block)
+      (block
+        (let a = 1)
+        (block
+          (let b = a)
+        )
+      )
+    )
+  )
+)

@@ -1,7 +1,8 @@
 # Nova Documentation — Milestone 0 / C0 Deliverable
 
 Date: 2026-10-22. Status: **M0/C0 complete; all decisions accepted ([ADR 0002](decisions/0002-milestone-0-decision-set.md)).**
-Next: Milestone 1, increment 1a ([milestone-1.md](milestone-1.md) §4).
+M1 increment 1a (lexer + parser) done; next is increment 1b ([roadmap.md](roadmap.md)).
+Implemented-feature specs: [grammar.md](grammar.md) (M1 grammar) and [diagnostics.md](diagnostics.md) (error codes).
 
 ## Master prompt §23 deliverables
 
@@ -44,7 +45,7 @@ Primary-source audits: [research/cosmoos-kernel-audit.md](research/cosmoos-kerne
 
 ## Still to be written (scheduled)
 
-`grammar.md`, `intermediate-representation.md`, `diagnostics.md` (M1); `lifetimes.md`
+`intermediate-representation.md` (M1, increment 1c); `lifetimes.md`
 (M2, split from ownership.md); `allocators.md`, `escape-analysis.md` (M3–M5); `runtime.md`,
 `ffi.md`, `unsafe.md` (M8); `benchmarks.md` (M9). Today their content is covered by the
 documents above.

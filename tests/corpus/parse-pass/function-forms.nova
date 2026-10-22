@@ -1,0 +1,6 @@
+fn noParams() { }
+fn noReturn(a: i32) { }
+fn withReturn(a: i32, b: i32) -> i32 { return a + b; }
+fn trailingComma(a: i32, b: i32,) -> i32 => a;
+fn expressionBody(x: i64) -> i64 => x * x;
+fn qualifiedType(x: Std.Num.Int) -> Std.Num.Int => x;

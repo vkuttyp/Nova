@@ -1,0 +1,10 @@
+fn f() {
+    let a = 0x; // error[N0008]
+    let b = 1__0; // error[N0010]
+    let c = 99999999999999999999; // error[N0004]
+    let d = 12abc; // error[N0009]
+    let e = "\q"; // error[N0006]
+    let f = ''; // error[N0007]
+    let g = 'ab'; // error[N0007]
+    let h = 1 # 2; // error[N0001] // error[N0100]
+}

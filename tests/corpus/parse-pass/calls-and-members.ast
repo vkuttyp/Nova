@@ -1,0 +1,13 @@
+(unit
+  (fn default calls (params)
+    (block
+      (expr (call f))
+      (expr (call f 1))
+      (expr (call f 1 2 3))
+      (expr (call (. Console writeLine) "hello"))
+      (expr (. (call (call (. (. a b) c) d) e) f))
+      (expr (call g (call h (call i j))))
+      (expr (call (. Process exit) 0))
+    )
+  )
+)

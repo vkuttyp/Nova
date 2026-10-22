@@ -157,7 +157,7 @@ convenience and testing.
 
 ```text
 Nova/
-  Nova.sln
+  Nova.slnx                    # .NET 10 solution format
   Directory.Build.props        # warnings-as-errors, nullable, deterministic, banned-API analyzer
   global.json                  # pinned .NET SDK
   src/

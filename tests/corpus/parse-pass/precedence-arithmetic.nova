@@ -1,0 +1,5 @@
+const A: i32 = 1 + 2 * 3 - 4 / 2 % 3;
+const B: i32 = (1 + 2) * 3;
+const C: i32 = -1 - -2;
+const D: i64 = -x as i64 * 2;
+const E: u64 = a as u32 as u64;

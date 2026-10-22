@@ -1,0 +1,16 @@
+fn literals() {
+    let a = 0;
+    let b = 1_000_000;
+    let c = 0xDEAD_beef;
+    let d = 0b1010_1010u8;
+    let e = 0o755;
+    let f = 18446744073709551615u64;
+    let g = 3.25;
+    let h = 6.02e23f64;
+    let i = "text with \"quotes\" and \\ and \t tab";
+    let j = "unicode \u{1F600} é";
+    let k = 'x';
+    let l = '\n';
+    let m = true;
+    let n = false;
+}

@@ -1,0 +1,7 @@
+// '>>' is formed by the parser from two adjacent '>' tokens.
+fn shifts(a: u32) -> u32 {
+    var x = a >> 2;
+    x >>= 1;
+    let y = a > b;
+    return x;
+}

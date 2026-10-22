@@ -1,0 +1,5 @@
+(unit
+  (fn default i32 (params (self u8) (u64 bool)) (returns void)
+    (=> self)
+  )
+)

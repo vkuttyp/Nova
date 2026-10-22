@@ -1,0 +1,3 @@
+fn a() { }
+namespace Late; // error[N0106]
+fn b() { }

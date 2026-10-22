@@ -22,7 +22,19 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
 
 - Milestone 0 / C0 is complete. All M0 decisions were accepted on 2026-10-22
   (`docs/decisions/0002-milestone-0-decision-set.md`).
-- Next: Milestone 1, increment 1a (`docs/milestone-1.md` §4). No compiler code exists yet.
+- M1 increment 1a (lexer, parser, corpus runner) is done. Next is increment 1b (`docs/roadmap.md`).
+
+## Build and test
+
+```sh
+dotnet build Nova.slnx                     # warnings are errors
+dotnet test Nova.slnx                      # unit + corpus tests
+NOVA_BLESS=1 dotnet test Nova.slnx         # rewrite .ast snapshots, then REVIEW the diff
+dotnet run --project src/Nova.Cli -- parse --dump-ast file.nova
+```
+
+Corpus conventions (`// error[N0100]` annotations, snapshots): `docs/testing.md` §3.
+Every new diagnostic needs a code in `DiagnosticCodes` and a row in `docs/diagnostics.md`.
 
 ## Rules
 

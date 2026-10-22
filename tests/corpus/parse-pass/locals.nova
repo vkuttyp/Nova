@@ -1,0 +1,7 @@
+fn f() {
+    let a = 1;
+    let b: i64 = 2;
+    var c: u8;
+    var d = a;
+    let e: bool = true;
+}

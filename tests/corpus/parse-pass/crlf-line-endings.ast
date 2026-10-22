@@ -1,0 +1,7 @@
+(unit
+  (fn default crlf (params) (returns i32)
+    (block
+      (return 1)
+    )
+  )
+)

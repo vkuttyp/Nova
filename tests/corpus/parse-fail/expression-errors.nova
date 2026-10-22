@@ -1,0 +1,8 @@
+fn f() {
+    let a = ; // error[N0102]
+    let b = (1 + 2; // error[N0100]
+    let c = g(1, ; // error[N0102]
+    let d = 1 +; // error[N0102]
+    let e = * 2; // error[N0102]
+    let ok = 1;
+}

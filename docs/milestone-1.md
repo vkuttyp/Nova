@@ -58,7 +58,15 @@ declaration), `runtime/hosted/rt_hosted.c` (stdio + abort),
 C1 then reuses the M1 compiler unchanged: `hello.nova` prints `NOVATEST: PASS`
 inside CosmoOS on both arches (`roadmap.md`).
 
-## 4. The exact first implementation increment (1a)
+## 4. The exact first implementation increment (1a) — **done 2026-10-22**
+
+Delivered: `Nova.slnx` (the .NET 10 solution format) with `Nova.Compiler`, `Nova.Cli` (`novac`)
+and `Nova.Compiler.Tests`; `docs/grammar.md`; `docs/diagnostics.md`; 151 passing tests
+(see `testing.md` §4). Deviation from the plan: the corpus runner lives inside the xUnit
+project for now. A separate `Nova.TestRunner` is deferred to 1c, when tests need to invoke C
+compilers. Trivia (comments) is not retained yet; it is needed only for the M10 formatter.
+
+Original plan:
 
 1. `Nova.sln` with `Nova.Compiler`, `Nova.Cli`, `Nova.Compiler.Tests`,
    `Nova.TestRunner`. `Directory.Build.props`: nullable enabled, warnings as errors,

@@ -1,0 +1,11 @@
+(unit
+  (fn default conversions (params (x u64)) (returns u8)
+    (block
+      (let a = (call (generic truncate u8) x))
+      (let b = (call (generic convert Std.U32 u64) x a))
+      (let c = (< a b))
+      (let d = (> (paren (< a b)) (paren c)))
+      (return a)
+    )
+  )
+)

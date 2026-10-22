@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Nova.Compiler</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Nova.Compiler.Tests" />
+  </ItemGroup>
+
+</Project>

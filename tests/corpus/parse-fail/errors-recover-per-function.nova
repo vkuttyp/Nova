@@ -1,0 +1,5 @@
+fn a() { let = 1; } // error[N0100]
+fn b() { return 1 + ; } // error[N0102]
+fn c() { if (x) { } else { } }
+fn d() { x = = 1; } // error[N0102]
+fn e() -> i32 => 1 < 2 < 3; // error[N0103]

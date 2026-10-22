@@ -1,0 +1,4 @@
+const A: bool = a || b && c;
+const B: bool = !a && !b || c == d;
+const C: bool = a < b && c >= d || e != f;
+const D: bool = !(a || b);

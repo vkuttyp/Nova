@@ -1,0 +1,6 @@
+fn f(x: bool) {
+    if (x) return; // error[N0100]
+    if (x) { } else return; // error[N0100]
+    while (x) x = false; // error[N0100]
+    let ok = 1;
+}

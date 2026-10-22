@@ -1,0 +1,5 @@
+fn f() {
+    let x = 1 // error[N0100]@14
+    let y = 2;
+    return x // error[N0100]
+}

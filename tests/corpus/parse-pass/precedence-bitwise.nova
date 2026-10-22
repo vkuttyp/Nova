@@ -1,0 +1,5 @@
+// Bitwise operators bind tighter than comparisons (grammar.md §2.1).
+const A: bool = x & 1 == 0;
+const B: u32 = a | b ^ c & d << 2 >> 1;
+const C: u32 = a << b + c;
+const D: bool = a ^ b != c | d;

@@ -1,0 +1,6 @@
+(unit
+  (const default A bool (== (& x 1) 0))
+  (const default B u32 (| a (^ b (& c (>> (<< d 2) 1)))))
+  (const default C u32 (<< a (+ b c)))
+  (const default D bool (!= (^ a b) (| c d)))
+)

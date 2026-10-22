@@ -1,0 +1,14 @@
+fn loops(n: u32) -> u32 {
+    var i: u32 = 0;
+    var total: u32 = 0;
+    while (i < n) {
+        i += 1;
+        if (i % 2 == 0) { continue; }
+        total += i;
+    }
+    loop {
+        if (total > 100) { break; }
+        total *= 2;
+    }
+    return total;
+}

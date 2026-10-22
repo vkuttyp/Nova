@@ -1,0 +1,7 @@
+fn conversions(x: u64) -> u8 {
+    let a = truncate<u8>(x);
+    let b = convert<Std.U32, u64>(x, a);
+    let c = a < b;
+    let d = (a < b) > (c);
+    return a;
+}

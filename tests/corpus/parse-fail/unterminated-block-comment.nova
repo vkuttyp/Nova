@@ -1,0 +1,3 @@
+fn ok() { }
+/* this comment never ends // error[N0003]
+fn hidden() { }

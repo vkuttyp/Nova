@@ -1,0 +1,3 @@
+// A file with only comments is a valid, empty compilation unit.
+/* block comments
+   span lines */

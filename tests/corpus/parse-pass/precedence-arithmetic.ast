@@ -1,0 +1,7 @@
+(unit
+  (const default A i32 (- (+ 1 (* 2 3)) (% (/ 4 2) 3)))
+  (const default B i32 (* (paren (+ 1 2)) 3))
+  (const default C i32 (- (neg 1) (neg 2)))
+  (const default D i64 (* (as (neg x) i64) 2))
+  (const default E u64 (as (as a u32) u64))
+)

@@ -39,5 +39,6 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 
 ## Next highest-priority task
 
-Start **M1, increment 1a** (`milestone-1.md` §4): solution skeleton, lexer, parser with
-recovery, the first ~40 parser tests.
+M1 increment 1a (lexer, parser, recovery, corpus runner) is done (2026-10-22).
+Next: **increment 1b**: name resolution, type checking of the M1 subset, definite
+initialisation of scalars, HIR, plus `check-pass`/`check-fail` corpora (`milestone-1.md` §1, §4).

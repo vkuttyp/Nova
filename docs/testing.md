@@ -22,6 +22,26 @@ the date and result. Tests that were performed are never mixed with proposals.
 Sanitizer results are **supporting evidence**, never proof of language safety
 (master prompt §18).
 
+## 3. Corpus format (implemented in increment 1a)
+
+Runner: `tests/Nova.Compiler.Tests/CorpusTests.cs`, run by `dotnet test`.
+
+- `tests/corpus/parse-pass/*.nova`: must parse with **no** diagnostics. The AST dump
+  (`novac parse --dump-ast`) must equal the sibling `.ast` snapshot.
+  To create or update snapshots, run `NOVA_BLESS=1 dotnet test`. **Every blessed snapshot must
+  be reviewed by hand before it is committed.** A snapshot is an expected value, not a recording.
+- `tests/corpus/parse-fail/*.nova`: annotate each expected diagnostic on the line where it
+  is reported, as `// error[N0100]`, or `// error[N0100]@14` to also pin the column. The test
+  fails on any missing **or extra** diagnostic, so it also checks error recovery.
+- Later kinds (`check-*`, `compile-fail`, `run-*`) reuse the same annotation syntax and
+  add `// expect-stdout:` and `// expect-panic:` directives (from increment 1b on).
+
+## 4. Execution log
+
+| Date | What ran | Result |
+|---|---|---|
+| 2026-10-22 | `dotnet test` on macOS arm64 (.NET 10.0.401): lexer and parser unit tests, 20 parse-pass and 18 parse-fail corpus files | 151 passed, 0 failed |
+
 ## 2. Acceptance-test matrix
 
 Legend: ● required for acceptance, ○ optional / best-effort, — not applicable.

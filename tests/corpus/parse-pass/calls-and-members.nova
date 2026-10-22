@@ -1,0 +1,9 @@
+fn calls() {
+    f();
+    f(1);
+    f(1, 2, 3,);
+    Console.writeLine("hello");
+    a.b.c(d)(e).f;
+    g(h(i(j)));
+    Process.exit(0);
+}

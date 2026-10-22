@@ -1,0 +1,6 @@
+fn (a: i32) { } // error[N0100]
+fn g() {
+    let = 5; // error[N0100]
+    let x = a.; // error[N0100]
+}
+const = 1; // error[N0100]

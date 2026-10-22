@@ -1,0 +1,17 @@
+(unit
+  (fn default a (params)
+    (block
+      (return)
+    )
+  )
+  (fn default b (params) (returns i32)
+    (block
+      (return 1)
+    )
+  )
+  (fn default c (params) (returns bool)
+    (block
+      (return (not (paren (< 1 2))))
+    )
+  )
+)

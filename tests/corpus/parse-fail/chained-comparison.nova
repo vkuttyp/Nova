@@ -1,0 +1,5 @@
+fn f() {
+    let a = x < y < z; // error[N0103]
+    let b = x == y != z; // error[N0103]
+    let c = (x < y) == z;
+}

@@ -1,0 +1,6 @@
+public fn a() { }
+internal fn b() { }
+private fn c() { }
+fn d() { }
+public const LIMIT: u32 = 100;
+const SMALL: u8 = 7u8;

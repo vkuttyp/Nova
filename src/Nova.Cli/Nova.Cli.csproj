@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>novac</AssemblyName>
+    <RootNamespace>Nova.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Nova.Compiler\Nova.Compiler.csproj" />
+  </ItemGroup>
+
+</Project>
