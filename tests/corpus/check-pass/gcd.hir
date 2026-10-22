@@ -1,0 +1,22 @@
+(program
+  (fn gcd ((a#0: u64) (b#1: u64)) -> u64
+    (block
+      (var x#2: u64 = a#0)
+      (var y#3: u64 = b#1)
+      (while (!= y#3 0:u64):bool
+        (block
+          (let t#4: u64 = (% x#2 y#3):u64)
+          (= x#2 y#3)
+          (= y#3 t#4)
+        )
+      )
+      (return x#2)
+    )
+  )
+  (fn main () -> i32
+    (block
+      (expr (Console.writeLine (call gcd 1071:u64 462:u64):u64))
+      (return 0:i32)
+    )
+  )
+)

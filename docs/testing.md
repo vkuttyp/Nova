@@ -33,14 +33,21 @@ Runner: `tests/Nova.Compiler.Tests/CorpusTests.cs`, run by `dotnet test`.
 - `tests/corpus/parse-fail/*.nova`: annotate each expected diagnostic on the line where it
   is reported, as `// error[N0100]`, or `// error[N0100]@14` to also pin the column. The test
   fails on any missing **or extra** diagnostic, so it also checks error recovery.
-- Later kinds (`check-*`, `compile-fail`, `run-*`) reuse the same annotation syntax and
-  add `// expect-stdout:` and `// expect-panic:` directives (from increment 1b on).
+- `tests/corpus/check-pass/*.nova`: must type-check with no diagnostics. The HIR dump
+  (`novac check --dump-hir`) must equal the sibling `.hir` snapshot (also blessed and reviewed).
+- `tests/corpus/check-fail/*.nova`: must **parse** cleanly and produce exactly the annotated
+  semantic diagnostics.
+- Every parse-pass file is also run through the type checker to check that it never crashes
+  (semantic errors are expected there).
+- Later kinds (`compile-fail`, `run-*`) reuse the same annotation syntax and add
+  `// expect-stdout:` and `// expect-panic:` directives (from increment 1c on).
 
 ## 4. Execution log
 
 | Date | What ran | Result |
 |---|---|---|
 | 2026-10-22 | `dotnet test` on macOS arm64 (.NET 10.0.401): lexer and parser unit tests, 20 parse-pass and 18 parse-fail corpus files | 151 passed, 0 failed |
+| 2026-10-22 | same, plus 11 check-pass and 19 check-fail files and the checker crash test (increment 1b) | 201 passed, 0 failed |
 
 ## 2. Acceptance-test matrix
 

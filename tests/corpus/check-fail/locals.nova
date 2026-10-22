@@ -1,0 +1,9 @@
+fn nothing() { }
+fn f() {
+    let a; // error[N0220]
+    let b: i32; // error[N0220]
+    var c; // error[N0221]
+    let d = nothing(); // error[N0224]
+    var e: void; // error[N0226]
+}
+fn g(p: void) { } // error[N0226]

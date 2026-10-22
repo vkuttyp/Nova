@@ -1,0 +1,23 @@
+(program
+  (const AREA: u32 = 192:u32)
+  (const WIDTH: u32 = 16:u32)
+  (const HEIGHT: u32 = 12:u32)
+  (const LOW_BYTE: u8 = 252:u8)
+  (const MINUS_ONE_AS_U32: u32 = 4294967295:u32)
+  (const QUOTIENT: i32 = -3:i32)
+  (const REMAINDER: i32 = -1:i32)
+  (const IS_BIG: bool = true)
+  (const SHORT_CIRCUIT: bool = false)
+  (const WIDE: u64 = 192000000000:u64)
+  (const NEGATIVE: i64 = -5:i64)
+  (fn useConstants () -> u32
+    (block
+      (if true
+        (block
+          (return 192:u32)
+        )
+      )
+      (return 12:u32)
+    )
+  )
+)

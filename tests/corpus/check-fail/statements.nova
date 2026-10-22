@@ -1,0 +1,6 @@
+fn f(a: i32) {
+    1 + 2; // error[N0225]
+    a; // error[N0225]
+    true; // error[N0225]
+}
+fn g() => 5; // error[N0225]

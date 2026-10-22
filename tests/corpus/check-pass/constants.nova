@@ -1,0 +1,17 @@
+// Constants are folded at compile time and may refer to later constants (type-system.md §10).
+const AREA: u32 = WIDTH * HEIGHT;
+const WIDTH: u32 = 1 << 4;
+const HEIGHT: u32 = 0xFF & 12;
+const LOW_BYTE: u8 = truncate<u8>(AREA + 60);
+const MINUS_ONE_AS_U32: u32 = truncate<u32>(-1);
+const QUOTIENT: i32 = -7 / 2;
+const REMAINDER: i32 = -7 % 2;
+const IS_BIG: bool = AREA > 100 && !(WIDTH == 0);
+const SHORT_CIRCUIT: bool = false && 1 / 0 == 0;
+const WIDE: u64 = AREA as u64 * 1000000000;
+const NEGATIVE: i64 = -(5 as i64);
+
+fn useConstants() -> u32 {
+    if (IS_BIG) { return AREA; }
+    return HEIGHT;
+}

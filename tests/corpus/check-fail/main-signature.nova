@@ -1,0 +1,1 @@
+fn main(args: i32) -> i32 { return 0; } // error[N0219]

@@ -1,0 +1,6 @@
+fn v() {
+    return 1; // error[N0215]
+}
+fn i() -> i32 {
+    return; // error[N0215]
+}

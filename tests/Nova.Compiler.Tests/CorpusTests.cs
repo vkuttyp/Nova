@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using Nova.Compiler.Diagnostics;
+using Nova.Compiler.Hir;
+using Nova.Compiler.Semantics;
 using Nova.Compiler.Syntax;
 
 namespace Nova.Compiler.Tests;
@@ -10,8 +12,10 @@ namespace Nova.Compiler.Tests;
 /// <item>parse-pass/*.nova must parse without diagnostics; the AST dump must equal the sibling .ast snapshot.</item>
 /// <item>parse-fail/*.nova must produce exactly the diagnostics annotated with <c>// error[CODE]</c> comments,
 /// matched by (line, code), optionally <c>// error[CODE]@column</c>.</item>
+/// <item>check-pass/*.nova must type-check without diagnostics; the HIR dump must equal the sibling .hir snapshot.</item>
+/// <item>check-fail/*.nova must parse cleanly and produce exactly the annotated semantic diagnostics.</item>
 /// </list>
-/// Set NOVA_BLESS=1 to (re)write .ast snapshots; review the diff before committing.
+/// Set NOVA_BLESS=1 to (re)write snapshots; review the diff before committing.
 /// </summary>
 public partial class CorpusTests
 {
@@ -20,6 +24,10 @@ public partial class CorpusTests
     public static TheoryData<string> ParsePassFiles() => Files("parse-pass");
 
     public static TheoryData<string> ParseFailFiles() => Files("parse-fail");
+
+    public static TheoryData<string> CheckPassFiles() => Files("check-pass");
+
+    public static TheoryData<string> CheckFailFiles() => Files("check-fail");
 
     private static TheoryData<string> Files(string directory)
     {
@@ -39,8 +47,55 @@ public partial class CorpusTests
         Assert.True(diagnostics.Items.Count == 0,
             "unexpected diagnostics:\n" + string.Join("\n", diagnostics.Items.Select(d => d.ToString())));
 
-        var actual = AstPrinter.Print(unit, symbols);
-        var snapshotPath = Path.ChangeExtension(Path.Combine(CorpusRoot, relativePath), ".ast");
+        AssertSnapshot(relativePath, ".ast", AstPrinter.Print(unit, symbols));
+    }
+
+    [Theory]
+    [MemberData(nameof(ParseFailFiles))]
+    public void Parse_fail(string relativePath)
+    {
+        var (_, _, diagnostics) = ParseFile(relativePath);
+        AssertAnnotatedDiagnostics(relativePath, diagnostics);
+    }
+
+    [Theory]
+    [MemberData(nameof(CheckPassFiles))]
+    public void Check_pass(string relativePath)
+    {
+        var compilation = CompileFile(relativePath);
+        Assert.True(compilation.Diagnostics.Items.Count == 0,
+            "unexpected diagnostics:\n" + string.Join("\n", compilation.Diagnostics.Items.Select(d => d.ToString())));
+        AssertSnapshot(relativePath, ".hir", HirPrinter.Print(compilation.Hir!, compilation.Symbols));
+    }
+
+    [Theory]
+    [MemberData(nameof(CheckFailFiles))]
+    public void Check_fail(string relativePath)
+    {
+        var compilation = CompileFile(relativePath);
+        Assert.NotNull(compilation.Hir); // check-fail inputs must parse cleanly
+        AssertAnnotatedDiagnostics(relativePath, compilation.Diagnostics);
+    }
+
+    /// <summary>Syntactically valid but semantically arbitrary programs must never crash the checker.</summary>
+    [Theory]
+    [MemberData(nameof(ParsePassFiles))]
+    public void Checker_does_not_crash_on_parse_pass_inputs(string relativePath)
+    {
+        var compilation = CompileFile(relativePath);
+        Assert.NotNull(compilation.Hir);
+        HirPrinter.Print(compilation.Hir, compilation.Symbols);
+    }
+
+    private static Compilation CompileFile(string relativePath)
+    {
+        var text = File.ReadAllText(Path.Combine(CorpusRoot, relativePath));
+        return Compilation.Create([new SourceText(relativePath, text)], TargetInfo.Lp64);
+    }
+
+    private static void AssertSnapshot(string relativePath, string extension, string actual)
+    {
+        var snapshotPath = Path.ChangeExtension(Path.Combine(CorpusRoot, relativePath), extension);
         if (Environment.GetEnvironmentVariable("NOVA_BLESS") == "1")
         {
             File.WriteAllText(snapshotPath, actual);
@@ -50,14 +105,11 @@ public partial class CorpusTests
         Assert.Equal(File.ReadAllText(snapshotPath).ReplaceLineEndings("\n"), actual);
     }
 
-    [Theory]
-    [MemberData(nameof(ParseFailFiles))]
-    public void Parse_fail(string relativePath)
+    private static void AssertAnnotatedDiagnostics(string relativePath, DiagnosticBag diagnostics)
     {
-        var (_, _, diagnostics) = ParseFile(relativePath);
         var text = File.ReadAllText(Path.Combine(CorpusRoot, relativePath));
         var expected = ParseAnnotations(text);
-        Assert.True(expected.Count > 0, "a parse-fail test must annotate at least one expected error");
+        Assert.True(expected.Count > 0, "a failing test must annotate at least one expected error");
 
         var actual = diagnostics.Items
             .Select(d => (d.Position.Line, d.Code, (int?)d.Position.Column))

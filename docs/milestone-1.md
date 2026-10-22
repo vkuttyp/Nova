@@ -4,8 +4,9 @@ Status: M0 proposal (master prompt §23.L). Starts after OD-1/2/5/6/11 are appro
 
 ## 1. Language subset ("Nova-M1")
 
-- **Types:** `i32 i64 u8 u32 u64 usize bool void`. No floats in M1 (keeps the kernel
-  subset in reach and avoids float formatting).
+- **Types:** all fixed-width integers (`i8`–`i64`, `u8`–`u64`, `isize`, `usize`), `bool`, `void`.
+  No floats in M1 (keeps the kernel subset in reach and avoids float formatting). The full
+  static semantics are in `type-system.md`.
 - **Declarations:** one file or a few files in one package. `namespace`, top-level
   `fn` (including `public`/`internal`), `let`, `var`, optional type annotations,
   `const` integer constants.
@@ -79,5 +80,16 @@ Original plan:
 5. Corpus runner for `parse-pass`/`parse-fail` with `// error: N0xxx` annotations.
    The first ~40 parser tests.
 
-Exit criterion for 1a: parser tests green, AST dumps stable. 1b (resolution + types + HIR),
+Exit criterion for 1a: parser tests green, AST dumps stable.
+
+**Increment 1b — done 2026-10-22.** `type-system.md` (spec first), then:
+- the type checker with bidirectional literal typing;
+- constant folding with cycle detection (`IntegerSemantics` defines the exact operator semantics
+  that 1c's C runtime must match);
+- definite assignment and missing-return analysis on structured HIR;
+- the HIR printer and `novac check [--dump-hir]`.
+
+Semantic analysis runs only on files that parsed cleanly. Two simplifications, both documented:
+the flow analysis runs on HIR, not NIR (no moves exist yet, so no fixpoint is needed), and all
+files of a compilation share one item scope. 1b (resolution + types + HIR),
 1c (NIR + LIR + C + runtime + run tests) and 1d (C1 script) follow.

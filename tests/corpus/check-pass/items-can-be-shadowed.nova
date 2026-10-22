@@ -1,0 +1,11 @@
+// Locals may hide package items; a package item hides a built-in (type-system.md §2).
+const count: u32 = 3;
+
+fn value() -> u32 => 1;
+
+fn truncate(x: u32) -> u32 => x / 2;
+
+fn useThem() -> u32 {
+    let value = count + 1;
+    return truncate(value);
+}

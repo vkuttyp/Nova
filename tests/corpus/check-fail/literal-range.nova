@@ -1,0 +1,10 @@
+fn f() {
+    let a = 256u8; // error[N0206]
+    let b = -129i8; // error[N0206]
+    let c: i8 = 128; // error[N0206]
+    let d: u32 = 4294967296; // error[N0206]
+    let e = 2147483648; // error[N0206]
+    let g = 9223372036854775808i64; // error[N0206]
+    let ok1: u32 = 4294967295;
+    let ok2 = -2147483648;
+}

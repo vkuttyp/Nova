@@ -1,8 +1,9 @@
 # Nova Documentation — Milestone 0 / C0 Deliverable
 
 Date: 2026-10-22. Status: **M0/C0 complete; all decisions accepted ([ADR 0002](decisions/0002-milestone-0-decision-set.md)).**
-M1 increment 1a (lexer + parser) done; next is increment 1b ([roadmap.md](roadmap.md)).
-Implemented-feature specs: [grammar.md](grammar.md) (M1 grammar) and [diagnostics.md](diagnostics.md) (error codes).
+M1 increments 1a (lexer, parser) and 1b (type checker, HIR) done; next is increment 1c ([roadmap.md](roadmap.md)).
+Implemented-feature specs: [grammar.md](grammar.md) (M1 grammar), [type-system.md](type-system.md)
+(M1 static semantics) and [diagnostics.md](diagnostics.md) (error codes).
 
 ## Master prompt §23 deliverables
 

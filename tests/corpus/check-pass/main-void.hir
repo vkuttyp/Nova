@@ -1,0 +1,7 @@
+(program
+  (fn main () -> void
+    (block
+      (expr (Console.writeLine "hello"))
+    )
+  )
+)

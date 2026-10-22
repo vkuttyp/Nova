@@ -39,6 +39,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 
 ## Next highest-priority task
 
-M1 increment 1a (lexer, parser, recovery, corpus runner) is done (2026-10-22).
-Next: **increment 1b**: name resolution, type checking of the M1 subset, definite
-initialisation of scalars, HIR, plus `check-pass`/`check-fail` corpora (`milestone-1.md` §1, §4).
+M1 increments 1a (lexer, parser) and 1b (names, types, constants, definite assignment, HIR;
+spec in `type-system.md`) are done (2026-10-22).
+Next: **increment 1c**: NIR (CFG) construction, LIR, C emission, the `nova/rt.h` runtime,
+`novac build`, and run-pass/run-fail tests compiled with clang and gcc (`milestone-1.md` §2–3).

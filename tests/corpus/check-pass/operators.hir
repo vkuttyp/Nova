@@ -1,0 +1,17 @@
+(program
+  (fn arithmetic ((a#0: i32) (b#1: i32)) -> i32
+    (block
+      (return (+ (% (/ (* (+ a#0 b#1):i32 (- a#0 b#1):i32):i32 2:i32):i32 7:i32):i32 (neg a#0):i32):i32)
+    )
+  )
+  (fn bitwise ((a#0: u32) (b#1: u32) (n#2: u8)) -> u32
+    (block
+      (return (>> (<< (| (& a#0 b#1):u32 (^ a#0 b#1):u32):u32 n#2):u32 1:u64):u32)
+    )
+  )
+  (fn compare ((a#0: i64) (b#1: i64) (p#2: bool) (q#3: bool)) -> bool
+    (block
+      (return (|| (|| (< a#0 b#1):bool (&& (<= a#0 b#1):bool (> a#0 b#1):bool):bool):bool (&& (&& (&& (&& (>= a#0 b#1):bool (== a#0 b#1):bool):bool (!= a#0 b#1):bool):bool (== p#2 q#3):bool):bool (!= p#2 (not q#3):bool):bool):bool):bool)
+    )
+  )
+)

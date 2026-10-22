@@ -1,0 +1,12 @@
+fn f() -> i32 {
+    let a = missing; // error[N0200]
+    notAFunction(1); // error[N0200]
+    Console.print(1); // error[N0200]
+    Process.quit(); // error[N0200]
+    nothing = 3; // error[N0200]
+    return 0;
+}
+fn scopes() {
+    { let inner = 1; }
+    let outer = inner; // error[N0200]
+}

@@ -1,0 +1,85 @@
+(program
+  (fn bothBranches ((flag#0: bool)) -> i32
+    (block
+      (var x#1: i32)
+      (if flag#0
+        (block
+          (= x#1 1:i32)
+        )
+        (else
+          (block
+            (= x#1 2:i32)
+          )
+        )
+      )
+      (return x#1)
+    )
+  )
+  (fn assignedBeforeBreak () -> u32
+    (block
+      (var found#0: u32)
+      (loop
+        (block
+          (= found#0 42:u32)
+          (break)
+        )
+      )
+      (return found#0)
+    )
+  )
+  (fn elseIfChain ((n#0: i32)) -> i32
+    (block
+      (var r#1: i32)
+      (if (< n#0 0:i32):bool
+        (block
+          (= r#1 -1:i32)
+        )
+        (else
+          (if (== n#0 0:i32):bool
+            (block
+              (= r#1 0:i32)
+            )
+            (else
+              (block
+                (= r#1 1:i32)
+              )
+            )
+          )
+        )
+      )
+      (return r#1)
+    )
+  )
+  (fn earlyReturn ((flag#0: bool)) -> i32
+    (block
+      (var x#1: i32)
+      (if flag#0
+        (block
+          (return 0:i32)
+        )
+        (else
+          (block
+            (= x#1 5:i32)
+          )
+        )
+      )
+      (return x#1)
+    )
+  )
+  (fn exitBranch ((flag#0: bool)) -> i32
+    (block
+      (var x#1: i32)
+      (if flag#0
+        (block
+          (= x#1 1:i32)
+        )
+        (else
+          (block
+            (expr (Process.exit 3:i32))
+          )
+        )
+      )
+      (return x#1)
+    )
+  )
+)

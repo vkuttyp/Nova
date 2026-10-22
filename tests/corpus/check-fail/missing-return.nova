@@ -1,0 +1,10 @@
+fn noElse(n: i32) -> i32 { // error[N0213]
+    if (n > 0) { return 1; }
+}
+fn whileMayExit(n: i32) -> i32 { // error[N0213]
+    while (true) { return n; }
+}
+fn emptyBody() -> bool { } // error[N0213]
+fn loopWithBreak() -> u8 { // error[N0213]
+    loop { break; }
+}

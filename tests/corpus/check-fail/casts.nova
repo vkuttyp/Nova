@@ -1,0 +1,8 @@
+fn f(a: i32, b: u64, c: u8, d: bool) {
+    let x1 = a as u32; // error[N0208]
+    let x2 = b as u32; // error[N0208]
+    let x3 = c as i8; // error[N0208]
+    let x4 = a as bool; // error[N0208]
+    let x5 = a as i16; // error[N0208]
+    let ok = c as i16;
+}

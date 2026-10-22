@@ -1,0 +1,21 @@
+(program
+  (fn builtins ((x#0: i64) (flag#1: bool)) -> void
+    (block
+      (expr (Console.write "x = "))
+      (expr (Console.writeLine x#0))
+      (expr (Console.writeLine flag#1))
+      (expr (Console.writeLine "line with \"quotes\"\n"))
+      (expr (Console.writeLine))
+      (expr (Console.write 42:i32))
+      (let a#2: u8 = (truncate u8 x#0))
+      (let b#3: i8 = (truncate i8 300:u32))
+      (let c#4: u64 = (truncate u64 x#0))
+      (let d#5: i32 = (truncate i32 a#2))
+      (if (< x#0 0:i64):bool
+        (block
+          (expr (Process.exit 1:i32))
+        )
+      )
+    )
+  )
+)

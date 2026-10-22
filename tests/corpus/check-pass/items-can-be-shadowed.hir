@@ -1,0 +1,19 @@
+(program
+  (const count: u32 = 3:u32)
+  (fn value () -> u32
+    (block
+      (return 1:u32)
+    )
+  )
+  (fn truncate ((x#0: u32)) -> u32
+    (block
+      (return (/ x#0 2:u32):u32)
+    )
+  )
+  (fn useThem () -> u32
+    (block
+      (let value#0: u32 = (+ 3:u32 1:u32):u32)
+      (return (call truncate value#0):u32)
+    )
+  )
+)

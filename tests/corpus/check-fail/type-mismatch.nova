@@ -1,0 +1,12 @@
+fn takesU8(x: u8) { }
+fn f(flag: bool, n: i32, w: u64) -> i32 {
+    let a: bool = 1; // error[N0205]
+    if (n) { } // error[N0205]
+    while (1) { } // error[N0205]
+    let b: u16 = n; // error[N0205]
+    takesU8(n); // error[N0205]
+    var c: i64 = 0;
+    c = n; // error[N0205]
+    if (flag) { return w; } // error[N0205]
+    return true; // error[N0205]
+}

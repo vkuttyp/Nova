@@ -1,0 +1,9 @@
+fn helper() -> i32 => 1;
+const CALL: i32 = helper(); // error[N0217]
+const OVERFLOW: u8 = 200 + 100; // error[N0217]
+const DIVZERO: i32 = 1 / 0; // error[N0217]
+const SHIFT: u32 = 1 << 32; // error[N0217]
+const MINDIV: i32 = -2147483648 / -1; // error[N0217]
+const SELF: i32 = SELF + 1; // error[N0218]
+const A: i32 = B; // error[N0218]
+const B: i32 = A;

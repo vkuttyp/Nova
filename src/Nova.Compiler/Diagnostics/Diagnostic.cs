@@ -31,6 +31,34 @@ public static class DiagnosticCodes
     public const string InvalidAssignmentTarget = "N0104";
     public const string ExpectedType = "N0105";
     public const string MisplacedNamespace = "N0106";
+
+    // Names, types and flow: N0200-N0299
+    public const string UndefinedName = "N0200";
+    public const string DuplicateItem = "N0201";
+    public const string DuplicateParameter = "N0202";
+    public const string LocalRedeclared = "N0203";
+    public const string UnknownType = "N0204";
+    public const string TypeMismatch = "N0205";
+    public const string LiteralOutOfRange = "N0206";
+    public const string InvalidOperandTypes = "N0207";
+    public const string InvalidCast = "N0208";
+    public const string ArgumentCount = "N0209";
+    public const string NotCallable = "N0210";
+    public const string AssignToImmutable = "N0211";
+    public const string PossiblyUnassigned = "N0212";
+    public const string MissingReturn = "N0213";
+    public const string LoopControlOutsideLoop = "N0214";
+    public const string ReturnValueMismatch = "N0215";
+    public const string Unsupported = "N0216";
+    public const string NotConstant = "N0217";
+    public const string CyclicConstant = "N0218";
+    public const string InvalidMain = "N0219";
+    public const string LetWithoutInitializer = "N0220";
+    public const string LocalNeedsType = "N0221";
+    // N0222, N0223: unassigned
+    public const string VoidValue = "N0224";
+    public const string StatementNotCall = "N0225";
+    public const string VoidNotAllowed = "N0226";
 }
 
 public sealed record Diagnostic(string Code, Severity Severity, string Message, SourceText Source, TextSpan Span)

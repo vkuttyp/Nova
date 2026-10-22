@@ -1,0 +1,15 @@
+const LIMIT: i32 = 5;
+fn two(a: i32, b: i32) -> i32 => a + b;
+fn f(local: i32) {
+    let a = two(1); // error[N0209]
+    let b = two(1, 2, 3); // error[N0209]
+    Console.writeLine(1, 2); // error[N0209]
+    Process.exit(); // error[N0209]
+    let t = truncate<u8>(1, 2); // error[N0209]
+    local(); // error[N0210]
+    LIMIT(); // error[N0210]
+    let fnValue = two; // error[N0210]
+    let console = Console; // error[N0210]
+    let member = Console.writeLine; // error[N0210]
+    (two)(1, 2); // error[N0210]
+}

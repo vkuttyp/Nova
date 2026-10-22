@@ -1,0 +1,20 @@
+(program
+  (fn widen ((a#0: i8) (b#1: i16) (c#2: i32) (d#3: u8) (e#4: u16) (f#5: u32) (g#6: bool)) -> i64
+    (block
+      (let a2#7: i16 = (as a#0 i16))
+      (let b2#8: i32 = (as b#1 i32))
+      (let c2#9: i64 = (as c#2 i64))
+      (let d2#10: u16 = (as d#3 u16))
+      (let e2#11: u32 = (as e#4 u32))
+      (let f2#12: u64 = (as f#5 u64))
+      (let d3#13: i16 = (as d#3 i16))
+      (let f3#14: i64 = (as f#5 i64))
+      (let g2#15: u8 = (as g#6 u8))
+      (let s1#16: isize = (as c#2 isize))
+      (let s2#17: usize = (as f#5 usize))
+      (let s3#18: u64 = (as s2#17 u64))
+      (let same#19: i32 = c#2)
+      (return (+ (+ c2#9 f3#14):i64 (as a2#7 i64)):i64)
+    )
+  )
+)

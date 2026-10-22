@@ -53,3 +53,36 @@ diagnostics, so any cascade fails the test.
 | N0104 | Invalid assignment target | `1 = 2;`, `f() = 3;` |
 | N0105 | Expected a type | `fn f(x: ) {}` |
 | N0106 | Namespace declaration not first in the file | `fn a() {}` then `namespace X;` |
+
+### Names, types and flow (N0200–N0299)
+
+Semantic checks run only when every file parsed without errors.
+
+| Code | Meaning | Example |
+|---|---|---|
+| N0200 | Name not found (variable, function, or built-in member) | `missing`, `Console.print(1)` |
+| N0201 | Item defined twice in the package | two `fn twice()` |
+| N0202 | Parameter declared twice | `fn f(a: i32, a: i32)` |
+| N0203 | Local redeclares a local or parameter in scope (no shadowing of locals) | `let x = 1; let x = 2;` |
+| N0204 | Unknown type name | `fn f(a: int)` |
+| N0205 | Type mismatch against the expected type | `let a: bool = 1;`, `if (n) {}` |
+| N0206 | Integer literal out of range for its type | `256u8`, `let c: i8 = 128;` |
+| N0207 | Operator not applicable to the operand types (includes mixed types, signed bitwise ops, negating unsigned values) | `a + b` with `u8`/`i32`, `s & s` with `i32` |
+| N0208 | `as` conversion that can lose information | `a as u32` with `a: i32` |
+| N0209 | Wrong number of arguments | `two(1)` |
+| N0210 | Not callable, or a function or built-in used as a value | `local()`, `let f = two;` |
+| N0211 | Assignment to an immutable binding (`let`, parameter, constant, function) | `param = 3;` |
+| N0212 | Local read before it is definitely assigned | `var x: i32; return x;` |
+| N0213 | End of a non-`void` function is reachable | `fn f() -> i32 { }` |
+| N0214 | `break`/`continue` outside a loop | `break;` at function level |
+| N0215 | `return` with or without a value contradicts the return type | `return 1;` in a `void` function |
+| N0216 | Construct not supported in M1 (floats, `char`, string values, member access, qualified types, generic arguments other than `truncate<T>`) | `let a = 1.5;` |
+| N0217 | Not a constant expression, or constant evaluation would panic | `const C: u8 = 200 + 100;` |
+| N0218 | Constant depends on itself | `const A: i32 = A + 1;` |
+| N0219 | Invalid `main` signature | `fn main(args: i32)` |
+| N0220 | `let` without initializer | `let a: i32;` |
+| N0221 | `var` without type annotation or initializer | `var c;` |
+| N0222, N0223 | *(unassigned)* | |
+| N0224 | Value of type `void` used as a value | `let d = nothing();` |
+| N0225 | Expression statement that is not a call | `1 + 2;` |
+| N0226 | `void` used other than as a return type | `var e: void;` |

@@ -5,7 +5,7 @@ compiled ahead of time to portable C, with no garbage collector. Its first targe
 [CosmoOS](https://github.com/vkuttyp/CosmoOS).
 
 **Status:** early development. The design is complete (Milestone 0). The compiler currently
-lexes and parses the Milestone 1 language subset. Nothing type-checks or generates code yet.
+parses and type-checks the Milestone 1 language subset (`novac check`). It does not generate code yet.
 
 ```nova
 namespace Demo;

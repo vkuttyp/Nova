@@ -1,0 +1,15 @@
+// Unsuffixed literals take their type from context (type-system.md §4-5).
+fn literals(x: u8, w: u64) -> u64 {
+    let a = x + 1;              // 1 is u8 (from x)
+    let b = 1 + x;              // flexible on the left too
+    let c: u64 = 2 * 3;         // both u64 (from the annotation)
+    let d = 7;                  // i32 by default
+    let e = 7u16;               // suffix
+    let f = w * (2 + 3);        // nested flexible operand
+    let g: i8 = -128;
+    let h: i64 = -9223372036854775808;
+    let i: u64 = 18446744073709551615;
+    let j = 5 as u64;           // a flexible literal takes the cast's type
+    let k = x == 255;
+    return w + c;
+}

@@ -1,0 +1,27 @@
+fn fib(n: u32) -> u64 {
+    if (n < 2) { return n as u64; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn isEven(n: u32) -> bool {
+    if (n == 0) { return true; }
+    return isOdd(n - 1);
+}
+
+fn isOdd(n: u32) -> bool {
+    if (n == 0) { return false; }
+    return isEven(n - 1);
+}
+
+fn log(value: u64) {
+    Console.writeLine(value);
+}
+
+fn logTwice(value: u64) => log(value);
+
+fn run() {
+    logTwice(fib(10));
+    log(later(1, 2));
+}
+
+fn later(a: u64, b: u64) -> u64 => a + b;

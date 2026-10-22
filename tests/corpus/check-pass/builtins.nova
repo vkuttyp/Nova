@@ -1,0 +1,13 @@
+fn builtins(x: i64, flag: bool) {
+    Console.write("x = ");
+    Console.writeLine(x);
+    Console.writeLine(flag);
+    Console.writeLine("line with \"quotes\"\n");
+    Console.writeLine();
+    Console.write(42);
+    let a = truncate<u8>(x);
+    let b = truncate<i8>(300u32);
+    let c = truncate<u64>(x);
+    let d = truncate<i32>(a);
+    if (x < 0) { Process.exit(1); }
+}

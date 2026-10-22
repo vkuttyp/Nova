@@ -1,4 +1,7 @@
-﻿using Nova.Compiler.Diagnostics;
+﻿using Nova.Compiler;
+using Nova.Compiler.Diagnostics;
+using Nova.Compiler.Hir;
+using Nova.Compiler.Semantics;
 using Nova.Compiler.Syntax;
 
 namespace Nova.Cli;
@@ -6,12 +9,14 @@ namespace Nova.Cli;
 internal static class Program
 {
     private const string Usage = """
-        usage: novac parse [--dump-ast] <file.nova>...
+        usage: novac <command> [options] <file.nova>...
 
         commands:
           parse    lex and parse the files, report syntax errors
+          check    parse and type-check the files as one package
         options:
-          --dump-ast   print the AST of each file (stable S-expression format)
+          --dump-ast   (parse) print the AST of each file
+          --dump-hir   (check) print the typed HIR of the package
         """;
 
     private static int Main(string[] args)
@@ -24,20 +29,21 @@ internal static class Program
 
         return args[0] switch
         {
-            "parse" => Parse(args[1..]),
+            "parse" => Run(args[1..], "--dump-ast", Parse),
+            "check" => Run(args[1..], "--dump-hir", Check),
             _ => Fail($"unknown command '{args[0]}'"),
         };
     }
 
-    private static int Parse(string[] args)
+    private static int Run(string[] args, string dumpOption, Func<List<SourceText>, bool, DiagnosticBag> command)
     {
-        var dumpAst = false;
+        var dump = false;
         var files = new List<string>();
         foreach (var arg in args)
         {
-            if (arg == "--dump-ast")
+            if (arg == dumpOption)
             {
-                dumpAst = true;
+                dump = true;
             }
             else if (arg.StartsWith('-'))
             {
@@ -53,32 +59,50 @@ internal static class Program
             return Fail("no input files");
         }
 
-        var symbols = new SymbolTable();
-        var diagnostics = new DiagnosticBag();
+        var sources = new List<SourceText>();
         foreach (var file in files)
         {
-            string text;
             try
             {
-                text = File.ReadAllText(file);
+                sources.Add(new SourceText(file, File.ReadAllText(file)));
             }
             catch (IOException e)
             {
                 return Fail($"cannot read '{file}': {e.Message}");
             }
-
-            var unit = Parser.ParseText(new SourceText(file, text), symbols, diagnostics);
-            if (dumpAst)
-            {
-                Console.Out.Write(AstPrinter.Print(unit, symbols));
-            }
         }
 
+        var diagnostics = command(sources, dump);
         foreach (var diagnostic in diagnostics.Items)
         {
             Console.Error.Write(DiagnosticRenderer.Render(diagnostic));
         }
         return diagnostics.HasErrors ? 1 : 0;
+    }
+
+    private static DiagnosticBag Parse(List<SourceText> sources, bool dumpAst)
+    {
+        var symbols = new SymbolTable();
+        var diagnostics = new DiagnosticBag();
+        foreach (var source in sources)
+        {
+            var unit = Parser.ParseText(source, symbols, diagnostics);
+            if (dumpAst)
+            {
+                Console.Out.Write(AstPrinter.Print(unit, symbols));
+            }
+        }
+        return diagnostics;
+    }
+
+    private static DiagnosticBag Check(List<SourceText> sources, bool dumpHir)
+    {
+        var compilation = Compilation.Create(sources, TargetInfo.Lp64);
+        if (dumpHir && compilation.Hir is not null)
+        {
+            Console.Out.Write(HirPrinter.Print(compilation.Hir, compilation.Symbols));
+        }
+        return compilation.Diagnostics;
     }
 
     private static int Fail(string message)

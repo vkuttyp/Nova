@@ -1,0 +1,10 @@
+fn twice() { }
+fn twice() { } // error[N0201]
+const twice: i32 = 1; // error[N0201]
+fn params(a: i32, a: i32) { } // error[N0202]
+fn locals(p: i32) {
+    let x = 1;
+    let x = 2; // error[N0203]
+    let p = 3; // error[N0203]
+    { let x = 4; } // error[N0203]
+}
