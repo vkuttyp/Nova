@@ -1,0 +1,17 @@
+// Pool and pool-box types (type-system.md §19.6); the borrow errors are in pool-borrows.nova.
+struct Res { id: i32; drop { } }
+struct Holder { b: PoolBox<i32>; } // error[N0246]
+struct Pool { x: i32; } // error[N0201]
+fn takeBox(b: PoolBox<i32>) { }
+fn usePool(p: Pool<i32>) { }
+
+fn types(r: borrow i32) -> Result<void, AllocError> {
+    let unknown = Pool.create(SystemHeap {}, 4u32); // error[N0260]
+    let refs: Pool<borrow i32> = Pool.create(SystemHeap {}, 4u32); // error[N0264]
+    let pool: Pool<Res> = Pool.create(SystemHeap {}, 4u32);
+    let wrong = pool.take(5); // error[N0205]
+    let other = pool.give(Res { id: 1 }); // error[N0200]
+    let notAllocator: Pool<i32> = Pool.create(5, 4u32); // error[N0263]
+    let boxed = Box.create(pool.take(Res { id: 2 })?); // error[N0246]
+    return Ok();
+}

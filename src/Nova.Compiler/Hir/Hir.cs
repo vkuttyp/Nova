@@ -257,6 +257,10 @@ public enum BuiltinFunction
     ScratchEnter,
     /// <summary><c>frame.enter()</c>: a mutable reference to the parent frame.</summary>
     ScratchNest,
+    /// <summary><c>Pool.create(allocator, capacity)</c> (§19.6).</summary>
+    PoolCreate,
+    /// <summary><c>pool.take(v)</c>: a shared reference to the pool, then the value.</summary>
+    PoolTake,
 }
 
 public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<HirExpr> Arguments, NovaType Type, TextSpan Span) : HirExpr(Type, Span);

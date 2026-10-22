@@ -302,3 +302,53 @@ void *nova_region_alloc(void *region, uint32_t kind, uint64_t size, uint64_t ali
     default: return scratch_alloc(size, align);
     }
 }
+
+/* ---- Pools (type-system.md §19.6) ---------------------------------------------------------- */
+
+nv_pool nova_pool_create(uint32_t allocator, uint64_t capacity) {
+    nv_pool p = {NULL, NULL, capacity, 0u, 0u, allocator};
+    return p;
+}
+
+void *nova_pool_take(nv_pool *p, uint64_t size) {
+    if (p->slots == NULL) {
+        /* Slots hold either a value or the free-list link, and start 16-aligned. */
+        uint64_t slot = size < sizeof(void *) ? sizeof(void *) : size;
+        slot = (slot + 15u) & ~(uint64_t)15u;
+        if (p->capacity == 0u || slot > UINT64_MAX / p->capacity) {
+            return NULL;
+        }
+        uint64_t total = slot * p->capacity;
+#if SIZE_MAX < UINT64_MAX
+        if (total > (uint64_t)SIZE_MAX) {
+            return NULL;
+        }
+#endif
+        p->slots = (uint8_t *)nova_alloc((size_t)total, (uint32_t)p->allocator);
+        if (p->slots == NULL) {
+            return NULL;
+        }
+        p->slot_size = slot;
+    }
+    if (p->free != NULL) {
+        void *slot = p->free;
+        p->free = *(void **)slot;
+        return slot;
+    }
+    if (p->used == p->capacity) {
+        return NULL;
+    }
+    return p->slots + p->slot_size * p->used++;
+}
+
+void nova_pool_release(nv_pool *p, void *slot) {
+    *(void **)slot = p->free;
+    p->free = slot;
+}
+
+void nova_pool_drop(nv_pool *p) {
+    /* Every box is gone (the borrow checker keeps the pool alive while one is live). */
+    if (p->slots != NULL) {
+        nova_free(p->slots, (uint32_t)p->allocator);
+    }
+}

@@ -9,7 +9,7 @@ fn f(x: borrow i32, s: Slice<u8>) -> Result<void, AllocError> {
     let b = arena.alloc(x); // error[N0264]
     let c = arena.allocArray(4usize, s); // error[N0264]
     let d = arena.allocArray(4usize, Box.create(1)!); // error[N0264]
-    var e = arena.alloc(1); // error[N0246]
+    var e = arena.alloc(1); // accepted since M4c: a scoped result may be a var (§19.1)
     let g = Box.create(arena.alloc(1)?); // error[N0246]
     let h = arena.make(1); // error[N0200]
     let i = arena.alloc(); // error[N0209]

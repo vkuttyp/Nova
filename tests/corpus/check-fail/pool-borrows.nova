@@ -1,0 +1,36 @@
+// Pool boxes are scoped to their pool (type-system.md §19.6).
+fn takeBox(b: PoolBox<i32>) { }
+fn usePool(p: Pool<i32>) { }
+
+fn returnsBox(x: borrow i32) -> Result<PoolBox<i32>, AllocError> {
+    let pool: Pool<i32> = Pool.create(SystemHeap {}, 4u32);
+    return pool.take(1); // error[N0244]
+}
+
+fn poolDroppedWhileBoxLive() -> Result<void, AllocError> {
+    let pool: Pool<i32> = Pool.create(SystemHeap {}, 4u32);
+    let b = pool.take(1)?;
+    usePool(pool); // error[N0240]
+    takeBox(b);
+    return Ok();
+}
+
+// A near-miss: the boxes end with the pool's block.
+fn boxUsedAfterPoolScope(x: borrow i32) -> Result<i32, AllocError> {
+    var total = 0;
+    {
+        let pool: Pool<i32> = Pool.create(SystemHeap {}, 4u32);
+        let b = pool.take(7)?;
+        let c = pool.take(8)?;
+        total = b + c;
+    }
+    return Ok(total);
+}
+
+fn makePool() -> Pool<i32> => Pool.create(SystemHeap {}, 4u32);
+
+fn temporaryPool() -> Result<void, AllocError> {
+    let b = makePool().take(1)?; // error[N0243]
+    takeBox(b);
+    return Ok();
+}

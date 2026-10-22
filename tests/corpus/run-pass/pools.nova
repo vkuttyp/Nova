@@ -1,0 +1,52 @@
+// Pools of individually destroyed values (type-system.md §19.6).
+struct Particle { x: i32; v: i32; }
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+struct Pair { a: Res; b: Res; }
+
+fn simulate() -> Result<i32, AllocError> {
+    using pool: Pool<Particle> = Pool.create(SystemHeap {}, 64u32);
+    var a = pool.take(Particle { x: 0, v: 2 })?;
+    let b = pool.take(Particle { x: 10, v: -1 })?;
+    a.x += a.v;
+    return Ok(a.x + b.x);
+}
+
+fn keep(r: Res) -> i32 => r.id;
+
+fn drops() -> Result<i32, AllocError> {
+    using pool: Pool<Res> = Pool.create(SystemHeap {}, 2u32);
+    let first = pool.take(Res { id: 1 })?;
+    {
+        let second = pool.take(Res { id: 2 })?;
+    }                                            // second dropped: its slot is free again
+    let third = pool.take(Res { id: 3 })?;
+    match (pool.take(Res { id: 4 })) {           // full: the value is destroyed
+        Ok(_) => { Console.writeLine("unexpected"); }
+        Err(_) => { Console.writeLine("pool full"); }
+    }
+    return Ok(first.id + third.id);
+}
+
+fn partial() -> Result<i32, AllocError> {
+    using pool: Pool<Pair> = Pool.create(FailingAllocator {}, 4u32);
+    let p = pool.take(Pair { a: Res { id: 5 }, b: Res { id: 6 } })?;
+    let n = keep(move p.a);                      // a field moves out of the pool box
+    return Ok(n);
+}
+
+fn main() -> i32 {
+    Console.writeLine(simulate()!);
+    Console.writeLine(drops()!);
+    Console.writeLine(partial()!);
+    return 0;
+}
+// expect-stdout: 12
+// expect-stdout: drop 2
+// expect-stdout: drop 4
+// expect-stdout: pool full
+// expect-stdout: drop 3
+// expect-stdout: drop 1
+// expect-stdout: 4
+// expect-stdout: drop 5
+// expect-stdout: drop 6
+// expect-stdout: 5

@@ -1,0 +1,34 @@
+// language-spec.md Ex16, adapted (ADR 0004). Region memory cannot hold borrowed slices
+// (allocArray of Slice<u8> is N0264: check-fail/arena-types.nova), so fields are (offset, length).
+struct Span { start: u32; len: u32; }
+
+fn parseHeaders(raw: Slice<u8>) -> Result<usize, AllocError> {
+    var storage = [0u8; 4096];
+    let fba = FixedBufferAllocator.over(mut storage);       // scoped to `storage`
+    let fields = fba.allocArray(32usize, Span { start: 0u32, len: 0u32 })?;
+    var count = 0usize;
+    var start = 0usize;
+    for (i in 0..raw.length) {
+        if (raw[i] == 10u8) {                                // one field per line
+            if (count < fields.length) {
+                fields[count] = Span { start: truncate<u32>(start), len: truncate<u32>(i - start) };
+                count += 1;
+            }
+            start = i + 1;
+        }
+    }
+    var longest = 0u32;
+    for (i in 0..count) { if (fields[i].len > longest) { longest = fields[i].len; } }
+    Console.writeLine(longest);
+    return Ok(count);
+}
+
+fn main() {
+    // "Host: x\nAccept: y\nA: b\n"
+    let raw = [72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 10u8,
+               65u8, 99u8, 99u8, 101u8, 112u8, 116u8, 58u8, 32u8, 121u8, 10u8,
+               65u8, 58u8, 32u8, 98u8, 10u8];
+    Console.writeLine(parseHeaders(raw[..])!);
+}
+// expect-stdout: 9
+// expect-stdout: 3

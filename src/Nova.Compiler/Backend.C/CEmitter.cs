@@ -68,6 +68,10 @@ public sealed class CEmitter
         EmitDropGluePrototypes();
         EmitBoxCreatePrototypes();
         EmitArenaHelperPrototypes();
+        foreach (var result in PoolTakeResults)
+        {
+            Line($"static NV_UNUSED {PoolTakeSignature(result)};");
+        }
         Line();
 
         foreach (var function in _program.Functions)
@@ -78,6 +82,7 @@ public sealed class CEmitter
         EmitDropGlue();
         EmitBoxCreate();
         EmitArenaHelpers();
+        EmitPoolTake();
 
         EmitMainWrapper();
     }
@@ -88,7 +93,8 @@ public sealed class CEmitter
     /// </summary>
     private void EmitStructs()
     {
-        var aggregates = Aggregates.Where(t => !t.IsBox).ToList(); // a box is a pointer, not a C struct
+        // A box is a pointer, not a C struct; a pool box is a struct of two pointers.
+        var aggregates = Aggregates.Where(t => !t.IsBox || t.IsPoolBox).ToList();
         if (aggregates.Count == 0)
         {
             return;
@@ -111,7 +117,7 @@ public sealed class CEmitter
                 EmitEnum(type, Emit);
                 return;
             }
-            if (type.Kind is TypeKind.Array or TypeKind.Reference)
+            if (type.Kind is TypeKind.Array or TypeKind.Reference || type.IsPoolBox)
             {
                 EmitComposite(type, Emit);
                 return;
@@ -167,6 +173,10 @@ public sealed class CEmitter
             }
             Line($"struct {name} {{ {CType(type.Element!)} e[{type.ArrayLength}]; }};");
         }
+        else if (type.IsPoolBox)
+        {
+            Line($"struct {name} {{ {CType(type.Pointee!)} *ptr; nv_pool *pool; }};");
+        }
         else
         {
             var element = CType(type.Pointee!.Element!);
@@ -218,7 +228,8 @@ public sealed class CEmitter
     /// The drop glue of a type that needs drop: <c>nvD_&lt;length&gt;&lt;Name&gt;</c> for user structs and enums,
     /// <c>nvD_&lt;mangled&gt;</c> for built-in instantiations (which start with a letter, so they cannot collide).
     /// </summary>
-    private static string DropGlueName(NovaType type) => type.Kind == TypeKind.Region ? (type.Region == RegionKind.Arena ? "nova_arena_drop" : "nova_scratch_drop")
+    private static string DropGlueName(NovaType type) => type.Kind == TypeKind.Region
+            ? type.Region switch { RegionKind.Arena => "nova_arena_drop", RegionKind.Pool => "nova_pool_drop", _ => "nova_scratch_drop" }
         : type.Enum?.ResultTypes is not null || type.IsBox ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
 
     /// <summary>
@@ -307,6 +318,40 @@ public sealed class CEmitter
         return ok.IsSlice ? $"nvAR_{Mangle(ok.Pointee!.Element!)}" : $"nvAA_{Mangle(ok.Pointee!)}";
     }
 
+    /// <summary>The <c>Result&lt;PoolBox&lt;T&gt;, AllocError&gt;</c> types that <c>pool.take</c> produces (§19.6).</summary>
+    private IEnumerable<NovaType> PoolTakeResults => _types.Composites.Where(t => t.Enum?.ResultTypes is ({ IsPoolBox: true }, { Name: "AllocError" }));
+
+    private static string PoolTakeSignature(NovaType result)
+    {
+        var contents = result.Enum!.ResultTypes!.Value.Ok.Pointee!;
+        return $"{CTypeName(result)} nvPT_{Mangle(contents)}(nv_pool *p, {CType(contents)} v)";
+    }
+
+    /// <summary><c>pool.take(v)</c>: a free slot, then the value moves in; on failure the value is destroyed.</summary>
+    private void EmitPoolTake()
+    {
+        foreach (var result in PoolTakeResults)
+        {
+            var box = result.Enum!.ResultTypes!.Value.Ok;
+            var contents = CType(box.Pointee!);
+            var name = CTypeName(result);
+            Line($"static {PoolTakeSignature(result)} {{");
+            Line($"    _Static_assert(_Alignof({contents}) <= 16, \"novac: pool slots are 16-aligned\");");
+            Line($"    {contents} *slot = ({contents} *)nova_pool_take(p, sizeof({contents}));");
+            Line("    if (slot == NULL) {");
+            if (TypeTable.NeedsDrop(box.Pointee!))
+            {
+                Line($"        {DropGlueName(box.Pointee!)}(&v);");
+            }
+            Line($"        return (({name}){{ .tag = 1, .u.v_Err = {{ .f__0 = (({CTypeName(result.Enum.ResultTypes.Value.Err)}){{ .tag = 0 }}) }} }});");
+            Line("    }");
+            Line("    *slot = v;");
+            Line($"    return (({name}){{ .tag = 0, .u.v_Ok = {{ .f__0 = (({CTypeName(box)}){{ .ptr = slot, .pool = p }}) }} }});");
+            Line("}");
+            Line();
+        }
+    }
+
     /// <summary>The runtime's id for the region a (reference to a) region value names (nova/rt.h).</summary>
     private static string RegionId(NovaType region) => (region.Pointee ?? region).Region switch
     {
@@ -374,7 +419,7 @@ public sealed class CEmitter
         allocator.Name == "FailingAllocator" ? "NV_ALLOC_FAILING" : "NV_ALLOC_SYSTEM";
 
     /// <summary>The <c>Result&lt;Box&lt;T, A&gt;, AllocError&gt;</c> types that <c>Box.create</c> produces, in creation order.</summary>
-    private IEnumerable<NovaType> BoxCreateResults => _types.Composites.Where(t => t.Enum?.ResultTypes is ({ IsBox: true }, { Name: "AllocError" }));
+    private IEnumerable<NovaType> BoxCreateResults => _types.Composites.Where(t => t.Enum?.ResultTypes is ({ IsBox: true, IsPoolBox: false }, { Name: "AllocError" }));
 
     private static string BoxCreateName(NovaType result) => $"nvB_{Mangle(result.Enum!.ResultTypes!.Value.Ok)}";
 
@@ -431,6 +476,19 @@ public sealed class CEmitter
     {
         foreach (var type in Aggregates.Where(TypeTable.NeedsDrop))
         {
+            if (type.IsPoolBox)
+            {
+                // Destroys the value, then returns its slot to the pool (§19.6).
+                Line($"static void {DropGlueName(type)}({CTypeName(type)} *p) {{");
+                if (TypeTable.NeedsDrop(type.Pointee!))
+                {
+                    Line($"    {DropGlueName(type.Pointee!)}(p->ptr);");
+                }
+                Line("    nova_pool_release(p->pool, p->ptr);");
+                Line("}");
+                Line();
+                continue;
+            }
             if (type.IsBox && LeadsTo(type.Pointee!, type))
             {
                 // Tail iteration (type-system.md §18.5): destroy the node except its tail, free it,
@@ -527,6 +585,7 @@ public sealed class CEmitter
                 TypeKind.Bool => "false",
                 TypeKind.Struct or TypeKind.Enum or TypeKind.Array or TypeKind.Region => "{0}",
                 TypeKind.Reference when local.Type.IsSlice => "{0}",
+                TypeKind.Box when local.Type.IsPoolBox => "{0}",
                 TypeKind.Reference or TypeKind.Box => "NULL",
                 _ => "0",
             };
@@ -576,12 +635,15 @@ public sealed class CEmitter
                     }
                 }
                 break;
-            case NirBoxFree { Flag: null } free:
-                Line($"    nova_free({Place(free.Box)}, {AllocatorId(free.Box.Type.Allocator!)});");
-                break;
             case NirBoxFree free:
-                Line($"    if ({LocalName(free.Flag!)}) nova_free({Place(free.Box)}, {AllocatorId(free.Box.Type.Allocator!)});");
+            {
+                var box = Place(free.Box);
+                var release = free.Box.Type.IsPoolBox
+                    ? $"nova_pool_release({box}.pool, {box}.ptr);"
+                    : $"nova_free({box}, {AllocatorId(free.Box.Type.Allocator!)});";
+                Line(free.Flag is null ? $"    {release}" : $"    if ({LocalName(free.Flag)}) {release}");
                 break;
+            }
             case NirBoundsCheck check:
                 Line($"    nv_check_index({Operand(check.Index)}, {Operand(check.Length)}, {Location(_function!.Source.Source, check.Span)});");
                 break;
@@ -705,6 +767,9 @@ public sealed class CEmitter
             $"{ArenaHelperName(alloc.Type)}({Operand(alloc.Arguments[0])}, {RegionId(alloc.Arguments[0].Type)}, {Operand(alloc.Arguments[1])}, {Operand(alloc.Arguments[2])})",
         NirBuiltin { Function: BuiltinFunction.FixedBufferOver } over =>
             $"nova_fba_over({Operand(over.Arguments[0])}.ptr, {Operand(over.Arguments[0])}.len)",
+        NirBuiltin { Function: BuiltinFunction.PoolCreate } pool =>
+            $"nova_pool_create({AllocatorId(pool.Arguments[0].Type)}, (uint64_t){Operand(pool.Arguments[1])})",
+        NirBuiltin { Function: BuiltinFunction.PoolTake } take => $"nvPT_{Mangle(take.Arguments[1].Type)}({Operand(take.Arguments[0])}, {Operand(take.Arguments[1])})",
         NirBuiltin { Function: BuiltinFunction.ScratchNest } nest => $"nova_scratch_enter_child({Operand(nest.Arguments[0])})",
         NirBuiltin { Function: BuiltinFunction.BoxCreate } create => $"{BoxCreateName(create.Type)}({Operand(create.Arguments[^1])})",
         NirArray array => $"(({CTypeName(array.Type)}){{ .e = {{ {string.Join(", ", array.Elements.Select(Operand))} }} }})",
@@ -807,6 +872,7 @@ public sealed class CEmitter
             text = projection.Kind switch
             {
                 ProjectionKind.Deref when type.IsSlice => text,
+                ProjectionKind.Deref when type.IsPoolBox => $"(*{text}.ptr)",
                 ProjectionKind.Deref => $"(*{text})",
                 ProjectionKind.Field when projection.Field!.IsRegionPart => text, // the frame itself (§19.5)
                 ProjectionKind.Field => $"{text}.{FieldName(projection.Field!)}",
@@ -869,8 +935,15 @@ public sealed class CEmitter
         TypeKind.Reference when type.Pointee!.IsBox => type.IsMutableReference ? $"{CTypeName(type.Pointee)}*" : $"{CTypeName(type.Pointee)}const *",
         TypeKind.Reference => type.IsMutableReference ? $"{CTypeName(type.Pointee!)} *" : $"const {CTypeName(type.Pointee!)} *",
         TypeKind.Array => $"nvA{type.ArrayLength}_{Mangle(type.Element!)}",
+        TypeKind.Box when type.IsPoolBox => $"nvPB_{Mangle(type.Pointee!)}",
         TypeKind.Box => $"{CTypeName(type.Pointee!)} *",
-        TypeKind.Region => type.Region switch { RegionKind.Arena => "nv_arena", RegionKind.FixedBuffer => "nv_fba", _ => "nv_scratch" },
+        TypeKind.Region => type.Region switch
+        {
+            RegionKind.Arena => "nv_arena",
+            RegionKind.FixedBuffer => "nv_fba",
+            RegionKind.Pool => "nv_pool",
+            _ => "nv_scratch",
+        },
         _ => throw new InvalidOperationException($"type '{type}' has no C representation"),
     };
 
@@ -887,8 +960,10 @@ public sealed class CEmitter
         TypeKind.Enum => $"E{type.Name.Length}{type.Name}",
         TypeKind.Array when type.IsUnsized => $"U{Mangle(type.Element!)}",
         TypeKind.Array => $"A{type.ArrayLength}_{Mangle(type.Element!)}",
+        TypeKind.Box when type.IsPoolBox => $"Y{Mangle(type.Pointee!)}",
         TypeKind.Box => $"X{Mangle(type.Pointee!)}{Mangle(type.Allocator!)}",
         TypeKind.Reference => $"{(type.IsMutableReference ? "Q" : "P")}{Mangle(type.Pointee!)}",
+        TypeKind.Region when type.Region == RegionKind.Pool => $"G4Pool{Mangle(type.Element!)}",
         TypeKind.Region => $"G{type.Name.Length}{type.Name}",
         TypeKind.Void => "v",
         _ => type.Name,

@@ -18,7 +18,7 @@ public partial class FaultInjectionTests
 {
     private const int MaxAttempts = 200;
     /// <summary>Runtime calls that allocate: directly, or through a region (M4).</summary>
-    private static readonly string[] s_allocationCalls = ["nova_alloc(", "nova_region_alloc(", "nova_scratch_enter_root("];
+    private static readonly string[] s_allocationCalls = ["nova_alloc(", "nova_region_alloc(", "nova_scratch_enter_root(", "nova_pool_take("];
     private static readonly string CorpusRoot = Path.Combine(TestHelpers.RepoRoot(), "tests", "corpus");
 
     public static TheoryData<string> RunPassFiles()

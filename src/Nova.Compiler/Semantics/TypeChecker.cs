@@ -51,6 +51,7 @@ internal sealed class TypeChecker
         Arena,
         FixedBufferAllocator,
         Scratch,
+        Pool,
     }
 
     private readonly IReadOnlyList<CompilationUnit> _units;
@@ -83,7 +84,7 @@ internal sealed class TypeChecker
     /// <summary>Built-in items (AllocError, the allocators): emitted only if the program uses them.</summary>
     private readonly HashSet<object> _builtinItems = [];
     private readonly HashSet<object> _usedBuiltins = [];
-    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch"];
+    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch", "Pool", "PoolBox"];
 
     public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics)
     {
@@ -100,6 +101,7 @@ internal sealed class TypeChecker
             [symbols.Intern("Arena")] = Builtin.Arena,
             [symbols.Intern("FixedBufferAllocator")] = Builtin.FixedBufferAllocator,
             [symbols.Intern("Scratch")] = Builtin.Scratch,
+            [symbols.Intern("Pool")] = Builtin.Pool,
         };
         _thisSymbol = symbols.Intern("this");
         _frameMemory = new StructField(symbols.Intern("memory"), types.ScratchFrame, 0, default) { IsRegionPart = true };
@@ -615,6 +617,15 @@ internal sealed class TypeChecker
                 }
                 return contents.IsBottom || allocator.IsBottom ? _types.Error : BoxOf(contents, allocator);
             }
+            if (genericName is "Pool" or "PoolBox" && generic.Arguments.Length == 1)
+            {
+                var pooled = ResolveType(generic.Arguments[0], allowVoid: false);
+                if (pooled.IsBottom || !CheckPoolElement(pooled, generic.Arguments[0].Span))
+                {
+                    return _types.Error;
+                }
+                return genericName == "Pool" ? _types.PoolOf(pooled) : _types.PoolBoxOf(pooled);
+            }
             if (genericName == "Result" && generic.Arguments.Length == 2)
             {
                 var ok = ResolveType(generic.Arguments[0], allowVoid: true);
@@ -628,7 +639,8 @@ internal sealed class TypeChecker
                     ? $"'{genericName}' takes one type argument: '{genericName}<T>'"
                     : genericName == "Result" ? "'Result' takes two type arguments: 'Result<T, E>'"
                     : genericName == "Box" ? "'Box' takes one or two type arguments: 'Box<T>' or 'Box<T, A>'"
-                    : "only 'Slice<T>', 'SliceMut<T>' and 'Result<T, E>' take type arguments");
+                    : genericName is "Pool" or "PoolBox" ? $"'{genericName}' takes one type argument: '{genericName}<T>'"
+                    : "only 'Slice<T>', 'SliceMut<T>', 'Result<T, E>', 'Box<T, A>', 'Pool<T>' and 'PoolBox<T>' take type arguments");
                 return _types.Error;
             }
             var element = ResolveType(generic.Arguments[0], allowVoid: false);
@@ -793,6 +805,74 @@ internal sealed class TypeChecker
         return ToPlace(receiver) is { } place
             ? new HirBorrow(false, place, referenceType, member.Target.Span)
             : new HirBorrowTemp(false, receiver, referenceType, member.Target.Span);
+    }
+
+    /// <summary>A pool holds values one by one, so they may need drop; but nothing scoped (E3, N0264).</summary>
+    private bool CheckPoolElement(NovaType element, TextSpan span)
+    {
+        if (element.Kind is TypeKind.Void or TypeKind.Never || TypeTable.IsScoped(element))
+        {
+            Error(DiagnosticCodes.NotRegionContent, span, $"a pool cannot hold a '{element}': {(TypeTable.IsScoped(element)
+                ? "it is scoped (a reference or slice), and pool memory cannot hold loans (E3)" : "it has no value")}");
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary><c>Pool.create(allocator, capacity)</c> (§19.6): <c>T</c> comes from the expected <c>Pool&lt;T&gt;</c>.</summary>
+    private HirExpr CheckPoolCreate(CallExpr call, MemberExpr member, NovaType? expected)
+    {
+        if (Name(member.Member.Name) != "create" || call.Arguments.Length != 2)
+        {
+            Error(Name(member.Member.Name) != "create" ? DiagnosticCodes.UndefinedName : DiagnosticCodes.ArgumentCount, call.Span,
+                "a pool is made with 'Pool.create(allocator, capacity)'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var allocator = AutoDeref(Synth(call.Arguments[0], null));
+        var capacity = CheckExpr(call.Arguments[1], _types.U32);
+        if (expected is not { Region: RegionKind.Pool })
+        {
+            if (expected is null || !expected.IsBottom)
+            {
+                Error(DiagnosticCodes.ResultTypeUnknown, call.Span, expected is null
+                    ? "the element type of 'Pool.create(...)' is unknown here; give the variable a type: 'let pool: Pool<T> = …'"
+                    : $"'Pool.create(...)' makes a pool, but '{expected}' is expected here");
+            }
+            return ErrorResult(call.Span);
+        }
+        if (allocator.Type.IsBottom)
+        {
+            return ErrorResult(call.Span);
+        }
+        if (!IsAllocatorType(allocator.Type))
+        {
+            Error(DiagnosticCodes.NotAnAllocator, call.Arguments[0].Span,
+                $"'{allocator.Type}' is not an allocator type; use 'SystemHeap {{}}' or 'FailingAllocator {{}}'");
+            return ErrorResult(call.Span);
+        }
+        return new HirBuiltinCall(BuiltinFunction.PoolCreate, [allocator, capacity], expected, call.Span);
+    }
+
+    /// <summary><c>pool.take(v)</c> (§19.6): a <c>PoolBox&lt;T&gt;</c> carrying a shared loan of the pool.</summary>
+    private HirExpr CheckPoolTake(CallExpr call, MemberExpr member, HirExpr receiver, NovaType pool)
+    {
+        if (Name(member.Member.Name) != "take" || call.Arguments.Length != 1)
+        {
+            Error(Name(member.Member.Name) != "take" ? DiagnosticCodes.UndefinedName : DiagnosticCodes.ArgumentCount, member.Member.Span,
+                $"'{pool}' has one method: 'take(v)'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var reference = RegionReceiver(receiver, pool, isMutable: false, member);
+        if (reference is null)
+        {
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var value = CheckExpr(call.Arguments[0], pool.Element!);
+        var result = ResultOf(_types.PoolBoxOf(pool.Element!), Used(_allocError).Type);
+        return new HirBuiltinCall(BuiltinFunction.PoolTake, [reference, value], result, call.Span);
     }
 
     /// <summary>R2 (ownership.md): region memory holds no type with drop and nothing scoped (N0264).</summary>
@@ -1606,7 +1686,7 @@ internal sealed class TypeChecker
             }
         }
 
-        if (TypeTable.IsScoped(type) && decl.IsMutable)
+        if (type.IsReference && decl.IsMutable) // other scoped values may be `var` (§19.1, M4c)
         {
             Error(DiagnosticCodes.ReferenceNotAllowed, decl.Name.Span,
                 "a reference variable must be declared with 'let': references cannot be re-pointed (assigning to one writes through it)");
@@ -2132,6 +2212,9 @@ internal sealed class TypeChecker
             case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } arenaName } arenaMember } arenaCall
                 when Lookup(arenaName.Name.Name) is Builtin.Arena:
                 return CheckArenaCreate(arenaCall, arenaMember);
+            case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } poolName } poolMember } poolCall
+                when Lookup(poolName.Name.Name) is Builtin.Pool:
+                return CheckPoolCreate(poolCall, poolMember, expected);
             case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } regionName } regionMember } regionCall
                 when Lookup(regionName.Name.Name) is Builtin.FixedBufferAllocator or Builtin.Scratch:
                 return CheckRegionConstructor(regionCall, regionMember, (Builtin)Lookup(regionName.Name.Name)!);
@@ -2684,6 +2767,10 @@ internal sealed class TypeChecker
             receiver = AutoDeref(receiver); // the method receives the box's contents (§18.2)
         }
         var structType = receiver.Type.Pointee ?? receiver.Type;
+        if (structType.Region == RegionKind.Pool)
+        {
+            return CheckPoolTake(call, member, receiver, structType);
+        }
         if (structType.Kind == TypeKind.Region)
         {
             return CheckArenaMethod(call, member, receiver);

@@ -142,7 +142,7 @@ references, so the borrow checker reports their conflicts as N0240–N0245.
 
 | Code | Meaning | Example |
 |---|---|---|
-| N0260 | `Ok(...)` / `Err(...)` without an expected `Result` type, or where another type is expected | `let a = Ok(1);` |
+| N0260 | `Ok(...)` / `Err(...)` (or, since M4c, `Pool.create(...)`) without an expected type that fixes its type arguments, or where another type is expected | `let a = Ok(1);`, `let p = Pool.create(SystemHeap {}, 4u32);` |
 | N0261 | `?` in a function that does not return a `Result` with the same error type | `?` on `Result<i32, F>` in a function returning `Result<i32, E>` |
 | N0262 | `?` or `!` on something that is not a `Result` value (a reference to one included) | `n?` with `n: i32` |
 | N0263 | An allocator argument that is not an allocator type (`SystemHeap`, `FailingAllocator`) | `Box<i32, Point>`, `Box.createIn(point, 1)` |

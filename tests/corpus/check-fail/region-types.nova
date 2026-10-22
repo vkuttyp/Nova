@@ -14,7 +14,7 @@ fn f(slice: SliceMut<u8>, words: [u32; 4]) -> Result<void, AllocError> {
     let c = FixedBufferAllocator.over(mut slice);
     let d = c.alloc(Res { id: 1 }); // error[N0264]
     let e = c.reset(); // error[N0200]
-    var g = FixedBufferAllocator.over(mut storage); // error[N0246]
+    var g = FixedBufferAllocator.over(mut storage); // accepted since M4c: a fixed-buffer allocator may be a var
     let fixedStorage = [0u8; 4];
     let h = FixedBufferAllocator.over(mut fixedStorage); // error[N0248]
     let frame = Scratch.enter();

@@ -57,6 +57,8 @@ public enum RegionKind
     FixedBuffer,
     /// <summary><c>ScratchFrame</c> (§19.5): scoped (a nested frame borrows its parent); releases at drop.</summary>
     ScratchFrame,
+    /// <summary><c>Pool&lt;T&gt;</c> (§19.6): <see cref="NovaType.Element"/> is T; its boxes are <c>PoolBox&lt;T&gt;</c>.</summary>
+    Pool,
 }
 
 public sealed class StructField
@@ -244,11 +246,16 @@ public sealed class NovaType
         IsMutableReference = isMutable;
     }
 
-    internal NovaType(RegionKind region, string name)
-        : this(TypeKind.Region, name) => Region = region;
+    internal NovaType(RegionKind region, string name, NovaType? element = null)
+        : this(TypeKind.Region, name)
+    {
+        Region = region;
+        Element = element;
+    }
 
     internal NovaType(NovaType contents, NovaType allocator, bool defaultAllocator)
-        : this(TypeKind.Box, defaultAllocator ? $"Box<{contents.Name}>" : $"Box<{contents.Name}, {allocator.Name}>")
+        : this(TypeKind.Box, allocator.Region == RegionKind.Pool ? $"PoolBox<{contents.Name}>"
+            : defaultAllocator ? $"Box<{contents.Name}>" : $"Box<{contents.Name}, {allocator.Name}>")
     {
         Pointee = contents;
         Allocator = allocator;
@@ -301,6 +308,9 @@ public sealed class NovaType
     public NovaType? Allocator { get; }
 
     public bool IsBox => Kind == TypeKind.Box;
+
+    /// <summary><c>PoolBox&lt;T&gt;</c> (type-system.md §19.6): a box whose allocator is a pool; scoped.</summary>
+    public bool IsPoolBox => Kind == TypeKind.Box && Allocator!.Region == RegionKind.Pool;
 
     /// <summary>Which region type this is; <see cref="RegionKind.None"/> for every other kind.</summary>
     public RegionKind Region { get; }
@@ -424,6 +434,23 @@ public sealed class TypeTable
     private readonly Dictionary<(NovaType, NovaType), NovaType> _results = [];
     private readonly Dictionary<(NovaType, NovaType), NovaType> _boxes = [];
 
+    private readonly Dictionary<NovaType, NovaType> _pools = [];
+
+    /// <summary>The unique <c>Pool&lt;T&gt;</c> (type-system.md §19.6).</summary>
+    public NovaType PoolOf(NovaType element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        if (!_pools.TryGetValue(element, out var pool))
+        {
+            pool = new NovaType(RegionKind.Pool, $"Pool<{element.Name}>", element);
+            _pools.Add(element, pool);
+        }
+        return pool;
+    }
+
+    /// <summary>The unique <c>PoolBox&lt;T&gt;</c>: a box whose allocator is <c>Pool&lt;T&gt;</c>.</summary>
+    public NovaType PoolBoxOf(NovaType element) => BoxOf(element, PoolOf(element), isDefault: false);
+
     /// <summary>The unique <c>Box&lt;contents, allocator&gt;</c>; <paramref name="isDefault"/> when the allocator is <c>SystemHeap</c>.</summary>
     public NovaType BoxOf(NovaType contents, NovaType allocator, bool isDefault)
     {
@@ -499,10 +526,16 @@ public sealed class TypeTable
                 // LP64 targets only in M2 (TargetInfo.PointerBits is asserted in the generated C).
                 return type.IsSlice ? (16, 8) : (8, 8); // a slice is (pointer, u64 length)
             case TypeKind.Box:
-                return (8, 8);
+                return type.IsPoolBox ? (16, 8) : (8, 8); // a pool box also points to its pool
             case TypeKind.Region:
                 // nv_arena, nv_fba, nv_scratch in nova/rt.h (8-byte fields; asserted there).
-                return type.Region switch { RegionKind.Arena => (40, 8), RegionKind.FixedBuffer => (24, 8), _ => (32, 8) };
+                return type.Region switch
+                {
+                    RegionKind.Arena => (40, 8),
+                    RegionKind.FixedBuffer => (24, 8),
+                    RegionKind.Pool => (48, 8),
+                    _ => (32, 8),
+                };
             case TypeKind.Array:
             {
                 var (elementSize, elementAlign) = LayoutOf(type.Element!);
@@ -614,7 +647,7 @@ public sealed class TypeTable
     public static bool NeedsDrop(NovaType type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        if (type.IsBox || type.Region is RegionKind.Arena or RegionKind.ScratchFrame)
+        if (type.IsBox || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
         {
             return true;
         }
@@ -632,7 +665,7 @@ public sealed class TypeTable
     public static bool IsScoped(NovaType type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        return type.IsReference || type.Region is RegionKind.FixedBuffer or RegionKind.ScratchFrame
+        return type.IsReference || type.IsPoolBox || type.Region is RegionKind.FixedBuffer or RegionKind.ScratchFrame
             || (type.Enum?.ResultTypes is var (ok, err) && (IsScoped(ok) || IsScoped(err)));
     }
 

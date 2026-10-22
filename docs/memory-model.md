@@ -163,6 +163,9 @@ fn render(n: usize) -> Result<void, AllocError> {
 ### 3.5 Fixed-buffer and pool allocators
 - `FixedBufferAllocator.over(mut storage)` borrows its backing storage mutably
   for its whole lifetime, so the backing array cannot be touched directly while it is used.
+- *As implemented in M4c (ADR 0004):* `Pool<T>` is a fixed-capacity pool whose `take(v)` returns a
+  scoped `PoolBox<T>`: a box that holds a loan of the pool and returns its slot when destroyed
+  (`type-system.md` §19.6). `SlotMap` with generation-checked handles is still M6.
 - `Pool<T>` / `SlotMap<T>`: typed slots with generation counters (goose.md §9.8
   plus Vale). Handles are free-standing `Handle<T>` values (index + generation)
   validated on access (`get(h) -> borrow T?`).

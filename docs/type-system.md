@@ -677,11 +677,17 @@ allocation borrows its region.
 A type is **scoped** if a value of it may hold loans:
 - references and slices (§13, §16);
 - `Result<T, E>` whose `T` or `E` is scoped (a *scoped result*);
-- the scoped region values: `FixedBufferAllocator` (§19.4) and `ScratchFrame` (§19.5).
+- the scoped region values: `FixedBufferAllocator` (§19.4), `ScratchFrame` (§19.5) and
+  `PoolBox<T>` (§19.6).
 
 Every rule for references applies to scoped types (N0246):
-- they may appear only in parameters, `let` locals with an initialiser, and return types;
-- never in fields, payloads of user enums, array elements, box contents, constants or `var` locals.
+- they may appear only in parameters, locals with an initialiser, and return types;
+- never in fields, payloads of user enums, array elements, box contents or constants.
+
+References and slices must be `let` locals, because assigning to a reference writes through it.
+*Since M4c,* other scoped values (scoped results and region values) may be `var`: assigning one
+replaces it, like any value. For the borrow checker, the local then holds the loans of every value
+it is assigned (a sound over-approximation).
 
 A function returning a scoped type needs return sources: the default rule (one reference
 parameter) or a `borrow(...)` list (§13.5). In this rule, "reference parameter" now means
@@ -795,3 +801,36 @@ fn render(n: usize) -> Result<u64, AllocError> {
 - Frames are bound with `using` (R3; §14.6): nesting borrows the frame mutably, and a scoped
   value cannot be a `var`. Since frames are scoped, they cannot be returned from the function
   that entered them.
+
+### 19.6 `Pool<T>` and `PoolBox<T>` (M4c)
+```nova
+struct Particle { x: i32; v: i32; }
+
+fn simulate() -> Result<i32, AllocError> {
+    using pool: Pool<Particle> = Pool.create(SystemHeap {}, 64u32);
+    var a = pool.take(Particle { x: 0, v: 2 })?;     // PoolBox<Particle>: a loan of `pool`
+    let b = pool.take(Particle { x: 10, v: -1 })?;
+    a.x += a.v;                                      // through the box
+    return Ok(a.x + b.x);
+}                                                    // b, a, then the pool are destroyed
+```
+- `Pool<T>` is a built-in allocator for up to `capacity` values of one type `T`.
+  - `Pool.create(a, capacity)`, with `a` an allocator value and `capacity: u32`, makes an empty
+    pool. `T` comes from the expected type (`let pool: Pool<T> = …`); without one it is N0260.
+  - It cannot fail: the slots are allocated from `a` at the first `take`.
+  - `Pool<T>` is a move type that needs drop; destroying it returns the slots to `a`. It is not
+    scoped.
+- `pool.take(v)` takes `borrow this` and returns `Result<PoolBox<T>, AllocError>`: `v` moves into
+  a free slot. The result is `Err(AllocError.OutOfMemory)` when all slots are taken, or when the
+  slots cannot be allocated; `v` is then destroyed.
+- `PoolBox<T>` owns one slot and its value, like a `Box` (§18.2):
+  - auto-deref, the box's own mutability, borrowing its contents, and moving fields out of it
+    (§18.3) all work as for `Box`;
+  - it is a move type that needs drop: destroying it destroys the `T` (its drop glue), then
+    returns the slot to the pool. Values are destroyed one by one, so **`T` may need drop**: R2
+    does not apply to pools;
+  - it is **scoped**: it carries the shared loan of the pool from `take`. It cannot be returned
+    past the pool, stored in a field or box, or outlive the pool (§19.3);
+  - `T` must not be scoped (E3; N0264).
+- Destroying the pool while a `PoolBox` from it is live is rejected (B2), so every slot is free
+  when the pool is destroyed.

@@ -311,6 +311,27 @@ nv_scratch nova_scratch_enter_root(nv_loc loc);
 nv_scratch nova_scratch_enter_child(nv_scratch *parent);
 void nova_scratch_drop(nv_scratch *frame);
 
+/* ---- Pools (type-system.md §19.6) ------------------------------------------------------- */
+
+/* Up to `capacity` slots of one size, allocated at the first take. 48 bytes on LP64. */
+typedef struct nv_pool {
+    uint8_t *slots;
+    void *free;           /* free list through the slots; NULL with `used < capacity` means untouched slots */
+    uint64_t capacity;
+    uint64_t used;        /* slots handed out at least once */
+    uint64_t slot_size;
+    uint64_t allocator;
+} nv_pool;
+#if UINTPTR_MAX == UINT64_MAX
+_Static_assert(sizeof(nv_pool) == 48 && _Alignof(nv_pool) == 8, "nova/rt.h: nv_pool layout");
+#endif
+
+nv_pool nova_pool_create(uint32_t allocator, uint64_t capacity);
+/* A free slot of `size` bytes (the same for every call on a pool), aligned to 16; NULL if none. */
+void *nova_pool_take(nv_pool *p, uint64_t size);
+void nova_pool_release(nv_pool *p, void *slot);
+void nova_pool_drop(nv_pool *p);
+
 /* Allocation from any region (the generated helpers' single entry point); NULL on failure. */
 #define NV_REGION_ARENA 0u
 #define NV_REGION_FBA 1u
