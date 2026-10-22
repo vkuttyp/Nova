@@ -15,7 +15,7 @@ fn f(s: Shape, n: i32, b: bool, h: Holder) {
     match (n) { 1 => { } 2 => { } } // error[N0256]
     match (n) { 1 => { } 1 => { } _ => { } } // error[N0257]
     match (b) { true => { } } // error[N0256]
-    match (h) { Holder.One(r) => { } } // error[N0258]
+    match (h) { Holder.One(r) => { } } // accepted since M3c: the match consumes h
     match (n) { Shape.Empty => { } _ => { } } // error[N0205]
     let x = Shape.Circle(1, 2); // error[N0209]
     let y = Shape.Rect; // error[N0209]

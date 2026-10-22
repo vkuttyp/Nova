@@ -129,7 +129,7 @@ programs that type-check. A move while borrowed is reported by the borrow checke
 | N0254 | `return`, `break`, `continue` or `defer` inside a deferred statement | `defer return 1;` |
 | N0256 | `match` that does not cover every value (add the missing variants or `_`) | `match (s) { Shape.Empty => { } }` |
 | N0257 | Unreachable `match` arm: a duplicate pattern, or any arm after `_` | `1 => { } 1 => { }` |
-| N0258 | A payload binding of a non-Copy type when matching a value (match a reference instead) | `match (h) { Holder.One(r) => { } }` with `r: Res` |
+| N0258 | *Retired in M3c:* a non-Copy payload bound from a value scrutinee now moves out, and the match consumes the scrutinee (`type-system.md` §18.4) | — |
 | N0259 | Invalid array (`type-system.md` §16): a length that is not an integer literal from 1 to 2^48 − 1, an element type that is not Copy, or an array larger than 2^31 − 1 bytes | `[Res; 2]`, `[i32; 0]` |
 
 Arrays and slices otherwise reuse codes: indexing or slicing a non-array, a non-`usize` index,

@@ -120,8 +120,26 @@ public sealed record NirPlace(NirLocal Local, ImmutableArray<Projection> Project
 
     public NirPlace Project(Projection projection) => new(Local, Projections.Add(projection));
 
-    /// <summary>Only field projections: a move path (no deref, downcast or element).</summary>
-    public bool IsFieldPath => Projections.All(p => p.IsField);
+    /// <summary>
+    /// A move path: fields, and derefs of boxes (a box owns its contents, type-system.md §18.3); no
+    /// deref of a reference, downcast or element.
+    /// </summary>
+    public bool IsMovePath
+    {
+        get
+        {
+            var type = Local.Type;
+            foreach (var projection in Projections)
+            {
+                if (!projection.IsField && !(projection.IsDeref && type.IsBox))
+                {
+                    return false;
+                }
+                type = projection.Apply(type);
+            }
+            return true;
+        }
+    }
 
     public bool Equals(NirPlace? other) =>
         other is not null && other.Local == Local && Projections.SequenceEqual(other.Projections);
@@ -214,6 +232,15 @@ public sealed record NirBoundsCheck(NirOperand Index, NirOperand Length) : NirSt
 
 /// <summary>Panics ("slice range out of bounds") unless Low &lt;= High &lt;= Length.</summary>
 public sealed record NirRangeCheck(NirOperand Low, NirOperand High, NirOperand Length) : NirStatement;
+
+/// <summary>
+/// Moves every payload of variant <see cref="Variant"/> out of the enum value in <see cref="Source"/> (a local)
+/// into <see cref="Targets"/> (null: a Copy payload nobody binds). The source is consumed (type-system.md §18.4).
+/// </summary>
+public sealed record NirUnpack(NirPlace Source, EnumVariant Variant, ImmutableArray<NirLocal?> Targets) : NirStatement;
+
+/// <summary>Returns a box's memory to its allocator without destroying its contents (a partially moved box, §18.3).</summary>
+public sealed record NirBoxFree(NirPlace Box, NirLocal? Flag) : NirStatement;
 
 /// <summary>Evaluates an rvalue for its effect (a call whose result is unused).</summary>
 public sealed record NirEval(NirRvalue Value) : NirStatement;

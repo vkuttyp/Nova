@@ -388,7 +388,7 @@ MatchStmt = 'match' '(' Expr ')' '{' Arm* '}'
 Arm       = Pattern '=>' Block ','?
 Pattern   = '_' | IntLiteral | '-' IntLiteral | 'true' | 'false'
           | QualifiedName ('(' Binding (',' Binding)* ')')?        -- E.V or E.V(x, _)
-Binding   = Identifier | '_'
+Binding   = Identifier | 'var' Identifier | '_'        -- 'var': M3c (§18.4)
 ```
 - `match` is a **statement** in v0. Arms are tried in order; the first that matches runs its block.
 - **Scrutinee types:**
@@ -400,9 +400,8 @@ Binding   = Identifier | '_'
   matches need `_`. `bool` matches need both values or `_`. An arm that can never match (a
   repeated variant or literal, or anything after `_`) is N0257.
 - **Bindings.** A variant pattern binds each named payload to a new immutable local in the arm:
-  - **Scrutinee of type `E` (a value):** the binding is a *copy* of the payload. A non-Copy
-    payload cannot be bound this way (N0258: "match on `borrow e` to bind it by reference").
-    Moving payloads out of an enum is future work (it needs move paths into variants).
+  - **Scrutinee of type `E` (a value):** the binding is a *copy* of the payload. Since M3c a
+    non-Copy payload is moved out, and the match consumes its scrutinee (§18.4).
   - **Scrutinee of type `borrow E` / `borrow mut E`:** the binding is a `borrow T` /
     `borrow mut T` to the payload, and the borrow checker treats it like any reborrow of the
     scrutinee.
@@ -611,7 +610,54 @@ fn main() -> i32 {
   the box while a loan of its contents is live is rejected (N0240, N0243), as for any place and
   its fields. (Unlike a reference going out of scope, a box going out of scope destroys what it
   points to.)
-- **Moving out of a box's contents** is not allowed in M3b (N0251); M3c relaxes this.
+- **Moving out of a box's contents**: see §18.3 (M3c).
 - No null boxes exist. A `Box` is never Copy and has no `==`.
 
 Diagnostics: N0263 (an allocator argument that is not an allocator type).
+
+### 18.3 Moving out of a box (M3c)
+- A box held in an **owned place** owns its contents as a part of that place: a local, or a
+  field path of one, not reached through a reference. Its fields may be moved out
+  (`let l = n.left;`, `move n.left`), exactly like fields of a struct local (§14.3–14.4):
+  - the box cannot be used as a whole again (moved, passed, matched, borrowed) until every
+    moved-out field is re-initialised by assignment (N0250);
+  - a field of a `T` with a `drop` block cannot be moved out (N0252);
+  - through a reference, a box's contents are as immovable as anything else (N0251).
+- Destroying a partially moved box destroys the fields still initialised (in declaration order),
+  then returns the memory to the allocator. `T`'s drop glue does not run, and `T` has no `drop`
+  block by the rule above.
+- There is no way to move the whole contents out in v0 (`T` would need an unbox operation, M6).
+
+### 18.4 Moving payloads out in `match` (M3c; replaces N0258)
+```text
+Binding = Identifier | 'var' Identifier | '_'
+```
+- `var x` makes a mutable binding; `x` an immutable one. Both may bind any payload type.
+- **Consuming match.** If the scrutinee is a value (not a reference) and some arm binds a
+  non-Copy payload, the match **consumes** its scrutinee:
+  - the scrutinee is moved when the match starts. A place scrutinee is left uninitialised, as by
+    `move`; a `using` binding cannot be consumed (N0253);
+  - in an arm whose pattern lists payloads (`E.V(…)`), every payload of the variant moves out:
+    named ones into their bindings, and `_` ones into hidden locals of the arm. Payloads not bound
+    by name are therefore destroyed when the arm ends, before the bindings' own scope ends;
+  - in any other arm (`_`, `E.V` without a list, a variant without payload), the value is
+    destroyed when the match statement ends.
+- Otherwise (Copy payloads only, or a reference scrutinee) the rules of §15.2 apply unchanged.
+- N0258 is no longer reported (since M3c).
+
+### 18.5 Destroying deep structures (R-9)
+- A box's drop glue is recursive in general: destroying a `T` destroys its fields, which may own
+  further boxes. For a recursive type that would use stack in proportion to the structure's depth.
+- **Tail iteration.** The compiler finds the *tail* of `T`: the last field (in destruction order) that
+  needs drop, followed through structs, and through enum variants' last payloads, until it
+  reaches a `Box<T>` again. If there is one, `Box<T>`'s glue becomes a loop:
+  - destroy everything of the current `T` except the tail, in the normal order;
+  - take the tail box's pointer (null for variants that end elsewhere);
+  - free the current memory, then continue with the tail's contents.
+- Only the moment the memory is freed changes: the current node is freed before the tail is
+  destroyed instead of after. No program can observe that difference; every `drop` block runs in
+  the order §14.5 defines.
+- Consequence: lists (`Cons(x, Box<List>)`) are destroyed in constant stack depth. Trees use
+  stack in proportion to the number of non-tail steps on a path (the left children in
+  `{ left, right }`). Balanced trees therefore use logarithmic depth, and a left-degenerate tree
+  still recurses (R-9 records this).

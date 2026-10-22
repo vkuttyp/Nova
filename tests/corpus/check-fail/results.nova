@@ -48,7 +48,7 @@ fn patterns(r: Result<i32, E>, p: Result<Res, E>, q: borrow Result<Res, E>) {
         _ => { }
     }
     match (p) {
-        Ok(res) => { } // error[N0258]
+        Ok(res) => { } // accepted since M3c: the match consumes p
         Err(_) => { }
     }
     match (q) {
@@ -58,4 +58,10 @@ fn patterns(r: Result<i32, E>, p: Result<Res, E>, q: borrow Result<Res, E>) {
     give()!;
     none()?; // error[N0261]
     give(); // a discarded Result is fine
+}
+fn varBindingOnReference(h: borrow Result<i32, E>) {
+    match (h) {
+        Ok(var v) => { } // error[N0246]
+        Err(_) => { }
+    }
 }

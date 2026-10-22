@@ -1,0 +1,66 @@
+// Moving out of boxes and consuming matches (type-system.md §18.3, §18.4).
+struct Res { id: i32; drop { } }
+struct Pair { a: Res; b: Res; }
+struct Owner { res: Res; drop { } }
+enum Holder { One(Res), Two(Res, Res), Empty }
+fn consume(r: Res) { }
+fn consumeBox(b: Box<Pair>) { }
+fn look(p: borrow Pair) { }
+
+fn wholeAfterPartial(b: Box<Pair>) {
+    consume(move b.a);
+    consumeBox(b); // error[N0250]
+}
+fn borrowAfterPartial(b: Box<Pair>) {
+    let a = b.a;
+    look(b); // error[N0250]
+}
+fn twiceOutOfBox(b: Box<Pair>) {
+    consume(b.a);
+    consume(b.a); // error[N0250]
+}
+fn fieldOfDropTypeInBox(b: Box<Owner>) {
+    consume(b.res); // error[N0252]
+}
+fn throughReferenceToBox(r: borrow Box<Pair>) {
+    consume(r.a); // error[N0251]
+}
+fn fieldWriteAfterWholeMove(b: Box<Pair>) {
+    var c = b;
+    consumeBox(c);
+    c.a = Res { id: 1 }; // error[N0250]
+}
+fn scrutineeUsedAfterConsume(h: Holder) {
+    match (h) {
+        Holder.One(r) => { consume(r); }
+        _ => { }
+    }
+    match (h) { // error[N0250]
+        _ => { }
+    }
+}
+fn consumeUsing() {
+    using u = Holder.One(Res { id: 1 });
+    match (u) { // error[N0253]
+        Holder.One(r) => { }
+        _ => { }
+    }
+}
+fn consumeWhileBorrowed(h: Holder) {
+    let r = borrow h;
+    match (h) { // error[N0240]
+        Holder.Two(a, b) => { }
+        _ => { }
+    }
+    let again = r;
+}
+fn bindingUsedTwice(h: Holder) {
+    match (h) {
+        Holder.Two(a, _) => {
+            consume(a);
+            consume(a); // error[N0250]
+        }
+        _ => { }
+    }
+}
+fn varOnReference(h: borrow Holder) { }

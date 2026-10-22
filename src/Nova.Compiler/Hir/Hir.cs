@@ -173,7 +173,11 @@ public sealed record HirReturn(HirExpr? Value, TextSpan Span) : HirStmt(Span);
 public sealed record HirExprStmt(HirExpr Expression, TextSpan Span) : HirStmt(Span);
 
 /// <summary>A `match` statement (type-system.md §15.2); arms are tried in order.</summary>
-public sealed record HirMatch(HirExpr Scrutinee, ImmutableArray<HirArm> Arms, TextSpan Span) : HirStmt(Span);
+public sealed record HirMatch(HirExpr Scrutinee, ImmutableArray<HirArm> Arms, TextSpan Span) : HirStmt(Span)
+{
+    /// <summary>The match moves non-Copy payloads out of its value scrutinee (type-system.md §18.4).</summary>
+    public bool Consumes { get; init; }
+}
 
 public enum HirPatternKind
 {
@@ -193,7 +197,11 @@ public sealed record HirArm(
     Int128 Value,
     ImmutableArray<(HirLocal Local, int PayloadIndex)> Bindings,
     HirBlock Body,
-    TextSpan Span);
+    TextSpan Span)
+{
+    /// <summary>The pattern lists the payloads (<c>E.V(…)</c>); in a consuming match all of them move out.</summary>
+    public bool ListsPayloads { get; init; }
+}
 
 /// <summary>Runs <see cref="Body"/> when the enclosing block exits (type-system.md §14.7).</summary>
 public sealed record HirDefer(HirStmt Body, TextSpan Span) : HirStmt(Span);

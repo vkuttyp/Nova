@@ -1,0 +1,42 @@
+// A match on a value moves non-Copy payloads out (type-system.md §18.4).
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+enum Pair { Two(Res, Res), One(Res), Nothing }
+fn make(k: i32) -> Pair {
+    if (k == 2) { return Pair.Two(Res { id: 1 }, Res { id: 2 }); }
+    if (k == 1) { return Pair.One(Res { id: 3 }); }
+    return Pair.Nothing;
+}
+fn keep(r: Res) -> i32 => r.id;
+fn main() {
+    match (make(2)) {
+        Pair.Two(a, _) => { Console.writeLine("two"); let k = keep(a); }
+        Pair.One(var r) => { r.id = 30; }
+        Pair.Nothing => { }
+    }
+    let p = make(1);
+    match (p) {
+        Pair.One(var r) => { r.id = 31; Console.writeLine("one"); }
+        _ => { }
+    }
+    match (make(2)) {
+        Pair.One(r) => { }
+        _ => { Console.writeLine("wild"); }
+    }
+    let r: Result<Res, i32> = Ok(Res { id: 9 });
+    match (r) {
+        Ok(v) => { Console.writeLine(v.id); }
+        Err(_) => { }
+    }
+    Console.writeLine("end");
+}
+// expect-stdout: two
+// expect-stdout: drop 1
+// expect-stdout: drop 2
+// expect-stdout: one
+// expect-stdout: drop 31
+// expect-stdout: wild
+// expect-stdout: drop 1
+// expect-stdout: drop 2
+// expect-stdout: 9
+// expect-stdout: drop 9
+// expect-stdout: end

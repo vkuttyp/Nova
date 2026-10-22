@@ -20,7 +20,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **M1** ✅ 2026-10-22 Minimal compiler | Lexer, parser, AST, primitives, locals, functions, arithmetic, conditions, loops, semantic checks, HIR, NIR, LIR, C emission, executable | See `milestone-1.md`: ≥ 150 corpus tests, generated C clean under strict warnings, clang + gcc host runs agree, both CosmoOS triples compile, determinism check |
 | **C1** ✅ 2026-10-22 Native Hello World | M1 output linked against CosmoOS libc and run in QEMU (S0, out of tree) | `NOVATEST: PASS` printed by the Nova program inside CosmoOS on **x86-64 and AArch64**. `.note.cosmo` present. `llvm-nm -u` shows only libc symbols. Exact flags recorded. No CosmoOS file modified (`git status` clean) |
 | **M2** Ownership & borrowing | Structs, enums, references, moves, init check, NLL borrow check, drop elaboration, `drop`, `using`, `defer`, slices of arrays | Each of O1–O5, B1–B5, E1–E4 has ≥ 2 compile-fail and ≥ 1 near-miss compile-pass test (≥ 120 total). Drop-order run tests. Mutation suite. ASan/UBSan clean |
-| **M3** Safe heap | `Allocator`, `SystemHeap`, `Box`, `AllocError`, `Result`/`?`, `FailingAllocator`, recursive types, iterative drops | Fault-injection sweep: for every test that allocates *n* times, run with failure at each *k ≤ n*; no leaks/double frees under ASan. Ex4, Ex5, Ex11, Ex14 pass |
+| **M3** ✅ 2026-10-22 Safe heap (ADR 0003: built-in `Result`/`Box`/allocators) | `Allocator`, `SystemHeap`, `Box`, `AllocError`, `Result`/`?`, `FailingAllocator`, recursive types, iterative drops | Fault-injection sweep: for every test that allocates *n* times, run with failure at each *k ≤ n*; no leaks/double frees under ASan. Ex4, Ex5, Ex11, Ex14 pass |
 | **C2** Safe allocation in CosmoOS | M2+M3 features in Profile A | Allocation, destruction and fault-injection tests pass inside QEMU on both arches |
 | **M4** Regions | `Arena`, `Scratch`, `FixedBufferAllocator`, `Pool` | Compile-fail: every arena-escape form (return, store in Box, outlive via `reset`/drop). Run tests for bulk release. R2 enforced |
 | **M5** Escape/placement analysis | CFG analysis, classification, `--explain-allocations`, Box→stack demotion | Optimised vs unoptimised outputs equal on the whole run-pass corpus. Drop timing identical (instrumented). Report snapshots. No program accepted only because of placement |
@@ -52,7 +52,15 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 - 2d, enums with payloads and `match`, fixed arrays, slices, bounds checks, `for`, and the
   mutation suite.
 
-All 99 run-corpus programs run inside CosmoOS on both arches.
+**M3, the safe heap, is done** (2026-10-22; `milestone-3.md`; ADR 0003). It delivered:
+- 3a, `Result<T, E>`, `?`, `!`;
+- 3b, `Box<T, A>`, `SystemHeap`, `FailingAllocator`, runtime allocation accounting, and the
+  fault-injection sweep;
+- 3c, moves out of boxes, consuming `match`, and tail-iterative destruction.
 
-Next is **M3** (see the table above). In parallel, when the owner wants it: propose the S1
-in-tree port for C1 (OD-20).
+Heap programs run inside CosmoOS on both arches with its libc `malloc`.
+
+Next is **C2** (safe allocation in CosmoOS: allocation, destruction and fault-injection tests
+inside QEMU on both arches). Much of it already runs via `c1.py --corpus`; the guest-side
+fault-injection sweep is the remaining work. After C2 comes M4 (regions). In parallel, when the
+owner wants it: propose the S1 in-tree port for C1 (OD-20).

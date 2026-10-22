@@ -1227,7 +1227,10 @@ internal sealed class TypeChecker
             }
             var body = CheckBlock(arm.Body);
             _scopes.RemoveAt(_scopes.Count - 1);
-            arms.Add(new HirArm(kind, variant, value, bindings.ToImmutable(), body, arm.Span));
+            arms.Add(new HirArm(kind, variant, value, bindings.ToImmutable(), body, arm.Span)
+            {
+                ListsPayloads = arm.Pattern is VariantPattern { Bindings.IsDefault: false },
+            });
         }
 
         if (ok && !wildcard)
@@ -1244,7 +1247,11 @@ internal sealed class TypeChecker
                     $"this match does not cover {string.Join(", ", missing)}; add the missing arms or a '_' arm");
             }
         }
-        return ok ? new HirMatch(scrutinee, arms.ToImmutable(), match.Span) : new HirExprStmt(ErrorResult(match.Span), match.Span);
+        // A value scrutinee with a non-Copy payload bound by name is consumed (§18.4).
+        var consumes = reference is null && arms.Any(a => a.Bindings.Any(b => !TypeTable.IsCopy(b.Local.Type)));
+        return ok
+            ? new HirMatch(scrutinee, arms.ToImmutable(), match.Span) { Consumes = consumes }
+            : new HirExprStmt(ErrorResult(match.Span), match.Span);
     }
 
     private EnumVariant? CheckVariantPattern(VariantPattern pattern, NovaType type, NovaType? reference,
@@ -1298,10 +1305,12 @@ internal sealed class TypeChecker
                 continue;
             }
             var payloadType = variant.Payload[i].Type;
-            if (reference is null && !TypeTable.IsCopy(payloadType))
+            var isMutable = pattern.IsMutable(i);
+            if (isMutable && reference is not null)
             {
-                Error(DiagnosticCodes.NonCopyBinding, name.Span,
-                    $"'{Name(name.Name)}' would copy a '{payloadType}', which is not Copy; match on 'borrow …' to bind it by reference");
+                Error(DiagnosticCodes.ReferenceNotAllowed, name.Span,
+                    $"'{Name(name.Name)}' is bound by reference (the match is on a reference), so it cannot be 'var'");
+                isMutable = false;
             }
             if (LookupLocal(name.Name) is not null)
             {
@@ -1309,7 +1318,7 @@ internal sealed class TypeChecker
                     $"'{Name(name.Name)}' is already declared in this function; locals cannot be shadowed");
             }
             var bindingType = reference is null ? payloadType : _types.ReferenceTo(payloadType, reference.IsMutableReference);
-            var local = _function!.AddLocal(name.Name, bindingType, isMutable: false, isParameter: false, name.Span);
+            var local = _function!.AddLocal(name.Name, bindingType, isMutable, isParameter: false, name.Span);
             _scopes[^1][name.Name] = local;
             bindings.Add((local, i));
         }

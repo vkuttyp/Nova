@@ -54,10 +54,10 @@ public partial class FaultInjectionTests
         var baseline = Run(exe, failAt: 0);
         var attempts = Report(baseline, "baseline");
         Assert.True(attempts.Live == 0, $"{relativePath}: {attempts.Live} allocation(s) leaked without fault injection");
-        Assert.InRange(attempts.Attempts, 1, MaxAttempts);
+        Assert.True(attempts.Attempts >= 1, "the program allocates, but no attempt was counted");
 
         var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
-        Parallel.For(1, (int)attempts.Attempts + 1, k =>
+        Parallel.ForEach(FailurePoints(attempts.Attempts), k =>
         {
             var run = Run(exe, failAt: k);
             if (Problem(run) is { } problem)
@@ -68,7 +68,18 @@ public partial class FaultInjectionTests
         Assert.True(failures.IsEmpty, $"{relativePath}:\n" + string.Join("\n", failures.OrderBy(f => f, StringComparer.Ordinal)));
     }
 
-    private static ToolResult Run(string exe, int failAt) => Toolchain.Run(exe, [], TimeSpan.FromSeconds(30), new Dictionary<string, string>
+    /// <summary>
+    /// Every attempt, or for programs with more than <see cref="MaxAttempts"/> attempts (deep structures):
+    /// the first 50, the last 50 and 100 evenly spaced ones.
+    /// </summary>
+    private static IEnumerable<long> FailurePoints(long attempts) => attempts <= MaxAttempts
+        ? Enumerable.Range(1, (int)attempts).Select(k => (long)k)
+        : Enumerable.Range(1, 50).Select(k => (long)k)
+            .Concat(Enumerable.Range(0, 50).Select(k => attempts - k))
+            .Concat(Enumerable.Range(1, 100).Select(k => k * attempts / 101))
+            .Distinct();
+
+    private static ToolResult Run(string exe, long failAt) => Toolchain.Run(exe, [], TimeSpan.FromSeconds(30), new Dictionary<string, string>
     {
         ["NOVA_ALLOC_REPORT"] = "1",
         ["NOVA_FAIL_ALLOC_AT"] = failAt.ToString(CultureInfo.InvariantCulture),

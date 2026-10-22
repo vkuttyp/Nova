@@ -199,9 +199,21 @@ static void nvD_RE4ListE10AllocError(nvR_E4ListE10AllocError *p) {
     }
 }
 
-static void nvD_XE4ListS10SystemHeap(nvE_List * *p) {
-    nvD_4List(*p);
-    nova_free(*p, NV_ALLOC_SYSTEM);
+static void nvD_XE4ListS10SystemHeap(nvE_List * *pp) {
+    nvE_List * p = *pp;
+    while (p != NULL) {
+        nvE_List * next = NULL;
+        switch ((*p).tag) {
+        case 1:
+            nvD_3Res(&(*p).u.v_Cons.f__0);
+            next = (*p).u.v_Cons.f__1;
+            break;
+        default:
+            break;
+        }
+        nova_free(p, NV_ALLOC_SYSTEM);
+        p = next;
+    }
 }
 
 static void nvD_RXE4ListS10SystemHeapE10AllocError(nvR_XE4ListS10SystemHeapE10AllocError *p) {

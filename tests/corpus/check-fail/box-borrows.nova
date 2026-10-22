@@ -41,9 +41,9 @@ fn returnsContentsOfLocal(p: borrow Point) -> borrow i32 {
     return borrow b.x; // error[N0244]
 }
 
-fn moveOutOfContents() -> Result<void, AllocError> {
+fn moveOutOfContentsIsAccepted() -> Result<void, AllocError> {
     let h = Box.create(Holder { res: Res { id: 1 }, n: 0 })?;
-    let r = h.res; // error[N0251]
+    let r = h.res; // accepted since M3c: a field moves out of an owned box (type-system.md §18.3)
     return Ok();
 }
 

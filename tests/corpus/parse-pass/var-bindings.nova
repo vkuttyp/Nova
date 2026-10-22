@@ -1,0 +1,7 @@
+fn f(t: Tree) {
+    match (t) {
+        Tree.Node(var n, _, x) => { }
+        Ok(var v) => { }
+        _ => { }
+    }
+}

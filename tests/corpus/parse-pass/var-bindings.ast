@@ -1,0 +1,17 @@
+(unit
+  (fn default f (params (t Tree))
+    (block
+      (match t
+        (arm (Tree.Node var n _ x)
+          (block)
+        )
+        (arm (Ok var v)
+          (block)
+        )
+        (arm _
+          (block)
+        )
+      )
+    )
+  )
+)

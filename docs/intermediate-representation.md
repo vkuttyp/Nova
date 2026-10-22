@@ -33,6 +33,8 @@ stmt      = Assign(place, rvalue)
           | Eval(rvalue)             -- for calls whose result is unused (void)
           | StorageDead(local)       -- scope end; temporaries at the end of their statement (M2b)
           | Drop(place, flag?)       -- inserted by drop elaboration (M2c); guarded by a bool flag local if present
+          | Unpack(place, V, [local?])          -- M3c: move every payload of variant V out of a consumed enum local
+          | BoxFree(place, flag?)               -- M3c: free a partially moved box without destroying its contents
           | BoundsCheck(index, length)          -- panics unless index < length (M2d)
           | RangeCheck(low, high, length)       -- panics unless low <= high <= length (M2d)
 rvalue    = Use(operand)
@@ -134,6 +136,17 @@ Lowering rules (HIR → NIR, `NirBuilder`):
     enclosing statement, such as a `match` scrutinee, were never ended on such paths.
   - An expression statement whose value needs drop assigns it to a statement temporary, which is
     destroyed at the end of the statement (type-system.md §17.5).
+
+- **Boxes and consuming matches (M3c).**
+  - Move paths go through box derefs (`NirPlace.IsMovePath`). Once a box's contents are tracked,
+    the box node has two children: its contents (fields below), then an *allocation* leaf that is
+    initialised while the box owns its memory.
+  - Drop elaboration destroys a partially moved box as: the initialised fields of its contents,
+    then `BoxFree` of the box. `BoxFree` is flagged if the allocation is only maybe initialised.
+  - A consuming `match` moves its scrutinee into a temporary. An arm that lists payloads starts
+    with one `Unpack`, which moves every payload into its binding or into a hidden local of the
+    arm and consumes the temporary as a whole. Other arms leave the value in the temporary, which
+    is destroyed at the end of the statement.
 
 Printed by `novac build --dump-nir`.
 

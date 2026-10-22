@@ -53,6 +53,9 @@ internal sealed class MoveChecker
                 case NirEval eval:
                     CheckRvalue(eval.Value, state, statement.Span);
                     break;
+                case NirUnpack unpack:
+                    CheckUse(unpack.Source, isMove: true, state, statement.Span);
+                    break;
             }
         }
 
@@ -109,9 +112,9 @@ internal sealed class MoveChecker
     private string Describe(NirPlace place)
     {
         var text = Name(place.Local);
-        foreach (var projection in place.Projections.TakeWhile(p => p.IsField))
+        foreach (var projection in place.Projections.TakeWhile(p => p.IsField || p.IsDeref))
         {
-            text += "." + _symbols.GetName(projection.Field!.Name);
+            text += projection.IsField ? "." + _symbols.GetName(projection.Field!.Name) : "";
         }
         return text;
     }
@@ -126,7 +129,7 @@ internal sealed class MoveChecker
 
     private void CheckUse(NirPlace place, bool isMove, InitState state, TextSpan span)
     {
-        var hasDeref = !place.IsFieldPath; // through a reference, into an element, or into an enum variant
+        var hasDeref = !place.IsMovePath; // through a reference, into an element, or into an enum variant
         // Reading through a reference needs the reference; reading a place needs the place.
         var path = hasDeref ? _data.Root(place.Local) : _data.PathFor(place);
         if (!state.DefinitelyInit(path))
@@ -177,7 +180,7 @@ internal sealed class MoveChecker
 
     private void CheckWrite(NirPlace target, InitState state, TextSpan span)
     {
-        if (!target.IsFieldPath)
+        if (!target.IsMovePath)
         {
             CheckUse(new NirPlace(target.Local), isMove: false, state, span);
             return;

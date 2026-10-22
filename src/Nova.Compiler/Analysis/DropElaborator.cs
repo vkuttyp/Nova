@@ -54,7 +54,7 @@ internal sealed class DropElaborator
                     {
                         var afterValue = state.Clone();
                         _data.ApplyMoves(assign.Value, afterValue);
-                        var drops = !assign.Target.IsFieldPath
+                        var drops = !assign.Target.IsMovePath
                             ? [new NirDrop(assign.Target, null) { Span = statement.Span }] // a referent or element is always initialised
                             : Sequence(_data.PathFor(assign.Target), afterValue, statement);
                         if (drops.Count > 0)
@@ -105,6 +105,11 @@ internal sealed class DropElaborator
         if (!TypeTable.NeedsDrop(path.Type) || state.DefinitelyUninit(path))
         {
             return [];
+        }
+        if (path.IsBoxAllocation)
+        {
+            // Only reached for a partially moved box: its contents were handled by the sibling (§18.3).
+            return [new NirBoxFree(path.Place(), state.DefinitelyInit(path) ? null : FlagFor(path)) { Span = at.Span }];
         }
         if (state.DefinitelyInit(path))
         {
@@ -158,11 +163,25 @@ internal sealed class DropElaborator
                 }
             }
         }
-        if (statement is NirAssign assign && assign.Target.IsFieldPath && _data.Tracks(assign.Target.Local))
+        if (statement is NirAssign assign && assign.Target.IsMovePath && _data.Tracks(assign.Target.Local))
         {
             foreach (var leaf in _data.PathFor(assign.Target).Leaves().Where(_flags.ContainsKey))
             {
                 updates[_flags[leaf]] = true;
+            }
+        }
+        if (statement is NirUnpack unpack)
+        {
+            foreach (var leaf in _data.Root(unpack.Source.Local).Leaves().Where(_flags.ContainsKey))
+            {
+                updates[_flags[leaf]] = false;
+            }
+            foreach (var target in unpack.Targets.OfType<NirLocal>())
+            {
+                foreach (var leaf in _data.Root(target).Leaves().Where(_flags.ContainsKey))
+                {
+                    updates[_flags[leaf]] = true;
+                }
             }
         }
         if (statement is NirStorageDead dead)

@@ -1,0 +1,42 @@
+// Destroying long recursive structures does not recurse per node (type-system.md §18.5, R-9).
+enum List { Nil, Cons(i32, Box<List>) }
+struct Res { id: i32; drop { } }
+enum Chain { End, Link(Res, Box<Chain>) }
+struct Node { value: i32; next: Next; }
+enum Next { None, Some(Box<Node>) }
+
+fn list(n: i32) -> Result<List, AllocError> {
+    var l = List.Nil;
+    for (i in 0..n) { l = List.Cons(i, Box.create(move l)?); }
+    return Ok(l);
+}
+
+fn chain(n: i32) -> Result<Chain, AllocError> {
+    var c = Chain.End;
+    for (i in 0..n) { c = Chain.Link(Res { id: i }, Box.create(move c)?); }
+    return Ok(c);
+}
+
+fn nodes(n: i32) -> Result<Next, AllocError> {
+    var head = Next.None;
+    for (i in 0..n) { head = Next.Some(Box.create(Node { value: i, next: move head })?); }
+    return Ok(head);
+}
+
+fn main() -> i32 {
+    match (list(200000)) {
+        Ok(l) => { }
+        Err(_) => { Console.writeLine("out of memory"); return 0; }
+    }
+    match (chain(200000)) {
+        Ok(c) => { }
+        Err(_) => { Console.writeLine("out of memory"); return 0; }
+    }
+    match (nodes(200000)) {
+        Ok(n) => { }
+        Err(_) => { Console.writeLine("out of memory"); return 0; }
+    }
+    Console.writeLine("destroyed");
+    return 0;
+}
+// expect-stdout: destroyed

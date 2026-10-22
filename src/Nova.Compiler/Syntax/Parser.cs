@@ -717,12 +717,16 @@ public sealed class Parser
             {
                 var path = ParseQualifiedName();
                 ImmutableArray<Identifier?> bindings = default;
+                ImmutableArray<bool> mutable = default;
                 if (Eat(TokenKind.OpenParen))
                 {
                     var builder = ImmutableArray.CreateBuilder<Identifier?>();
+                    var mutableBuilder = ImmutableArray.CreateBuilder<bool>();
                     while (!At(TokenKind.CloseParen) && !At(TokenKind.EndOfFile))
                     {
-                        builder.Add(Eat(TokenKind.Underscore) ? null : ParseIdentifier());
+                        var isMutable = Eat(TokenKind.VarKeyword); // M3c: `var x`
+                        builder.Add(!isMutable && Eat(TokenKind.Underscore) ? null : ParseIdentifier());
+                        mutableBuilder.Add(isMutable);
                         if (!Eat(TokenKind.Comma))
                         {
                             break;
@@ -730,8 +734,9 @@ public sealed class Parser
                     }
                     Expect(TokenKind.CloseParen);
                     bindings = builder.ToImmutable();
+                    mutable = mutableBuilder.ToImmutable();
                 }
-                return new VariantPattern(path, bindings, SpanFrom(start));
+                return new VariantPattern(path, bindings, SpanFrom(start)) { Mutable = mutable };
             }
             default:
                 Error(DiagnosticCodes.ExpectedPattern, Current.Span, $"expected a pattern, found {TokenFacts.Describe(Current.Kind)}");

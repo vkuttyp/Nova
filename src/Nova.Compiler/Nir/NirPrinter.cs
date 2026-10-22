@@ -87,6 +87,9 @@ public static class NirPrinter
     {
         NirAssign a => $"{Place(a.Target, symbols)} = {Rvalue(a.Value, symbols)}",
         NirEval e => Rvalue(e.Value, symbols),
+        NirUnpack u => $"({string.Join(", ", u.Targets.Select(t => t is null ? "_" : Local(t, symbols)))}) = unpack {Place(u.Source, symbols)} as {symbols.GetName(u.Variant.Name)}",
+        NirBoxFree { Flag: null } f => $"BoxFree({Place(f.Box, symbols)})",
+        NirBoxFree f => $"BoxFree({Place(f.Box, symbols)}) if {Local(f.Flag!, symbols)}",
         NirBoundsCheck c => $"BoundsCheck({Operand(c.Index, symbols)} < {Operand(c.Length, symbols)})",
         NirRangeCheck c => $"RangeCheck({Operand(c.Low, symbols)} <= {Operand(c.High, symbols)} <= {Operand(c.Length, symbols)})",
         NirStorageDead d => $"StorageDead({Local(d.Local, symbols)})",

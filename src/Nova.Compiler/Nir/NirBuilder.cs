@@ -354,7 +354,22 @@ public sealed class NirBuilder
     {
         var scrutineeType = match.Scrutinee.Type;
         var type = scrutineeType.Pointee ?? scrutineeType;
-        if (LowerPlace(match.Scrutinee) is not { } scrutinee)
+        NirPlace? scrutinee;
+        if (match.Consumes)
+        {
+            // The match owns the value: it is moved into a temporary, which arms unpack (§18.4).
+            if (LowerOperand(match.Scrutinee) is not { } consumed)
+            {
+                return;
+            }
+            scrutinee = new NirPlace(NewTemp(consumed.Type));
+            Emit(new NirAssign(scrutinee, new NirUse(consumed)));
+        }
+        else
+        {
+            scrutinee = LowerPlace(match.Scrutinee);
+        }
+        if (scrutinee is null)
         {
             return;
         }
@@ -407,6 +422,40 @@ public sealed class NirBuilder
             _current = block;
             var depth = _scopes.Count;
             _scopes.Add([]);
+            if (match.Consumes && arm.ListsPayloads)
+            {
+                // Every payload moves out: into its binding, or into a hidden local of the arm. Hidden
+                // locals come last in the arm's scope, so they are destroyed first when the arm ends.
+                var variant = arm.Variant!;
+                var targets = new NirLocal?[variant.Payload.Count];
+                foreach (var (local, index) in arm.Bindings)
+                {
+                    targets[index] = _locals[local.Id];
+                }
+                foreach (var (local, _) in arm.Bindings)
+                {
+                    _scopes[^1].Add(_locals[local.Id]);
+                }
+                for (var i = 0; i < targets.Length; i++)
+                {
+                    if (targets[i] is null && !TypeTable.IsCopy(variant.Payload[i].Type))
+                    {
+                        targets[i] = new NirLocal(_locals.Count, variant.Payload[i].Type, null);
+                        _locals.Add(targets[i]!);
+                        _scopes[^1].Add(targets[i]!);
+                    }
+                }
+                Emit(new NirUnpack(place, variant, [.. targets]));
+                LowerStmt(arm.Body);
+                if (_current is not null)
+                {
+                    EmitStorageDead(depth);
+                    Terminate(new NirGoto(join));
+                    joinReached = true;
+                }
+                _scopes.RemoveAt(_scopes.Count - 1);
+                continue;
+            }
             foreach (var (local, index) in arm.Bindings)
             {
                 var binding = _locals[local.Id];

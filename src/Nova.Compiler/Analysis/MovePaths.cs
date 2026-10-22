@@ -6,9 +6,11 @@ using Nova.Compiler.Semantics;
 namespace Nova.Compiler.Analysis;
 
 /// <summary>
-/// A node of a local's move-path tree: the local itself, or a field path without derefs
-/// (intermediate-representation.md, M2c). When one field of a struct is tracked, all of its
-/// siblings are too, so a node's children partition it. Init state is kept per leaf.
+/// A node of a local's move-path tree: the local itself, or a path of fields and box derefs
+/// (intermediate-representation.md, M2c, M3c). When one field of a struct is tracked, all of its
+/// siblings are too, so a node's children partition it. A box node, once expanded, has two
+/// children: its contents (<see cref="IsBoxContents"/>) and its allocation (<see cref="IsBoxAllocation"/>),
+/// a leaf that is initialised while the box still owns its memory. Init state is kept per leaf.
 /// </summary>
 internal sealed class MovePath
 {
@@ -24,8 +26,14 @@ internal sealed class MovePath
 
     public MovePath? Parent { get; }
 
-    /// <summary>The field this node selects from its parent; null for a local's root.</summary>
+    /// <summary>The field this node selects from its parent; null for a local's root and box children.</summary>
     public StructField? Field { get; }
+
+    /// <summary>The contents of the box that is this node's parent (a deref).</summary>
+    public bool IsBoxContents { get; init; }
+
+    /// <summary>The allocation of the box that is this node's parent: the box itself, not its contents.</summary>
+    public bool IsBoxAllocation { get; init; }
 
     public NovaType Type { get; }
 
@@ -36,15 +44,24 @@ internal sealed class MovePath
 
     public bool IsLeaf => Children.Count == 0;
 
+    /// <summary>The place of this node; for a box allocation, the box itself.</summary>
     public NirPlace Place()
     {
-        var fields = new List<StructField>();
-        for (var node = this; node.Field is not null; node = node.Parent!)
+        var projections = new List<Projection>();
+        for (var node = IsBoxAllocation ? Parent! : this; node.Parent is not null; node = node.Parent)
         {
-            fields.Insert(0, node.Field);
+            projections.Insert(0, node.IsBoxContents ? Projection.Deref : new Projection(node.Field!));
         }
-        return new NirPlace(Local, [.. fields.Select(f => new Projection(f))]);
+        return new NirPlace(Local, [.. projections]);
     }
+
+    /// <summary>The child a projection selects (the node must be expanded), or null for a projection that is not a move path step.</summary>
+    public MovePath? Child(Projection projection) => projection switch
+    {
+        { IsField: true } => Children.First(c => c.Field == projection.Field),
+        { IsDeref: true } when Type.IsBox => Children.First(c => c.IsBoxContents),
+        _ => null,
+    };
 
     public IEnumerable<MovePath> Leaves() => IsLeaf ? [this] : Children.SelectMany(c => c.Leaves());
 
@@ -182,17 +199,17 @@ internal sealed class MoveData
     /// <summary>False for locals added after the analysis (temporaries and flags of drop elaboration).</summary>
     public bool Tracks(NirLocal local) => _roots.ContainsKey(local);
 
-    /// <summary>The deepest tracked node on the place's field prefix (stopping at the first Deref).</summary>
+    /// <summary>The deepest tracked node on the place's move-path prefix (stopping at the first other projection).</summary>
     public MovePath PathFor(NirPlace place)
     {
         var node = _roots[place.Local];
         foreach (var projection in place.Projections)
         {
-            if (!projection.IsField || node.IsLeaf)
+            if (node.IsLeaf || node.Child(projection) is not { } child)
             {
                 break;
             }
-            node = node.Children.First(c => c.Field == projection.Field);
+            node = child;
         }
         return node;
     }
@@ -204,7 +221,7 @@ internal sealed class MoveData
     /// </summary>
     public MovePath? MovedPath(NirPlace place)
     {
-        if (place.IsFieldPath)
+        if (place.IsMovePath)
         {
             return PathFor(place);
         }
@@ -248,18 +265,25 @@ internal sealed class MoveData
         var node = _roots[place.Local];
         foreach (var projection in place.Projections)
         {
-            if (!projection.IsField)
+            var isBoxDeref = projection.IsDeref && node.Type.IsBox;
+            if (!projection.IsField && !isBoxDeref)
             {
                 return;
             }
-            if (node.IsLeaf)
+            if (node.IsLeaf && isBoxDeref)
+            {
+                // Contents first, so a partially moved box destroys what is left, then frees the memory.
+                node.Children.Add(new MovePath(node.Local, node, null, node.Type.Pointee!) { IsBoxContents = true });
+                node.Children.Add(new MovePath(node.Local, node, null, node.Type) { IsBoxAllocation = true });
+            }
+            else if (node.IsLeaf)
             {
                 foreach (var field in node.Type.Struct!.Fields)
                 {
                     node.Children.Add(new MovePath(node.Local, node, field, field.Type));
                 }
             }
-            node = node.Children.First(c => c.Field == projection.Field);
+            node = node.Child(projection)!;
         }
     }
 
@@ -280,7 +304,7 @@ internal sealed class MoveData
         {
             case NirAssign assign:
                 ApplyMoves(assign.Value, state);
-                if (assign.Target.IsFieldPath)
+                if (assign.Target.IsMovePath)
                 {
                     state.Initialize(PathFor(assign.Target));
                 }
@@ -293,6 +317,13 @@ internal sealed class MoveData
                 break;
             case NirDrop drop:
                 state.Uninitialize(PathFor(drop.Place), moved: false);
+                break;
+            case NirUnpack unpack:
+                state.Uninitialize(_roots[unpack.Source.Local], moved: true);
+                foreach (var target in unpack.Targets.OfType<NirLocal>())
+                {
+                    state.Initialize(_roots[target]);
+                }
                 break;
         }
     }

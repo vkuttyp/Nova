@@ -219,6 +219,79 @@ public sealed class CEmitter
     private static string DropGlueName(NovaType type) =>
         type.Enum?.ResultTypes is not null || type.IsBox ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
 
+    /// <summary>
+    /// Does destroying a <paramref name="type"/> end, as its last step, in destroying a <paramref name="box"/>?
+    /// The last component that needs drop is followed through structs and every enum variant (§18.5).
+    /// </summary>
+    private static bool LeadsTo(NovaType type, NovaType box)
+    {
+        if (type == box)
+        {
+            return true;
+        }
+        if (type.Struct is { } definition)
+        {
+            return definition.Fields.LastOrDefault(f => TypeTable.NeedsDrop(f.Type)) is { } last && LeadsTo(last.Type, box);
+        }
+        if (type.Enum is { } enumDefinition)
+        {
+            return enumDefinition.Variants.Any(v => v.Payload.LastOrDefault(f => TypeTable.NeedsDrop(f.Type)) is { } last && LeadsTo(last.Type, box));
+        }
+        return false; // another box, or a type without drop
+    }
+
+    /// <summary>
+    /// Destroys the <paramref name="type"/> value at <paramref name="place"/> in the order of its drop glue,
+    /// except the tail <paramref name="box"/>, whose pointer is stored in <c>next</c> instead.
+    /// </summary>
+    private void DestroyExceptTail(string place, NovaType type, NovaType box, string indent)
+    {
+        if (type == box)
+        {
+            Line($"{indent}next = {place};");
+            return;
+        }
+        void Component(string component, NovaType componentType, bool isTail, string at)
+        {
+            if (isTail && LeadsTo(componentType, box))
+            {
+                DestroyExceptTail(component, componentType, box, at);
+            }
+            else
+            {
+                Line($"{at}{DropGlueName(componentType)}(&{component});");
+            }
+        }
+        if (type.Struct is { } definition)
+        {
+            if (definition.DropFunction is { } drop)
+            {
+                Line($"{indent}{FunctionName(drop)}(&{place});");
+            }
+            var droppable = definition.Fields.Where(f => TypeTable.NeedsDrop(f.Type)).ToList();
+            foreach (var field in droppable)
+            {
+                Component($"{place}.{FieldName(field)}", field.Type, field == droppable[^1], indent);
+            }
+            return;
+        }
+        var enumDefinition = type.Enum!;
+        Line($"{indent}switch ({place}.tag) {{");
+        foreach (var variant in enumDefinition.Variants.Where(v => v.Payload.Any(f => TypeTable.NeedsDrop(f.Type))))
+        {
+            Line($"{indent}case {variant.Index}:");
+            var droppable = variant.Payload.Where(f => TypeTable.NeedsDrop(f.Type)).ToList();
+            foreach (var field in droppable)
+            {
+                Component($"{place}.u.{VariantName(variant)}.{FieldName(field)}", field.Type, field == droppable[^1], indent + "    ");
+            }
+            Line($"{indent}    break;");
+        }
+        Line($"{indent}default:");
+        Line($"{indent}    break;");
+        Line($"{indent}}}");
+    }
+
     /// <summary>The runtime's id for an allocator type (nova/rt.h).</summary>
     private static string AllocatorId(NovaType allocator) =>
         allocator.Name == "FailingAllocator" ? "NV_ALLOC_FAILING" : "NV_ALLOC_SYSTEM";
@@ -281,6 +354,22 @@ public sealed class CEmitter
     {
         foreach (var type in Aggregates.Where(TypeTable.NeedsDrop))
         {
+            if (type.IsBox && LeadsTo(type.Pointee!, type))
+            {
+                // Tail iteration (type-system.md §18.5): destroy the node except its tail, free it,
+                // continue with the tail box. Only the time of the free differs from recursion.
+                Line($"static void {DropGlueName(type)}({CTypeName(type)} *pp) {{");
+                Line($"    {CTypeName(type)} p = *pp;");
+                Line("    while (p != NULL) {");
+                Line($"        {CTypeName(type)} next = NULL;");
+                DestroyExceptTail("(*p)", type.Pointee!, type, "        ");
+                Line($"        nova_free(p, {AllocatorId(type.Allocator!)});");
+                Line("        p = next;");
+                Line("    }");
+                Line("}");
+                Line();
+                continue;
+            }
             if (type.IsBox)
             {
                 // Destroys the contents, then returns the memory to the box's allocator (H1).
@@ -397,6 +486,21 @@ public sealed class CEmitter
                 break;
             case NirAssign assign:
                 Line($"    {Place(assign.Target)} = {Rvalue(assign.Value)};");
+                break;
+            case NirUnpack unpack:
+                for (var i = 0; i < unpack.Targets.Length; i++)
+                {
+                    if (unpack.Targets[i] is { } target)
+                    {
+                        Line($"    {LocalName(target)} = {Place(unpack.Source)}.u.{VariantName(unpack.Variant)}.{FieldName(unpack.Variant.Payload[i])};");
+                    }
+                }
+                break;
+            case NirBoxFree { Flag: null } free:
+                Line($"    nova_free({Place(free.Box)}, {AllocatorId(free.Box.Type.Allocator!)});");
+                break;
+            case NirBoxFree free:
+                Line($"    if ({LocalName(free.Flag!)}) nova_free({Place(free.Box)}, {AllocatorId(free.Box.Type.Allocator!)});");
                 break;
             case NirBoundsCheck check:
                 Line($"    nv_check_index({Operand(check.Index)}, {Operand(check.Length)}, {Location(_function!.Source.Source, check.Span)});");

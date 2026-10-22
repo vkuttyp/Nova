@@ -142,7 +142,7 @@ public sealed class HirPrinter
                 Nested("defer", defer.Body);
                 break;
             case HirMatch match:
-                Line($"(match {Expr(match.Scrutinee)}");
+                Line($"({(match.Consumes ? "match-consume" : "match")} {Expr(match.Scrutinee)}");
                 _indent++;
                 foreach (var arm in match.Arms)
                 {
@@ -153,7 +153,7 @@ public sealed class HirPrinter
                         HirPatternKind.Bool => arm.Value != 0 ? "true" : "false",
                         _ => arm.Value.ToString(CultureInfo.InvariantCulture),
                     };
-                    var bindings = string.Concat(arm.Bindings.Select(b => $" ({Local(b.Local)}: {b.Local.Type} = payload {b.PayloadIndex})"));
+                    var bindings = string.Concat(arm.Bindings.Select(b => $" ({(b.Local.IsMutable ? "var " : "")}{Local(b.Local)}: {b.Local.Type} = payload {b.PayloadIndex})"));
                     Nested($"arm {pattern}{bindings}", arm.Body);
                 }
                 _indent--;

@@ -22,7 +22,11 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
 
 - Milestone 0 / C0 is complete. All M0 decisions were accepted on 2026-10-22
   (`docs/decisions/0002-milestone-0-decision-set.md`).
-- M1 and C1 are complete. Nova compiles to C, and its programs run natively in CosmoOS (`integrations/cosmoos/c1.py`). Next is M2, ownership and borrowing (`docs/roadmap.md`).
+- M1 and C1 are complete. Nova compiles to C, and its programs run natively in CosmoOS (`integrations/cosmoos/c1.py`).
+- M2 (ownership and borrowing; `docs/milestone-2.md`) and M3 (the safe heap; `docs/milestone-3.md`,
+  ADR 0003) are complete. Next is C2, then M4 (`docs/roadmap.md`).
+- Test-suite parts to know: the corpus (`docs/testing.md` §3), the M2 mutation suite
+  (`MutationTests.cs`), and the M3 fault-injection sweep (`FaultInjectionTests.cs`).
 
 ## Build and test
 

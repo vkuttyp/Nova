@@ -1,0 +1,48 @@
+// language-spec.md Ex11, adapted (ADR 0003): text is a slice of bytes instead of a StringView,
+// and overflow is detected without checkedMul/okOr, which are M6 library features.
+enum ParseError { Empty, BadDigit(u8), Overflow }
+
+fn parseU32(text: Slice<u8>) -> Result<u32, ParseError> {
+    if (text.length == 0) { return Err(ParseError.Empty); }
+    var value: u64 = 0;
+    for (c in text) {
+        if (c < 48u8 || c > 57u8) { return Err(ParseError.BadDigit(c)); }
+        value = value * 10 + (c - 48u8) as u64;
+        if (value > 4294967295) { return Err(ParseError.Overflow); }
+    }
+    return Ok(truncate<u32>(value));
+}
+
+fn sum(a: Slice<u8>, b: Slice<u8>) -> Result<u32, ParseError> {
+    return Ok(parseU32(a)? + parseU32(b)?);
+}
+
+fn show(r: Result<u32, ParseError>) {
+    match (r) {
+        Ok(v) => { Console.writeLine(v); }
+        Err(e) => {
+            match (e) {
+                ParseError.Empty => { Console.writeLine("empty"); }
+                ParseError.BadDigit(c) => { Console.write("bad digit "); Console.writeLine(c); }
+                ParseError.Overflow => { Console.writeLine("overflow"); }
+            }
+        }
+    }
+}
+
+fn main() {
+    let a = [49u8, 50u8, 51u8];                  // "123"
+    let b = [52u8, 48u8];                        // "40"
+    let bad = [49u8, 120u8];                     // "1x"
+    let big = [57u8, 57u8, 57u8, 57u8, 57u8, 57u8, 57u8, 57u8, 57u8, 57u8]; // "9999999999"
+    show(parseU32(a[..]));
+    show(sum(a[..], b[..]));
+    show(sum(a[..], bad[..]));
+    show(parseU32(big[..]));
+    show(parseU32(a[0..0]));
+}
+// expect-stdout: 123
+// expect-stdout: 163
+// expect-stdout: bad digit 120
+// expect-stdout: overflow
+// expect-stdout: empty

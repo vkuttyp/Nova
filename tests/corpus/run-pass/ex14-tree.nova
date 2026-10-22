@@ -1,0 +1,52 @@
+// language-spec.md Ex14: an owned binary tree. Syntax adapted: block arm bodies, by-value parameter.
+enum Tree {
+    Leaf,
+    Node(Box<TreeNode>),
+}
+
+struct TreeNode { value: i32; left: Tree; right: Tree; }
+
+fn insert(t: Tree, v: i32) -> Result<Tree, AllocError> {
+    match (t) {
+        Tree.Leaf => {
+            return Ok(Tree.Node(Box.create(TreeNode { value: v, left: Tree.Leaf, right: Tree.Leaf })?));
+        }
+        Tree.Node(var n) => {
+            // Partial moves out of the box, repaired by assignment. On the `?` error path the
+            // partially moved box drops only what is left, then frees its memory.
+            if (v < n.value) { n.left = insert(move n.left, v)?; }
+            else             { n.right = insert(move n.right, v)?; }
+            return Ok(Tree.Node(n));
+        }
+    }
+}
+
+fn walk(t: borrow Tree) {
+    match (t) {
+        Tree.Leaf => { }
+        Tree.Node(n) => {
+            walk(borrow n.left);
+            Console.write(n.value);
+            Console.write(" ");
+            walk(borrow n.right);
+        }
+    }
+}
+
+fn build() -> Result<Tree, AllocError> {
+    var t = Tree.Leaf;
+    let values = [50, 30, 70, 20, 40, 60, 80, 35];
+    for (v in values) {
+        t = insert(move t, v)?;
+    }
+    return Ok(t);
+}
+
+fn main() -> i32 {
+    match (build()) {
+        Ok(t) => { walk(borrow t); Console.writeLine(""); }
+        Err(_) => { Console.writeLine("out of memory"); }
+    }
+    return 0;
+}
+// expect-stdout: 20 30 35 40 50 60 70 80 

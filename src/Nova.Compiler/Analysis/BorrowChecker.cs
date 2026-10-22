@@ -169,6 +169,8 @@ internal sealed class BorrowChecker
     {
         NirAssign a => RvalueAccesses(a.Value).Append((AccessKind.Write, a.Target)),
         NirEval e => RvalueAccesses(e.Value),
+        NirUnpack u => u.Targets.OfType<NirLocal>().Select(t => (AccessKind.Write, new NirPlace(t))).Prepend((AccessKind.Move, u.Source)),
+        NirBoxFree f => [(AccessKind.Dead, f.Box)],
         NirBoundsCheck c => OperandAccesses(c.Index).Concat(OperandAccesses(c.Length)),
         NirRangeCheck c => OperandAccesses(c.Low).Concat(OperandAccesses(c.High)).Concat(OperandAccesses(c.Length)),
         NirStorageDead d => [(AccessKind.Dead, new NirPlace(d.Local))],

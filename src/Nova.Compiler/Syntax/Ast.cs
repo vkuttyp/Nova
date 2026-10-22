@@ -146,7 +146,13 @@ public sealed record WildcardPattern(TextSpan Span) : Pattern(Span);
 public sealed record LiteralPattern(Expr Literal, TextSpan Span) : Pattern(Span);
 
 /// <summary><c>E.V</c> or <c>E.V(x, _)</c>; a null binding is <c>_</c>. <see cref="Bindings"/> is default without parentheses.</summary>
-public sealed record VariantPattern(QualifiedName Path, ImmutableArray<Identifier?> Bindings, TextSpan Span) : Pattern(Span);
+public sealed record VariantPattern(QualifiedName Path, ImmutableArray<Identifier?> Bindings, TextSpan Span) : Pattern(Span)
+{
+    /// <summary>Parallel to <see cref="Bindings"/>: true for <c>var x</c> (type-system.md §18.4). Default when there are no bindings.</summary>
+    public ImmutableArray<bool> Mutable { get; init; }
+
+    public bool IsMutable(int index) => !Mutable.IsDefault && Mutable[index];
+}
 
 /// <summary><see cref="Else"/> is null, a <see cref="BlockStmt"/>, or an <see cref="IfStmt"/>.</summary>
 public sealed record IfStmt(Expr Condition, BlockStmt Then, Stmt? Else, TextSpan Span) : Stmt(Span);

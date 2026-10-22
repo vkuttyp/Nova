@@ -279,7 +279,7 @@ public sealed class AstPrinter
         WildcardPattern => "_",
         LiteralPattern l => Expr(l.Literal),
         VariantPattern { Bindings.IsDefault: true } v => Name(v.Path),
-        VariantPattern v => $"({Name(v.Path)} {string.Join(" ", v.Bindings.Select(b => b is null ? "_" : Name(b)))})",
+        VariantPattern v => $"({Name(v.Path)} {string.Join(" ", v.Bindings.Select((b, i) => b is null ? "_" : (v.IsMutable(i) ? "var " : "") + Name(b)))})",
         _ => "?",
     };
 
