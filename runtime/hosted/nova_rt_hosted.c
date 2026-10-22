@@ -26,3 +26,23 @@ _Noreturn void nova_platform_abort(void) {
     (void)fflush(stderr);
     abort();
 }
+
+void *nova_platform_alloc(size_t size) {
+    return malloc(size); /* aligned for max_align_t */
+}
+
+void nova_platform_free(void *p) {
+    free(p);
+}
+
+uint64_t nova_platform_config(const char *name) {
+    const char *text = getenv(name);
+    if (text == NULL) {
+        return 0u;
+    }
+    uint64_t value = 0u;
+    for (; *text >= '0' && *text <= '9'; text++) {
+        value = value * 10u + (uint64_t)(*text - '0');
+    }
+    return value;
+}

@@ -229,6 +229,12 @@ public enum BuiltinFunction
     ConsoleWrite,
     ConsoleWriteLine,
     ProcessExit,
+    /// <summary><c>Box.create(v)</c> / <c>Box.createIn(a, v)</c>: arguments are the value (and the allocator first).</summary>
+    BoxCreate,
+    /// <summary><c>FailingAllocator.failAfter(n)</c>.</summary>
+    FailAfter,
+    /// <summary><c>FailingAllocator.reset()</c>.</summary>
+    FailReset,
 }
 
 public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<HirExpr> Arguments, NovaType Type, TextSpan Span) : HirExpr(Type, Span);

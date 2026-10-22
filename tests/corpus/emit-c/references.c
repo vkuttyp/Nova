@@ -79,5 +79,6 @@ static uint32_t nvM_7Counter_get(NV_UNUSED const nvT_Counter * v_this_0) {
 }
 
 int main(void) {
-    return (int)nv_main();
+    nova_rt_start();
+    return (int)nova_rt_finish(nv_main());
 }

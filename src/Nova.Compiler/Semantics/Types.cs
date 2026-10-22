@@ -37,6 +37,11 @@ public enum TypeKind
     /// shared reference to <c>[T]</c> and <c>SliceMut&lt;T&gt;</c> a mutable one. <c>[T]</c> is never a value type.
     /// </summary>
     Array,
+    /// <summary>
+    /// <c>Box&lt;T, A&gt;</c> (type-system.md §18.2): owns one <c>T</c> (<see cref="NovaType.Pointee"/>) from allocator
+    /// type <see cref="NovaType.Allocator"/>. Dereferenced like a reference, but owned.
+    /// </summary>
+    Box,
 }
 
 public sealed class StructField
@@ -218,6 +223,13 @@ public sealed class NovaType
         IsMutableReference = isMutable;
     }
 
+    internal NovaType(NovaType contents, NovaType allocator, bool defaultAllocator)
+        : this(TypeKind.Box, defaultAllocator ? $"Box<{contents.Name}>" : $"Box<{contents.Name}, {allocator.Name}>")
+    {
+        Pointee = contents;
+        Allocator = allocator;
+    }
+
     internal NovaType(NovaType element, long length)
         : this(TypeKind.Array, length < 0 ? $"[{element.Name}]" : $"[{element.Name}; {length}]")
     {
@@ -258,8 +270,13 @@ public sealed class NovaType
     /// <summary><c>Slice&lt;T&gt;</c> or <c>SliceMut&lt;T&gt;</c>.</summary>
     public bool IsSlice => Kind == TypeKind.Reference && Pointee!.IsUnsized;
 
-    /// <summary>The referent type of a reference; null for every other kind.</summary>
+    /// <summary>The referent type of a reference, or the contents of a box; null for every other kind.</summary>
     public NovaType? Pointee { get; }
+
+    /// <summary>The allocator type of a box; null for every other kind.</summary>
+    public NovaType? Allocator { get; }
+
+    public bool IsBox => Kind == TypeKind.Box;
 
     /// <summary>True for <c>borrow mut T</c>.</summary>
     public bool IsMutableReference { get; }
@@ -372,6 +389,21 @@ public sealed class TypeTable
     public NovaType SliceOf(NovaType element, bool isMutable) => ReferenceTo(ArrayOf(element, -1), isMutable);
 
     private readonly Dictionary<(NovaType, NovaType), NovaType> _results = [];
+    private readonly Dictionary<(NovaType, NovaType), NovaType> _boxes = [];
+
+    /// <summary>The unique <c>Box&lt;contents, allocator&gt;</c>; <paramref name="isDefault"/> when the allocator is <c>SystemHeap</c>.</summary>
+    public NovaType BoxOf(NovaType contents, NovaType allocator, bool isDefault)
+    {
+        ArgumentNullException.ThrowIfNull(contents);
+        ArgumentNullException.ThrowIfNull(allocator);
+        if (!_boxes.TryGetValue((contents, allocator), out var box))
+        {
+            box = new NovaType(contents, allocator, isDefault);
+            _boxes.Add((contents, allocator), box);
+            _composites.Add(box);
+        }
+        return box;
+    }
 
     /// <summary>
     /// The unique <c>Result&lt;ok, err&gt;</c>: a built-in enum with variants <c>Ok(ok)</c> (no payload for
@@ -433,6 +465,8 @@ public sealed class TypeTable
             case TypeKind.Reference:
                 // LP64 targets only in M2 (TargetInfo.PointerBits is asserted in the generated C).
                 return type.IsSlice ? (16, 8) : (8, 8); // a slice is (pointer, u64 length)
+            case TypeKind.Box:
+                return (8, 8);
             case TypeKind.Array:
             {
                 var (elementSize, elementAlign) = LayoutOf(type.Element!);
@@ -536,6 +570,7 @@ public sealed class TypeTable
             TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => IsCopy(ok) && IsCopy(err),
             TypeKind.Enum => type.Enum!.IsCopy,
             TypeKind.Reference => !type.IsMutableReference,
+            TypeKind.Box => false,
             _ => true,
         };
     }
@@ -543,6 +578,10 @@ public sealed class TypeTable
     public static bool NeedsDrop(NovaType type)
     {
         ArgumentNullException.ThrowIfNull(type);
+        if (type.IsBox)
+        {
+            return true;
+        }
         if (type.Enum?.ResultTypes is var (ok, err))
         {
             return NeedsDrop(ok) || NeedsDrop(err); // T and E may be declared later than the Result is named

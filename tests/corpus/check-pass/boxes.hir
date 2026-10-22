@@ -1,0 +1,39 @@
+(program
+  (fn depth ((t#0: borrow Tree)) -> i32
+    (block
+      (match t#0
+        (arm Leaf
+          (block
+            (return 0:i32)
+          )
+        )
+        (arm Node (n#1: borrow Box<TreeNode> = payload 0)
+          (block
+            (let l#2: i32 = (call depth (borrow (*(*n#1)).left)):i32)
+            (let r#3: i32 = (call depth (borrow (*(*n#1)).right)):i32)
+            (if (> l#2 r#3):bool
+              (block
+                (return (+ l#2 1:i32):i32)
+              )
+            )
+            (return (+ r#3 1:i32):i32)
+          )
+        )
+      )
+    )
+  )
+  (fn leaf ((v#0: i32)) -> Result<Tree, AllocError>
+    (block
+      (return (Result<Tree, AllocError>.Ok (Tree.Node (try (Process.exit (new TreeNode (value v#0) (left (Tree.Leaf)) (right (Tree.Leaf))))):Box<TreeNode>)))
+    )
+  )
+  (fn main () -> void
+    (block
+      (let t#0: Tree = (unwrap (call leaf 1:i32):Result<Tree, AllocError>):Tree)
+      (let d#1: i32 = (call depth (borrow t#0)):i32)
+      (let p#2: Pair = (new Pair (a (unwrap (Process.exit (new FailingAllocator) 1:i32)):Box<i32, FailingAllocator>) (b (unwrap (Process.exit (array 1:u8 2:u8):[u8; 2])):Box<[u8; 2]>)))
+      (let first#3: u8 = (index (deref (. p#2 b):Box<[u8; 2]>):[u8; 2] 0:usize):u8)
+      (let a#4: i32 = (deref (. p#2 a):Box<i32, FailingAllocator>):i32)
+    )
+  )
+)

@@ -1,0 +1,29 @@
+// Boxes and allocators (type-system.md §18).
+struct Box { x: i32; } // error[N0201]
+struct SystemHeap { } // error[N0201]
+struct Point { x: i32; y: i32; }
+struct Res { id: i32; drop { } }
+struct Bad { b: Box<borrow i32>; } // error[N0246]
+fn badAllocator(b: Box<i32, Point>) { } // error[N0263]
+fn arity(b: Box<i32, SystemHeap, SystemHeap>) { } // error[N0204]
+fn takesPoint(p: borrow Point) { }
+fn nothing() { }
+fn takesMutPoint(p: borrow mut Point) { }
+
+fn f(alloc: Point) -> Result<void, AllocError> {
+    let a = Box.make(1); // error[N0200]
+    let b = Box.create(); // error[N0209]
+    let c = Box.createIn(alloc, 1); // error[N0263]
+    let d = Box.create(nothing()); // error[N0224]
+    let p = Box.create(Point { x: 1, y: 2 })?;
+    p.x = 3; // error[N0211]
+    takesMutPoint(mut p); // error[N0248]
+    takesPoint(p);
+    let n: i32 = p; // error[N0205]
+    FailingAllocator.failAfter(); // error[N0209]
+    FailingAllocator.failAfter(-1); // error[N0207]
+    return Ok();
+}
+fn returnsContents(b: Box<Point>) -> borrow i32 { // error[N0245]
+    return borrow b.x;
+}

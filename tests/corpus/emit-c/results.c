@@ -136,5 +136,6 @@ static void nvD_RS3ResE4Code(nvR_S3ResE4Code *p) {
 }
 
 int main(void) {
-    return (int)nv_main();
+    nova_rt_start();
+    return (int)nova_rt_finish(nv_main());
 }

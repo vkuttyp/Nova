@@ -145,9 +145,11 @@ references, so the borrow checker reports their conflicts as N0240–N0245.
 | N0260 | `Ok(...)` / `Err(...)` without an expected `Result` type, or where another type is expected | `let a = Ok(1);` |
 | N0261 | `?` in a function that does not return a `Result` with the same error type | `?` on `Result<i32, F>` in a function returning `Result<i32, E>` |
 | N0262 | `?` or `!` on something that is not a `Result` value (a reference to one included) | `n?` with `n: i32` |
+| N0263 | An allocator argument that is not an allocator type (`SystemHeap`, `FailingAllocator`) | `Box<i32, Point>`, `Box.createIn(point, 1)` |
 
 `?` inside a deferred statement is N0254, and `Ok`/`Err` with the wrong number of values is
-N0209. The names `Result`, `Ok`, `Err` and `AllocError` cannot be declared (N0201).
+N0209. The names `Result`, `Ok`, `Err`, `AllocError`, `Box`, `SystemHeap` and `FailingAllocator`
+cannot be declared (N0201). Moving out of a box's contents is N0251 until M3c.
 
 ### Build (N0300–N0399)
 

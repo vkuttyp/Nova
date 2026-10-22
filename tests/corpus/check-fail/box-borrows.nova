@@ -1,0 +1,56 @@
+// Places inside a box are part of the box (type-system.md §18.2).
+struct Point { x: i32; y: i32; }
+struct Res { id: i32; drop { } }
+struct Holder { res: Res; n: i32; }
+fn take(b: Box<Point>) { }
+fn look(r: borrow i32) { }
+
+fn moveWhileContentsBorrowed() -> Result<void, AllocError> {
+    let b = Box.create(Point { x: 1, y: 2 })?;
+    let r = borrow b.x;
+    take(b); // error[N0240]
+    look(r);
+    return Ok();
+}
+
+fn replaceWhileContentsBorrowed() -> Result<void, AllocError> {
+    var b = Box.create(Point { x: 1, y: 2 })?;
+    let r = borrow b.y;
+    b = Box.create(Point { x: 3, y: 4 })?; // error[N0240]
+    look(r);
+    return Ok();
+}
+
+fn contentsOutliveBox() -> Result<i32, AllocError> {
+    var keep = 0;
+    let outer = Box.create(Point { x: 1, y: 2 })?;
+    {
+        let inner = Box.create(Point { x: 5, y: 6 })?;
+        let r = borrow inner.x;
+        keep = 1;
+    }
+    return Ok(keep);
+}
+
+fn returnsContents(unused: borrow i32, b: Box<Point>) -> borrow(unused) i32 {
+    return borrow b.x; // error[N0244]
+}
+
+fn returnsContentsOfLocal(p: borrow Point) -> borrow i32 {
+    let b = Box.create(Point { x: 1, y: 2 })!;
+    return borrow b.x; // error[N0244]
+}
+
+fn moveOutOfContents() -> Result<void, AllocError> {
+    let h = Box.create(Holder { res: Res { id: 1 }, n: 0 })?;
+    let r = h.res; // error[N0251]
+    return Ok();
+}
+
+fn twoMutable() -> Result<void, AllocError> {
+    var b = Box.create(Point { x: 1, y: 2 })?;
+    let m = borrow mut b.x;
+    let n = borrow mut b; // error[N0241]
+    m = 5;
+    return Ok();
+}

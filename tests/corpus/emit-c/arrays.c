@@ -100,5 +100,6 @@ static int32_t nv_main(void) {
 }
 
 int main(void) {
-    return (int)nv_main();
+    nova_rt_start();
+    return (int)nova_rt_finish(nv_main());
 }

@@ -1,0 +1,28 @@
+// Recursion through Box is allowed (type-system.md §18.2).
+enum Tree { Leaf, Node(Box<TreeNode>) }
+struct TreeNode { value: i32; left: Tree; right: Tree; }
+enum List { Nil, Cons(i32, Box<List>) }
+struct Pair { a: Box<i32, FailingAllocator>; b: Box<[u8; 2]>; }
+
+fn depth(t: borrow Tree) -> i32 {
+    match (t) {
+        Tree.Leaf => { return 0; }
+        Tree.Node(n) => {
+            let l = depth(borrow n.left);
+            let r = depth(borrow n.right);
+            if (l > r) { return l + 1; }
+            return r + 1;
+        }
+    }
+}
+
+fn leaf(v: i32) -> Result<Tree, AllocError> =>
+    Ok(Tree.Node(Box.create(TreeNode { value: v, left: Tree.Leaf, right: Tree.Leaf })?));
+
+fn main() {
+    let t = leaf(1)!;
+    let d = depth(t);
+    let p = Pair { a: Box.createIn(FailingAllocator {}, 1)!, b: Box.create([1u8, 2u8])! };
+    let first: u8 = p.b[0];
+    let a: i32 = p.a;
+}

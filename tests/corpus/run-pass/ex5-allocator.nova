@@ -1,0 +1,21 @@
+// language-spec.md Ex5 with a concrete allocator type (generic allocators are M6, ADR 0003).
+struct User { id: u64; age: u32; }
+
+fn createUser(alloc: FailingAllocator) -> Result<Box<User, FailingAllocator>, AllocError> {
+    return Box.createIn(alloc, User { id: 100, age: 25 });
+}
+
+fn main() {
+    let first = createUser(FailingAllocator {})!;
+    Console.writeLine(first.id);
+    FailingAllocator.failAfter(1u64);
+    let second = createUser(FailingAllocator {})!;
+    Console.writeLine(second.age);
+    match (createUser(FailingAllocator {})) {
+        Ok(_) => { Console.writeLine("unexpected"); }
+        Err(_) => { Console.writeLine("out of memory"); }
+    }
+}
+// expect-stdout: 100
+// expect-stdout: 25
+// expect-stdout: out of memory

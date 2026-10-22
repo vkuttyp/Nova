@@ -1,0 +1,21 @@
+// language-spec.md Ex4: an owned heap object through Box.
+struct Account {
+    id: u64;
+    balance: i64;
+
+    public fn deposit(borrow mut this, amount: i64) -> void {
+        this.balance += amount;
+    }
+}
+
+fn open(id: u64) -> Result<Box<Account>, AllocError> {
+    return Box.create(Account { id: id, balance: 0 });   // A = SystemHeap
+}
+
+fn main() -> i32 {
+    var acct = open(7)!;          // panics on allocation failure
+    acct.deposit(100);            // auto-deref + implicit mut reborrow of the contents
+    Console.writeLine(acct.balance);
+    return 0;
+}                                  // Box dropped: Account dropped, memory freed
+// expect-stdout: 100

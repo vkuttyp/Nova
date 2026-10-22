@@ -66,6 +66,7 @@ public sealed class CEmitter
             Line($"static NV_UNUSED {Signature(function, withNames: false)};");
         }
         EmitDropGluePrototypes();
+        EmitBoxCreatePrototypes();
         Line();
 
         foreach (var function in _program.Functions)
@@ -74,6 +75,7 @@ public sealed class CEmitter
             Line();
         }
         EmitDropGlue();
+        EmitBoxCreate();
 
         EmitMainWrapper();
     }
@@ -84,7 +86,7 @@ public sealed class CEmitter
     /// </summary>
     private void EmitStructs()
     {
-        var aggregates = Aggregates.ToList();
+        var aggregates = Aggregates.Where(t => !t.IsBox).ToList(); // a box is a pointer, not a C struct
         if (aggregates.Count == 0)
         {
             return;
@@ -215,7 +217,54 @@ public sealed class CEmitter
     /// <c>nvD_&lt;mangled&gt;</c> for built-in instantiations (which start with a letter, so they cannot collide).
     /// </summary>
     private static string DropGlueName(NovaType type) =>
-        type.Enum?.ResultTypes is not null ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
+        type.Enum?.ResultTypes is not null || type.IsBox ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
+
+    /// <summary>The runtime's id for an allocator type (nova/rt.h).</summary>
+    private static string AllocatorId(NovaType allocator) =>
+        allocator.Name == "FailingAllocator" ? "NV_ALLOC_FAILING" : "NV_ALLOC_SYSTEM";
+
+    /// <summary>The <c>Result&lt;Box&lt;T, A&gt;, AllocError&gt;</c> types that <c>Box.create</c> produces, in creation order.</summary>
+    private IEnumerable<NovaType> BoxCreateResults => _types.Composites.Where(t => t.Enum?.ResultTypes is ({ IsBox: true }, { Name: "AllocError" }));
+
+    private static string BoxCreateName(NovaType result) => $"nvB_{Mangle(result.Enum!.ResultTypes!.Value.Ok)}";
+
+    private void EmitBoxCreatePrototypes()
+    {
+        foreach (var result in BoxCreateResults)
+        {
+            var contents = result.Enum!.ResultTypes!.Value.Ok.Pointee!;
+            Line($"static NV_UNUSED {CTypeName(result)} {BoxCreateName(result)}({CType(contents)});");
+        }
+    }
+
+    /// <summary>
+    /// <c>Box.create</c> (type-system.md §18.2): allocate, then move the value in and return <c>Ok(box)</c>;
+    /// on failure destroy the value and return <c>Err(AllocError.OutOfMemory)</c>.
+    /// </summary>
+    private void EmitBoxCreate()
+    {
+        foreach (var result in BoxCreateResults)
+        {
+            var box = result.Enum!.ResultTypes!.Value.Ok;
+            var contents = box.Pointee!;
+            var name = CTypeName(result);
+            var errorType = result.Enum.ResultTypes.Value.Err;
+            Line($"static {name} {BoxCreateName(result)}({CType(contents)} v) {{");
+            Line($"    _Static_assert(_Alignof({CType(contents)}) <= _Alignof(max_align_t), \"novac: {box} needs over-aligned memory\");");
+            Line($"    {CType(contents)} *p = ({CType(contents)} *)nova_alloc(sizeof({CType(contents)}), {AllocatorId(box.Allocator!)});");
+            Line("    if (p == NULL) {");
+            if (TypeTable.NeedsDrop(contents))
+            {
+                Line($"        {DropGlueName(contents)}(&v);");
+            }
+            Line($"        return (({name}){{ .tag = 1, .u.v_Err = {{ .f__0 = (({CTypeName(errorType)}){{ .tag = 0 }}) }} }});");
+            Line("    }");
+            Line("    *p = v;");
+            Line($"    return (({name}){{ .tag = 0, .u.v_Ok = {{ .f__0 = p }} }});");
+            Line("}");
+            Line();
+        }
+    }
 
     /// <summary>User structs and enums, then the built-in instantiations, in a deterministic order.</summary>
     private IEnumerable<NovaType> Aggregates => _program.Structs.Concat(_types.Composites);
@@ -232,6 +281,19 @@ public sealed class CEmitter
     {
         foreach (var type in Aggregates.Where(TypeTable.NeedsDrop))
         {
+            if (type.IsBox)
+            {
+                // Destroys the contents, then returns the memory to the box's allocator (H1).
+                Line($"static void {DropGlueName(type)}({CTypeName(type)} *p) {{");
+                if (TypeTable.NeedsDrop(type.Pointee!))
+                {
+                    Line($"    {DropGlueName(type.Pointee!)}(*p);");
+                }
+                Line($"    nova_free(*p, {AllocatorId(type.Allocator!)});");
+                Line("}");
+                Line();
+                continue;
+            }
             if (type.Enum is { } enumDefinition)
             {
                 // Destroys the payloads of the active variant.
@@ -299,7 +361,7 @@ public sealed class CEmitter
                 TypeKind.Bool => "false",
                 TypeKind.Struct or TypeKind.Enum or TypeKind.Array => "{0}",
                 TypeKind.Reference when local.Type.IsSlice => "{0}",
-                TypeKind.Reference => "NULL",
+                TypeKind.Reference or TypeKind.Box => "NULL",
                 _ => "0",
             };
             Line($"    NV_UNUSED {CType(local.Type)} {LocalName(local)} = {zero};");
@@ -363,6 +425,15 @@ public sealed class CEmitter
 
     private void EmitBuiltin(NirBuiltin builtin)
     {
+        switch (builtin.Function)
+        {
+            case BuiltinFunction.FailAfter:
+                Line($"    nova_fail_after({Operand(builtin.Arguments[0])});");
+                return;
+            case BuiltinFunction.FailReset:
+                Line("    nova_fail_reset();");
+                return;
+        }
         foreach (var argument in builtin.Arguments)
         {
             Line(argument switch
@@ -439,6 +510,7 @@ public sealed class CEmitter
         NirRef reference => $"&{Place(reference.Place)}",
         NirSlice slice => Slice(slice),
         NirLength length => $"{Place(length.Slice)}.len",
+        NirBuiltin { Function: BuiltinFunction.BoxCreate } create => $"{BoxCreateName(create.Type)}({Operand(create.Arguments[^1])})",
         NirArray array => $"(({CTypeName(array.Type)}){{ .e = {{ {string.Join(", ", array.Elements.Select(Operand))} }} }})",
         NirDiscriminant discriminant => $"(uint32_t){Place(discriminant.Place)}.tag",
         NirEnumAggregate value => EnumAggregate(value),
@@ -594,8 +666,11 @@ public sealed class CEmitter
         TypeKind.Enum when type.Enum!.ResultTypes is not null => $"nvR_{Mangle(type)[1..]}",
         TypeKind.Enum => $"nvE_{type.Name}",
         TypeKind.Reference when type.IsSlice => $"nvS{(type.IsMutableReference ? "m" : "l")}_{Mangle(type.Pointee!.Element!)}",
+        // A shared reference to a box is a pointer to a const pointer (`T *const *`), not to a const T.
+        TypeKind.Reference when type.Pointee!.IsBox => type.IsMutableReference ? $"{CTypeName(type.Pointee)}*" : $"{CTypeName(type.Pointee)}const *",
         TypeKind.Reference => type.IsMutableReference ? $"{CTypeName(type.Pointee!)} *" : $"const {CTypeName(type.Pointee!)} *",
         TypeKind.Array => $"nvA{type.ArrayLength}_{Mangle(type.Element!)}",
+        TypeKind.Box => $"{CTypeName(type.Pointee!)} *",
         _ => throw new InvalidOperationException($"type '{type}' has no C representation"),
     };
 
@@ -611,6 +686,7 @@ public sealed class CEmitter
         TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => $"R{Mangle(ok)}{Mangle(err)}",
         TypeKind.Enum => $"E{type.Name.Length}{type.Name}",
         TypeKind.Array => $"A{type.ArrayLength}_{Mangle(type.Element!)}",
+        TypeKind.Box => $"X{Mangle(type.Pointee!)}{Mangle(type.Allocator!)}",
         TypeKind.Void => "v",
         _ => type.Name,
     };
@@ -626,7 +702,10 @@ public sealed class CEmitter
             return;
         }
         Line("int main(void) {");
-        Line(main.ReturnType.Kind == TypeKind.Void ? "    nv_main();\n    return 0;" : "    return (int)nv_main();");
+        Line("    nova_rt_start();");
+        Line(main.ReturnType.Kind == TypeKind.Void
+            ? "    nv_main();\n    return (int)nova_rt_finish(0);"
+            : "    return (int)nova_rt_finish(nv_main());");
         Line("}");
     }
 

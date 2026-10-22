@@ -303,7 +303,7 @@ internal sealed class BorrowChecker
                     {
                         // A reference going out of scope does not end what it refers to.
                         var throughReference = kind == AccessKind.Dead
-                            && (loan.Place!.Projections.Any(p => p.IsDeref) || returned.Contains(loan.Id));
+                            && (DerefsReference(loan.Place!) || returned.Contains(loan.Id));
                         if (!throughReference && Overlap(loan.Place!, place) && Conflicts(loan, kind) && _reported.Add((block, i, loan.Id)))
                         {
                             Report(loan, kind, place, span, block, i);
@@ -316,6 +316,21 @@ internal sealed class BorrowChecker
 
     private List<Loan> LiveLoans(HashSet<NirLocal> live, Loan? created) =>
         [.. live.SelectMany(LoansOf).Distinct().Select(id => _loans[id]).Where(l => l.Place is not null && l != created)];
+
+    /// <summary>Does the place go through a reference? (A box deref does not: the box owns what it points to.)</summary>
+    private static bool DerefsReference(NirPlace place)
+    {
+        var type = place.Local.Type;
+        foreach (var projection in place.Projections)
+        {
+            if (projection.IsDeref && type.IsReference)
+            {
+                return true;
+            }
+            type = projection.Apply(type);
+        }
+        return false;
+    }
 
     private string Describe(NirPlace place)
     {

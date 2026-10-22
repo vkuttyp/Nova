@@ -47,6 +47,7 @@ internal sealed class TypeChecker
         Console,
         Process,
         Truncate,
+        Box,
     }
 
     private readonly IReadOnlyList<CompilationUnit> _units;
@@ -74,8 +75,12 @@ internal sealed class TypeChecker
     /// <summary>Nesting depth of deferred statements being checked: `?` may not appear in them (N0254).</summary>
     private int _deferDepth;
     private EnumEntry _allocError = null!;
-    private bool _allocErrorUsed;
-    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err"];
+    private StructEntry _systemHeap = null!;
+    private StructEntry _failingAllocator = null!;
+    /// <summary>Built-in items (AllocError, the allocators): emitted only if the program uses them.</summary>
+    private readonly HashSet<object> _builtinItems = [];
+    private readonly HashSet<object> _usedBuiltins = [];
+    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box"];
 
     public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics)
     {
@@ -88,6 +93,7 @@ internal sealed class TypeChecker
             [symbols.Intern("Console")] = Builtin.Console,
             [symbols.Intern("Process")] = Builtin.Process,
             [symbols.Intern("truncate")] = Builtin.Truncate,
+            [symbols.Intern("Box")] = Builtin.Box,
         };
         _thisSymbol = symbols.Intern("this");
     }
@@ -148,9 +154,10 @@ internal sealed class TypeChecker
         }
 
         CheckMain();
-        // The built-in AllocError is emitted only if the program uses it.
+        // Built-in items are emitted only if the program uses them.
+        bool Emitted(object entry) => !_builtinItems.Contains(entry) || _usedBuiltins.Contains(entry);
         return new HirProgram([.. _functions], [.. _constants.Select(c => c.Hir)],
-            [.. _structs.Select(s => s.Type), .. _enums.Where(e => e != _allocError || _allocErrorUsed).Select(e => e.Type)]);
+            [.. _structs.Where(Emitted).Select(s => s.Type), .. _enums.Where(Emitted).Select(e => e.Type)]);
     }
 
     private string Name(Symbol symbol) => _symbols.GetName(symbol);
@@ -171,13 +178,31 @@ internal sealed class TypeChecker
         _allocError = new EnumEntry(decl, source, TypeTable.CreateEnum("AllocError", decl, source));
         _items.Add(name.Name, _allocError);
         _enums.Add(_allocError);
+        _builtinItems.Add(_allocError);
+        _systemHeap = DeclareAllocatorType("SystemHeap");
+        _failingAllocator = DeclareAllocatorType("FailingAllocator");
     }
+
+    /// <summary>A built-in allocator type (type-system.md §18.1): a field-less struct.</summary>
+    private StructEntry DeclareAllocatorType(string text)
+    {
+        var source = new SourceText("<built-in>", $"struct {text} {{ }}");
+        var name = new Identifier(_symbols.Intern(text), new TextSpan(7, text.Length));
+        var decl = new StructDecl(Visibility.Public, name, [], [], new TextSpan(0, source.Text.Length));
+        var entry = new StructEntry(decl, source, TypeTable.CreateStruct(text, decl, source));
+        _items.Add(name.Name, entry);
+        _structs.Add(entry);
+        _builtinItems.Add(entry);
+        return entry;
+    }
+
+    private bool IsAllocatorType(NovaType type) => type == _systemHeap.Type || type == _failingAllocator.Type;
 
     /// <summary>Reports N0201 if <paramref name="name"/> is a built-in name that items cannot take (type-system.md §17.1).</summary>
     private bool IsReservedName(Identifier name)
     {
         var text = Name(name.Name);
-        if (!s_reservedNames.Contains(text) && !(text == "AllocError" && _items.ContainsKey(name.Name)))
+        if (!s_reservedNames.Contains(text) && !(_items.GetValueOrDefault(name.Name) is { } item && _builtinItems.Contains(item)))
         {
             return false;
         }
@@ -561,6 +586,23 @@ internal sealed class TypeChecker
         if (syntax is GenericType generic)
         {
             var genericName = generic.Name.Parts.Length == 1 ? Name(generic.Name.Parts[0].Name) : "";
+            if (genericName == "Box" && generic.Arguments.Length is 1 or 2)
+            {
+                var contents = ResolveType(generic.Arguments[0], allowVoid: false);
+                if (contents.IsReference)
+                {
+                    Error(DiagnosticCodes.ReferenceNotAllowed, generic.Arguments[0].Span, "a 'Box' cannot hold a reference or slice in v0");
+                    return _types.Error;
+                }
+                var allocator = generic.Arguments.Length == 2 ? ResolveType(generic.Arguments[1], allowVoid: false) : Used(_systemHeap).Type;
+                if (!allocator.IsBottom && !IsAllocatorType(allocator))
+                {
+                    Error(DiagnosticCodes.NotAnAllocator, generic.Arguments[1].Span,
+                        $"'{allocator}' is not an allocator type; use 'SystemHeap' or 'FailingAllocator'");
+                    return _types.Error;
+                }
+                return contents.IsBottom || allocator.IsBottom ? _types.Error : BoxOf(contents, allocator);
+            }
             if (genericName == "Result" && generic.Arguments.Length == 2)
             {
                 var ok = ResolveType(generic.Arguments[0], allowVoid: true);
@@ -580,6 +622,7 @@ internal sealed class TypeChecker
                 Error(DiagnosticCodes.UnknownType, generic.Span, genericName is "Slice" or "SliceMut"
                     ? $"'{genericName}' takes one type argument: '{genericName}<T>'"
                     : genericName == "Result" ? "'Result' takes two type arguments: 'Result<T, E>'"
+                    : genericName == "Box" ? "'Box' takes one or two type arguments: 'Box<T>' or 'Box<T, A>'"
                     : "only 'Slice<T>', 'SliceMut<T>' and 'Result<T, E>' take type arguments");
                 return _types.Error;
             }
@@ -601,7 +644,7 @@ internal sealed class TypeChecker
         var text = Name(named.Name.Parts[0].Name);
         var type = _types.Lookup(text) ?? _items.GetValueOrDefault(named.Name.Parts[0].Name) switch
         {
-            StructEntry s => s.Type,
+            StructEntry s => Used(s).Type,
             EnumEntry e => Used(e).Type,
             _ => null,
         };
@@ -618,10 +661,82 @@ internal sealed class TypeChecker
         return type;
     }
 
-    private EnumEntry Used(EnumEntry entry)
+    private T Used<T>(T entry)
+        where T : notnull
     {
-        _allocErrorUsed |= entry == _allocError;
+        if (_builtinItems.Contains(entry))
+        {
+            _usedBuiltins.Add(entry);
+        }
         return entry;
+    }
+
+    private NovaType BoxOf(NovaType contents, NovaType allocator) =>
+        _types.BoxOf(contents, allocator, allocator == _systemHeap.Type);
+
+    /// <summary>
+    /// <c>Box.create(v)</c> / <c>Box.createIn(a, v)</c> (type-system.md §18.2): a <c>Result&lt;Box&lt;T, A&gt;, AllocError&gt;</c>.
+    /// The expected type, if it is such a result, gives the type hint for <c>v</c>.
+    /// </summary>
+    private HirExpr CheckBoxCreate(CallExpr call, MemberExpr member, NovaType? expected)
+    {
+        var text = Name(member.Member.Name);
+        var withAllocator = text == "createIn";
+        if (text is not ("create" or "createIn"))
+        {
+            Error(DiagnosticCodes.UndefinedName, member.Member.Span, $"'Box' has no function '{text}'; use 'Box.create(v)' or 'Box.createIn(allocator, v)'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (call.Arguments.Length != (withAllocator ? 2 : 1))
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, withAllocator
+                ? "'Box.createIn' takes an allocator and a value: 'Box.createIn(allocator, v)'"
+                : "'Box.create' takes one value: 'Box.create(v)'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var arguments = ImmutableArray.CreateBuilder<HirExpr>();
+        var allocator = Used(_systemHeap).Type;
+        if (withAllocator)
+        {
+            var allocatorValue = AutoDeref(Synth(call.Arguments[0], null));
+            if (allocatorValue.Type.IsBottom)
+            {
+                Synth(call.Arguments[1], null);
+                return ErrorResult(call.Span);
+            }
+            if (!IsAllocatorType(allocatorValue.Type))
+            {
+                Error(DiagnosticCodes.NotAnAllocator, call.Arguments[0].Span,
+                    $"'{allocatorValue.Type}' is not an allocator type; use 'SystemHeap {{}}' or 'FailingAllocator {{}}'");
+                Synth(call.Arguments[1], null);
+                return ErrorResult(call.Span);
+            }
+            allocator = allocatorValue.Type;
+            arguments.Add(allocatorValue);
+        }
+        var hint = expected?.Enum?.ResultTypes is ({ IsBox: true } box, _) ? box.Pointee : null;
+        var valueSyntax = call.Arguments[^1];
+        var value = hint is not null ? CheckExpr(valueSyntax, hint) : Synth(valueSyntax, null);
+        if (hint is null)
+        {
+            value = Coerce(value, value.Type, valueSyntax.Span); // a `borrow mut` variable is reborrowed
+        }
+        if (value.Type.IsBottom)
+        {
+            return ErrorResult(call.Span);
+        }
+        if (value.Type.Kind is TypeKind.Void or TypeKind.Never || value.Type.IsReference)
+        {
+            Error(value.Type.IsReference ? DiagnosticCodes.ReferenceNotAllowed : DiagnosticCodes.VoidValue, valueSyntax.Span, value.Type.IsReference
+                ? "a 'Box' cannot hold a reference or slice in v0"
+                : $"this expression has no value (its type is '{value.Type}')");
+            return ErrorResult(call.Span);
+        }
+        arguments.Add(value);
+        var result = ResultOf(BoxOf(value.Type, allocator), Used(_allocError).Type);
+        return new HirBuiltinCall(BuiltinFunction.BoxCreate, arguments.ToImmutable(), result, call.Span);
     }
 
     private NovaType ResultOf(NovaType ok, NovaType err) =>
@@ -1395,7 +1510,7 @@ internal sealed class TypeChecker
         var throughShared = false;
         foreach (var projection in place.Projections)
         {
-            if (projection.IsDeref)
+            if (projection.IsDeref && !type.IsBox) // a box's contents are as mutable as the box (§18.2)
             {
                 mutable = type.IsMutableReference;
                 throughShared = !mutable;
@@ -1422,14 +1537,21 @@ internal sealed class TypeChecker
             text += "." + Name(projection.Field!.Name);
             hasField = true;
         }
+        if (place.Projections.Any(p => p.IsDeref) && place.Root.Type.IsBox && !hasField)
+        {
+            return $"the contents of '{text}'";
+        }
         return place.Projections.Any(p => p.Kind == ProjectionKind.Index) ? $"an element of '{text}'"
             : hasField ? $"'{text}'" : place.Projections.IsEmpty ? $"'{text}'" : $"the value '{text}' refers to";
     }
 
-    /// <summary>Reads through references until the value is not a reference (auto-deref, type-system.md §13.3).</summary>
+    /// <summary>
+    /// Reads through references and boxes until the value is neither (auto-deref, type-system.md §13.3, §18.2).
+    /// A slice is not read through: its unsized <c>[T]</c> is only reached by indexing.
+    /// </summary>
     private static HirExpr AutoDeref(HirExpr expr)
     {
-        while (expr.Type.IsReference)
+        while (expr.Type.IsReference || expr.Type.IsBox)
         {
             expr = new HirDeref(expr, expr.Span);
         }
@@ -1472,9 +1594,24 @@ internal sealed class TypeChecker
         {
             return new HirReborrow(false, hir, expected, span);
         }
-        if (!expected.IsReference && hir.Type.IsReference && ReferenceEquals(hir.Type.Pointee, expected))
+        // `borrow Box<T>` to `borrow T` (and mut to mut or shared): a reborrow of the box's contents (§18.2).
+        if (expected.IsReference && hir.Type.Pointee is { IsBox: true } box && ReferenceEquals(box.Pointee, expected.Pointee)
+            && (hir.Type.IsMutableReference || !expected.IsMutableReference))
         {
-            return new HirDeref(hir, span);
+            return new HirReborrow(expected.IsMutableReference, new HirDeref(hir, span), expected, span);
+        }
+        if (!expected.IsReference && (hir.Type.IsReference || hir.Type.IsBox))
+        {
+            // Read through references and boxes (any number of boxes) down to the expected type.
+            var read = hir;
+            while ((read.Type.IsReference || read.Type.IsBox) && !ReferenceEquals(read.Type, expected))
+            {
+                read = new HirDeref(read, span);
+            }
+            if (ReferenceEquals(read.Type, expected))
+            {
+                return read;
+            }
         }
         Error(DiagnosticCodes.TypeMismatch, span, $"expected '{expected}', found '{hir.Type}'");
         return ErrorResult(span);
@@ -1503,6 +1640,10 @@ internal sealed class TypeChecker
                 return Coerce(SynthSlice(mutSlice, isMutable: true, argument.Span), parameterType, argument.Span);
             }
             var target = Synth(mutArgument.Operand, IntegerHint(parameterType.Pointee));
+            if (target.Type.IsBox && ReferenceEquals(target.Type.Pointee, parameterType.Pointee))
+            {
+                target = new HirDeref(target, target.Span); // `mut b` lends the box's contents
+            }
             if (target.Type.IsBottom || target.Type.IsReference)
             {
                 return Coerce(target, parameterType, argument.Span);
@@ -1521,6 +1662,10 @@ internal sealed class TypeChecker
         }
 
         var value = Synth(argument, IntegerHint(parameterType.Pointee));
+        if (value.Type.IsBox && ReferenceEquals(value.Type.Pointee, parameterType.Pointee))
+        {
+            value = new HirDeref(value, value.Span); // a box argument for `borrow T` borrows its contents
+        }
         if (value.Type.IsBottom || value.Type.IsReference)
         {
             return Coerce(value, parameterType, argument.Span);
@@ -1745,6 +1890,9 @@ internal sealed class TypeChecker
             case CallExpr { Callee: NameExpr { TypeArguments.IsEmpty: true } constructor } call
                 when Name(constructor.Name.Name) is "Ok" or "Err" && Lookup(constructor.Name.Name) is null:
                 return CheckResultValue(call, constructor, expected);
+            case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } boxName } boxMember } boxCall
+                when Lookup(boxName.Name.Name) is Builtin.Box:
+                return CheckBoxCreate(boxCall, boxMember, expected);
             case CallExpr call:
                 return SynthCall(call);
             case TryExpr tryExpr:
@@ -1772,7 +1920,11 @@ internal sealed class TypeChecker
         {
             return CheckExpr(element, expected);
         }
-        var value = AutoDeref(Synth(element, null));
+        var value = Synth(element, null);
+        while (value.Type.IsReference)
+        {
+            value = new HirDeref(value, value.Span); // references are read through; boxes are values (§18.2)
+        }
         if (value.Type.Kind is TypeKind.Void or TypeKind.Never)
         {
             Error(DiagnosticCodes.VoidValue, element.Span, $"this expression has no value (its type is '{value.Type}')");
@@ -1861,6 +2013,7 @@ internal sealed class TypeChecker
             }
             return ErrorResult(literal.Span);
         }
+        Used(entry);
 
         var type = entry.Type;
         var definition = type.Struct!;
@@ -2243,6 +2396,20 @@ internal sealed class TypeChecker
     /// <summary><c>S.f(args)</c>: a static function of struct S (type-system.md §12).</summary>
     private HirExpr CheckStaticCall(CallExpr call, StructEntry entry, MemberExpr member)
     {
+        Used(entry);
+        if (entry == _failingAllocator && Name(member.Member.Name) is "failAfter" or "reset")
+        {
+            var failAfter = Name(member.Member.Name) == "failAfter";
+            if (call.Arguments.Length != (failAfter ? 1 : 0))
+            {
+                Error(DiagnosticCodes.ArgumentCount, call.Span, failAfter
+                    ? "'FailingAllocator.failAfter' takes one 'u64'" : "'FailingAllocator.reset' takes no arguments");
+                CheckArgumentsLoosely(call);
+                return ErrorResult(call.Span);
+            }
+            return new HirBuiltinCall(failAfter ? BuiltinFunction.FailAfter : BuiltinFunction.FailReset,
+                failAfter ? [CheckExpr(call.Arguments[0], _types.U64)] : [], _types.Void, call.Span);
+        }
         var definition = entry.Type.Struct!;
         if (!definition.Functions.TryGetValue(member.Member.Name, out var function))
         {
@@ -2269,6 +2436,10 @@ internal sealed class TypeChecker
         {
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
+        }
+        if (receiver.Type.IsBox || receiver.Type.Pointee is { IsBox: true })
+        {
+            receiver = AutoDeref(receiver); // the method receives the box's contents (§18.2)
         }
         var structType = receiver.Type.Pointee ?? receiver.Type;
         if (structType.Struct is not { } definition)

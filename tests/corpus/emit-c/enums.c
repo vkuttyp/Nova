@@ -114,5 +114,6 @@ static void nvD_6Holder(nvE_Holder *p) {
 }
 
 int main(void) {
-    return (int)nv_main();
+    nova_rt_start();
+    return (int)nova_rt_finish(nv_main());
 }

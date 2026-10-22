@@ -102,7 +102,8 @@ public static class Toolchain
         return Run(compiler, args);
     }
 
-    public static ToolResult Run(string fileName, IEnumerable<string> arguments, TimeSpan? timeout = null)
+    public static ToolResult Run(string fileName, IEnumerable<string> arguments, TimeSpan? timeout = null,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var info = new ProcessStartInfo(fileName)
         {
@@ -113,6 +114,10 @@ public static class Toolchain
         foreach (var argument in arguments)
         {
             info.ArgumentList.Add(argument);
+        }
+        foreach (var (name, value) in environment ?? new Dictionary<string, string>())
+        {
+            info.Environment[name] = value;
         }
 
         using var process = Process.Start(info) ?? throw new InvalidOperationException($"cannot start '{fileName}'");

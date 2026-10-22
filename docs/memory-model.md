@@ -116,6 +116,12 @@ public interface Allocator {
 - **Testability**: `FailingAllocator<A>(failAfter: n)` and a fault-injection
   hook in `SystemHeap` (env var in hosted test builds) make every failure path
   testable (M3 acceptance).
+  - *As implemented in M3b (ADR 0003):* `FailingAllocator` is a built-in, zero-sized allocator
+    type over the platform heap, steered by `FailingAllocator.failAfter(n)` and `.reset()`
+    (a process-wide countdown).
+  - The runtime counts every allocation attempt. `NOVA_FAIL_ALLOC_AT=k` fails attempt *k*,
+    and `NOVA_ALLOC_REPORT=1` prints `nova alloc: attempts=<n> live=<m>` when `main` returns.
+  - The test runner's sweep uses both (`testing.md`).
 
 ### 3.3 Arenas (regions)
 

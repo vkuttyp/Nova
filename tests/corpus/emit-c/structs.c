@@ -89,5 +89,6 @@ static nvT_Point nvM_5Point_origin(void) {
 }
 
 int main(void) {
-    return (int)nv_main();
+    nova_rt_start();
+    return (int)nova_rt_finish(nv_main());
 }

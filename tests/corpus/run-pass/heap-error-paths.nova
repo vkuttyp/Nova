@@ -1,0 +1,52 @@
+// Allocation failures are values: every one is propagated with `?` and handled in main.
+// The fault-injection sweep fails each allocation in turn; nothing may leak or be freed twice.
+struct Noisy { id: i32; drop { } }
+struct Pair { a: Box<Noisy>; b: Box<Noisy>; }
+enum List { Nil, Cons(Box<Noisy>, Box<List>) }
+
+fn pair(i: i32) -> Result<Pair, AllocError> {
+    let a = Box.create(Noisy { id: i })?;
+    let b = Box.create(Noisy { id: i + 1 })?;
+    return Ok(Pair { a: a, b: b });
+}
+
+fn build(n: i32) -> Result<List, AllocError> {
+    var l = List.Nil;
+    for (i in 0..n) {
+        let item = Box.create(Noisy { id: i })?;
+        let rest = Box.create(l)?; // on failure, Box.create destroys the list it was given
+        l = List.Cons(item, rest);
+    }
+    return Ok(l);
+}
+
+fn count(l: borrow List) -> i32 {
+    match (l) {
+        List.Nil => { return 0; }
+        List.Cons(item, rest) => { return 1 + count(rest); }
+    }
+}
+
+fn nested() -> Result<i32, AllocError> {
+    let p = Box.create(pair(10)?)?;
+    let deep = Box.create(Box.create(Box.create(7)?)?)?;
+    var numbers = Box.create([1, 2, 3, 4])?;
+    numbers[2] = 30;
+    let inner: i32 = deep;
+    return Ok(p.a.id + p.b.id + numbers[2] + 7);
+}
+
+fn run() -> Result<i32, AllocError> {
+    let l = build(4)?;
+    let n = nested()?;
+    return Ok(count(l) * 100 + n);
+}
+
+fn main() -> i32 {
+    match (run()) {
+        Ok(v) => { Console.writeLine(v); }
+        Err(_) => { Console.writeLine("out of memory"); }
+    }
+    return 0;
+}
+// expect-stdout: 458

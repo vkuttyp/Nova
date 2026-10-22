@@ -91,3 +91,68 @@ _Noreturn void nova_panic(nv_panic_kind kind, nv_loc loc) {
     write_err_cstr("\n");
     nova_platform_abort();
 }
+
+/* ---- Heap: accounting and fault injection (type-system.md §18) ---------------------------- */
+
+static uint64_t alloc_attempts;   /* every allocation attempt, failed ones included */
+static uint64_t alloc_live;       /* successful allocations not yet freed */
+static uint64_t alloc_fail_at;    /* NOVA_FAIL_ALLOC_AT: this attempt fails; 0 = never */
+static bool alloc_report;         /* NOVA_ALLOC_REPORT: print the counters at the end of main */
+static bool failing_armed;        /* FailingAllocator.failAfter has been called */
+static uint64_t failing_left;     /* successes FailingAllocator still allows */
+
+void nova_rt_start(void) {
+    alloc_fail_at = nova_platform_config("NOVA_FAIL_ALLOC_AT");
+    alloc_report = nova_platform_config("NOVA_ALLOC_REPORT") != 0u;
+}
+
+void *nova_alloc(size_t size, uint32_t allocator) {
+    alloc_attempts++;
+    if (allocator == NV_ALLOC_FAILING && failing_armed) {
+        if (failing_left == 0u) {
+            return NULL;
+        }
+        failing_left--;
+    }
+    if (alloc_fail_at != 0u && alloc_attempts == alloc_fail_at) {
+        return NULL;
+    }
+    void *p = nova_platform_alloc(size == 0u ? 1u : size);
+    if (p != NULL) {
+        alloc_live++;
+    }
+    return p;
+}
+
+void nova_free(void *p, uint32_t allocator) {
+    (void)allocator; /* every M3 allocator frees to the platform heap */
+    alloc_live--;
+    nova_platform_free(p);
+}
+
+void nova_fail_after(uint64_t n) {
+    failing_armed = true;
+    failing_left = n;
+}
+
+void nova_fail_reset(void) {
+    failing_armed = false;
+}
+
+static void write_err_u64(uint64_t value) {
+    uint8_t buffer[20];
+    size_t start = format_u64(value, buffer);
+    nova_platform_write_stderr(buffer + start, 20u - start);
+}
+
+/* Format (relied on by the fault-injection sweep): "nova alloc: attempts=<n> live=<m>\n" */
+int32_t nova_rt_finish(int32_t code) {
+    if (alloc_report) {
+        write_err_cstr("nova alloc: attempts=");
+        write_err_u64(alloc_attempts);
+        write_err_cstr(" live=");
+        write_err_u64(alloc_live);
+        write_err_cstr("\n");
+    }
+    return code;
+}

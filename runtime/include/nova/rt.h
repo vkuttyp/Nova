@@ -235,6 +235,30 @@ void nova_platform_write_stdout(const uint8_t *bytes, size_t length);
 void nova_platform_write_stderr(const uint8_t *bytes, size_t length);
 _Noreturn void nova_platform_exit(int32_t code);
 _Noreturn void nova_platform_abort(void);
+/* Heap memory; NULL on failure. Must be aligned for any Nova type (max_align_t). */
+void *nova_platform_alloc(size_t size);
+void nova_platform_free(void *p);
+/* A configuration number from the environment; 0 if absent or not a number (hosted test builds). */
+uint64_t nova_platform_config(const char *name);
+
+/* ---- Heap (type-system.md §18; runtime/core/nova_rt_core.c) ------------------------------ */
+
+/* Allocator types, as passed by generated code. */
+#define NV_ALLOC_SYSTEM 0u
+#define NV_ALLOC_FAILING 1u
+
+/*
+ * Allocation for Box and every later heap type. Every attempt is counted, and the attempt numbered
+ * NOVA_FAIL_ALLOC_AT (1-based, all allocators) fails: the fault-injection hook for the M3 sweep.
+ */
+void *nova_alloc(size_t size, uint32_t allocator);
+void nova_free(void *p, uint32_t allocator);
+/* FailingAllocator.failAfter(n) / FailingAllocator.reset(). */
+void nova_fail_after(uint64_t n);
+void nova_fail_reset(void);
+/* Called by the generated `main`: configuration at start; the NOVA_ALLOC_REPORT line at the end. */
+void nova_rt_start(void);
+int32_t nova_rt_finish(int32_t code);
 
 /* ---- Output and process control (runtime/core/nova_rt_core.c) --------------------------- */
 

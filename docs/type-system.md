@@ -604,6 +604,8 @@ fn main() -> i32 {
   - a `Box<T>` argument for a `borrow T` parameter borrows the contents, and `mut b` lends them
     for a `borrow mut T` parameter;
   - where a Copy `T` is expected, a `Box<T>` is read through (auto-deref);
+  - a `borrow Box<T>` converts to `borrow T`, and a `borrow mut Box<T>` to `borrow mut T` or
+    `borrow T`: a reborrow of the contents (for example, a payload bound by reference in a match);
   - `borrow b` borrows the box itself (`borrow Box<T>`).
 - **Borrowing rules:** a place inside a box is part of the box. Moving, overwriting or dropping
   the box while a loan of its contents is live is rejected (N0240, N0243), as for any place and

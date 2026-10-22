@@ -1,0 +1,11 @@
+struct Res { id: i32; drop { } }
+enum List { Nil, Cons(Res, Box<List>) }
+
+fn cons(r: Res, rest: List) -> Result<List, AllocError> => Ok(List.Cons(r, Box.create(rest)?));
+
+fn main() -> i32 {
+    let l = cons(Res { id: 1 }, List.Nil)!;
+    let n = Box.createIn(FailingAllocator {}, 5)!;
+    let v: i32 = n;
+    return v;
+}

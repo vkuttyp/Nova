@@ -10,7 +10,7 @@ increment writes its spec first, then the code and tests.
 | # | Content | Spec sections | Status |
 |---|---|---|---|
 | **3a** | **Results and error propagation**: built-in `Result<T, E>` with `Ok`/`Err`, matching on results, `e?` (propagate) and `e!` (unwrap or panic), built-in `AllocError`. Also fixes discarded call results of drop types, which were never destroyed (an O4 bug from M2c) | type-system §17 | **done 2026-10-22** |
-| 3b | **Box and allocators**: `Box<T, A>` (owned, one pointer wide), `Box.create` / `Box.createIn`, auto-deref through boxes, recursive types through `Box`, `SystemHeap`, `FailingAllocator`. The runtime allocation API, with allocation accounting and a fault-injection hook (`NOVA_FAIL_ALLOC_AT`). Ex4 and Ex5 (concrete allocator). The fault-injection sweep in the test runner. Allocation in CosmoOS's libc for C2 | type-system §18, memory-model §3.2, c-backend | planned |
+| 3b | **Box and allocators**: `Box<T, A>` (owned, one pointer wide), `Box.create` / `Box.createIn`, auto-deref through boxes, recursive types through `Box`, `SystemHeap`, `FailingAllocator`. The runtime allocation API, with allocation accounting and a fault-injection hook (`NOVA_FAIL_ALLOC_AT`). Ex4 and Ex5 (concrete allocator). The fault-injection sweep in the test runner. Allocation in CosmoOS's libc for C2 | type-system §18, memory-model §3.2, c-backend | **done 2026-10-22** |
 | 3c | **Moves out of boxes and deep structures**: moving fields out of a box's contents and re-initialising them (Ex14), moving payloads out of a `match` on an owned value, drop elaboration of partially moved boxes, and iterative destruction for deep recursive structures (R-9) | type-system §18 | planned |
 
 ## Acceptance criteria (from `roadmap.md`, adjusted by ADR 0003)

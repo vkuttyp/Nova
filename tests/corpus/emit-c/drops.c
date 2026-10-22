@@ -79,6 +79,7 @@ static void nvD_4Pair(nvT_Pair *p) {
 }
 
 int main(void) {
+    nova_rt_start();
     nv_main();
-    return 0;
+    return (int)nova_rt_finish(0);
 }

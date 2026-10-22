@@ -34,6 +34,7 @@ static void nv_main(void) {
 }
 
 int main(void) {
+    nova_rt_start();
     nv_main();
-    return 0;
+    return (int)nova_rt_finish(0);
 }

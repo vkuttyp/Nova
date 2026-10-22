@@ -46,6 +46,7 @@ Status: Milestone 0 proposal. Applies from M1. CosmoOS-specific flags are covere
 | `char` | `uint32_t` |
 | `f32`/`f64` | `float`/`double` (`_Static_assert(sizeof(double)==8)`); **kernel profile forbids floats** unless the target profile enables them (`cosmoos/profiles.md`) |
 | `struct S` | `typedef struct nvT_S nvT_S;` then `struct nvT_S { … }` with fields `f_<name>` in declaration order, structs emitted after the structs they contain. Each struct is followed by `_Static_assert`s on `sizeof`, `_Alignof` and every field's `offsetof`, against `TypeTable.LayoutOf`. An empty struct gets a `uint8_t nv_empty` member (C has no empty structs). `@repr(C)` is the default in v0; field reordering is an M9 opt-in (`@repr(auto)`) |
+| `Box<T, A>` (M3b) | `T *` (a shared reference to a box is `T *const *`). Drop glue `nvD_X<T><A>` destroys `*p`, then calls `nova_free(p, NV_ALLOC_SYSTEM \| NV_ALLOC_FAILING)`. `Box.create`/`createIn` call a per-type helper `nvB_X<T><A>(T v)`: `nova_alloc(sizeof(T), id)`; on NULL it destroys `v` and returns `Err(OutOfMemory)`, otherwise it stores `v` and returns `Ok(p)`. It asserts `_Alignof(T) <= _Alignof(max_align_t)` |
 | `Result<T, E>` (M3a) | like an enum, named `nvR_<T><E>` with the element codes below (`Result<Res, Code>` → `nvR_S3ResE4Code`, `void` → `v`). Its drop glue is `nvD_R<T><E>`. `e!` on `Err` calls `nova_panic(NV_PANIC_UNWRAP, loc)` |
 | `enum E { A, B(T) }` | `struct { uint32_t tag; union { T B; } u; }`. The tag width is the smallest unsigned that fits, unless `@repr(u8)` etc. |
 | `T?` | `T*`-niche for `Box`/references, else `struct { bool has; T value; }` |
@@ -138,6 +139,16 @@ with side effects are always assigned to temporaries first.
 | Infinite side-effect-free loops (C11 6.8.5p6 permits assuming termination) | Loops whose controlling expression is not a constant expression and that have no side effects get a `nova_loop_barrier()` (an empty `asm volatile` / volatile access) |
 
 ## 6. Runtime surface (`nova/rt.h`)
+
+Heap (M3b):
+- `nova_alloc(size, allocator)` and `nova_free(p, allocator)` go through the platform's
+  `nova_platform_alloc`/`nova_platform_free` (hosted: `malloc`/`free`, which also serve
+  CosmoOS userland). They count attempts and live allocations. `nova_fail_after`/`nova_fail_reset`
+  implement `FailingAllocator`.
+- The generated `main` calls `nova_rt_start()` (reads `NOVA_FAIL_ALLOC_AT`, `NOVA_ALLOC_REPORT`
+  via `nova_platform_config`) and returns through `nova_rt_finish(code)`, which prints the
+  allocation report if asked. `Process.exit` and panics skip the report.
+
 
 - `nova_panic(kind, src)`: `noreturn`. Provided by the profile: hosted (write to
   stderr + `abort()`), CosmoOS userland (same, through CosmoOS libc), kernel

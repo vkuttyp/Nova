@@ -1,0 +1,60 @@
+struct Account {
+    id: u64;
+    balance: i64;
+    fn deposit(borrow mut this, amount: i64) { this.balance += amount; }
+    fn show(borrow this) { Console.write("account "); Console.write(this.id); Console.write(" "); Console.writeLine(this.balance); }
+}
+
+fn open(id: u64) -> Result<Box<Account>, AllocError> {
+    return Box.create(Account { id: id, balance: 0 });
+}
+
+enum List { Nil, Cons(i32, Box<List>) }
+
+fn push(l: List, v: i32) -> Result<List, AllocError> {
+    let rest = Box.create(l)?;
+    return Ok(List.Cons(v, rest));
+}
+
+fn sum(l: borrow List) -> i32 {
+    match (l) {
+        List.Nil => { return 0; }
+        List.Cons(v, rest) => { return v + sum(rest); }
+    }
+}
+
+struct Noisy { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+
+fn main() -> i32 {
+    var acct = open(7)!;
+    acct.deposit(100);
+    acct.show();
+    acct.balance -= 1;
+    Console.writeLine(acct.balance);
+
+    var l = List.Nil;
+    for (i in 1..5) { l = push(l, i)!; }
+    Console.writeLine(sum(l));
+
+    let n = Box.create(Noisy { id: 1 })!;
+    let m = Box.createIn(FailingAllocator {}, Noisy { id: 2 })!;
+    FailingAllocator.failAfter(0u64);
+    let attempt = Box.createIn(FailingAllocator {}, Noisy { id: 3 });
+    match (borrow attempt) {
+        Ok(b) => { Console.writeLine("unexpected"); }
+        Err(_) => { Console.writeLine("failed as told"); }
+    }
+    FailingAllocator.reset();
+    let b5: Box<u8> = Box.create(5u8)!;
+    let x: u8 = b5;
+    Console.writeLine(x);
+    return 0;
+}
+// expect-stdout: account 7 100
+// expect-stdout: 99
+// expect-stdout: 10
+// expect-stdout: drop 3
+// expect-stdout: failed as told
+// expect-stdout: 5
+// expect-stdout: drop 2
+// expect-stdout: drop 1
