@@ -545,6 +545,18 @@ public sealed class Parser
 
     private TypeSyntax ParseType()
     {
+        var start = Current.Span.Start;
+        var type = ParseTypeCore();
+        while (At(TokenKind.Question))
+        {
+            Advance();
+            type = new OptionalType(type, SpanFrom(start)); // `T?`; `borrow T?` is an optional reference (§22.1)
+        }
+        return type;
+    }
+
+    private TypeSyntax ParseTypeCore()
+    {
         if (At(TokenKind.BorrowKeyword))
         {
             var start = Advance().Span.Start;
@@ -566,7 +578,7 @@ public sealed class Parser
                 Expect(TokenKind.CloseParen);
                 sources = builder.ToImmutable();
             }
-            var pointee = ParseType();
+            var pointee = ParseTypeCore();
             return new ReferenceType(isMutable, sources, pointee, SpanFrom(start)) { HasSources = hasSources };
         }
         if (At(TokenKind.OpenBracket))
@@ -774,6 +786,8 @@ public sealed class Parser
         {
             case TokenKind.Underscore:
                 return new WildcardPattern(Advance().Span);
+            case TokenKind.NullKeyword:
+                return new NullPattern(Advance().Span);
             case TokenKind.IntLiteral or TokenKind.TrueKeyword or TokenKind.FalseKeyword:
                 return new LiteralPattern(ParsePrimary(), SpanFrom(start));
             case TokenKind.Minus when Peek(1).Kind == TokenKind.IntLiteral:
@@ -1111,6 +1125,9 @@ public sealed class Parser
             case TokenKind.ThisKeyword:
                 Advance();
                 return new ThisExpr(token.Span);
+            case TokenKind.NullKeyword:
+                Advance();
+                return new NullLiteralExpr(token.Span);
             case TokenKind.OpenBracket:
             {
                 Advance();

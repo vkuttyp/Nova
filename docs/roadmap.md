@@ -68,7 +68,12 @@ corpus and a guest-side fault-injection sweep inside CosmoOS on both arches.
 - `Arena`, `FixedBufferAllocator`, LIFO scratch frames and `Pool`/`PoolBox`, all following R1/R2;
 - the fault-injection sweeps, which cover region allocations.
 
-Next per the ordering above: **M6** (generics and collections; OD-3 design), which also turns the
-built-in `Result`/`Box`/region types into library types (ADRs 0003/0004). **M5** (escape and
+**M6, generics and collections, is in progress** (`milestone-6.md`; ADR 0005):
+- 6a, generics (checked once, monomorphised), done 2026-10-22;
+- 6b, interfaces, `impl`, bounds, done 2026-10-22;
+- 6c, optionals `T?` and `StringView`, done 2026-10-23.
+
+Next: **6d**, `Vector<T, A>` and `String<A>` (Ex9, Ex10), then 6e (`SlotMap`, `StableVector`) and 6f
+(property tests, invalidation suite, OD-3 design). **M5** (escape and
 placement analysis) may follow M4 in parallel. In parallel, when the owner wants it: propose the
 S1 in-tree port for C1 (OD-20).

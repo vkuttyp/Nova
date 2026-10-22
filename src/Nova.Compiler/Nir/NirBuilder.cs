@@ -461,7 +461,8 @@ public sealed class NirBuilder
                 var binding = _locals[local.Id];
                 _scopes[^1].Add(binding);
                 var payload = place.Project(Projection.Downcast(arm.Variant!)).Field(arm.Variant!.Payload[index]);
-                Emit(new NirAssign(new NirPlace(binding), local.Type.IsReference
+                // A match on a reference binds payloads by reference; one on a value copies them, even references.
+                Emit(new NirAssign(new NirPlace(binding), scrutineeType.IsReference
                     ? new NirRef(local.Type.IsMutableReference, payload, local.Type)
                     : new NirUse(Read(payload))));
             }
@@ -654,7 +655,7 @@ public sealed class NirBuilder
         {
             case NirPlaceOperand operand:
                 return operand.Place;
-            case NirConst constant:
+            case NirOperand constant and (NirConst or NirString):
             {
                 var temp = NewTemp(constant.Type);
                 Emit(new NirAssign(new NirPlace(temp), new NirUse(constant)));
@@ -732,13 +733,23 @@ public sealed class NirBuilder
         _span = expr.Span;
         try
         {
-            return LowerOperandCore(expr);
+            return Completes(LowerOperandCore(expr), expr);
         }
         finally
         {
             _span = saved;
         }
     }
+
+    /// <summary>
+    /// Lowerings return null only for an expression that never completes, after ending the block.
+    /// A null with the block still open would silently drop code, so it is an internal error.
+    /// </summary>
+    private T? Completes<T>(T? lowered, HirExpr expr)
+        where T : class =>
+        lowered is null && _current is not null
+            ? throw new InvalidOperationException($"internal error: no lowering for {expr.GetType().Name} of type '{expr.Type}'")
+            : lowered;
 
     private NirOperand? LowerOperandCore(HirExpr expr)
     {
@@ -763,7 +774,7 @@ public sealed class NirBuilder
                 {
                     return null;
                 }
-                var ok = result.Type.Enum!.Variants[0];
+                var ok = SuccessVariant(result.Type);
                 return Read(result.Project(Projection.Downcast(ok)).Field(ok.Payload[0]));
             }
             case HirFieldAccess field:
@@ -804,7 +815,7 @@ public sealed class NirBuilder
         _span = expr.Span;
         try
         {
-            return LowerRvalueCore(expr);
+            return Completes(LowerRvalueCore(expr), expr);
         }
         finally
         {
@@ -853,6 +864,17 @@ public sealed class NirBuilder
                     return null;
                 }
                 return new NirRef(reborrow.IsMutable, reference.Place.Deref(), reborrow.Type);
+            }
+            case HirIsNull test:
+            {
+                if (LowerOperand(test.Reference) is not NirPlaceOperand reference)
+                {
+                    return null;
+                }
+                var tag = NewTemp(_types.U32);
+                Emit(new NirAssign(new NirPlace(tag), new NirDiscriminant(reference.Place.Deref(), _types.U32)));
+                return new NirBinary(test.IsNull ? BinaryOp.Equal : BinaryOp.NotEqual, new NirPlaceOperand(tag),
+                    new NirConst(0, _types.U32), _types.Bool, _function.Source, test.Span);
             }
             case HirFieldAccess or HirDeref or HirIndex or HirTry or HirUnwrap:
             {
@@ -986,13 +1008,18 @@ public sealed class NirBuilder
         HirSliceLength l => ContainsCall(l.Slice),
         HirTry t => ContainsCall(t.Operand),
         HirUnwrap u => ContainsCall(u.Operand),
+        HirIsNull n => ContainsCall(n.Reference),
         _ => false,
     };
 
+    /// <summary>The variant <c>?</c> and <c>!</c> continue with: <c>Ok</c> of a result, <c>Some</c> of an optional.</summary>
+    private static EnumVariant SuccessVariant(NovaType type) => type.Enum!.Variants[type.Enum.OptionType is null ? 0 : 1];
+
     /// <summary>
-    /// <c>e?</c> / <c>e!</c> (type-system.md §17.4): moves the result into a temporary and switches on its
-    /// tag. On <c>Err</c>, <c>?</c> returns <c>Err(payload)</c> (with every open temporary and scope ended)
-    /// and <c>!</c> panics. Returns the temporary, in the <c>Ok</c> block; null if the operand never completes.
+    /// <c>e?</c> / <c>e!</c> (type-system.md §17.4, §22.1): moves the result or optional into a temporary and
+    /// switches on its tag. On <c>Err</c> or <c>null</c>, <c>?</c> returns <c>Err(payload)</c> or <c>null</c>
+    /// (with every open temporary and scope ended) and <c>!</c> panics. Returns the temporary, in the success
+    /// block; null if the operand never completes.
     /// </summary>
     private NirPlace? LowerResultAccess(HirExpr expr)
     {
@@ -1008,19 +1035,24 @@ public sealed class NirBuilder
         Emit(new NirAssign(new NirPlace(tag), new NirDiscriminant(result, _types.U32)));
         var okBlock = NewBlock();
         var errBlock = NewBlock();
-        Terminate(new NirSwitch(new NirPlaceOperand(tag), [(0, okBlock)], errBlock));
+        var success = SuccessVariant(operand.Type);
+        Terminate(new NirSwitch(new NirPlaceOperand(tag), [(success.Index, okBlock)], errBlock));
 
         _current = errBlock;
-        if (propagate)
+        var returnType = _function.ReturnType;
+        if (propagate && operand.Type.Enum!.OptionType is not null)
+        {
+            EmitReturn(new NirEnumAggregate(returnType.Enum!.Variants[0], [], returnType)); // `null` (§22.1)
+        }
+        else if (propagate)
         {
             var err = operand.Type.Enum!.Variants[1];
             var payload = Read(result.Project(Projection.Downcast(err)).Field(err.Payload[0]));
-            var returnType = _function.ReturnType;
             EmitReturn(new NirEnumAggregate(returnType.Enum!.Variants[1], [payload], returnType));
         }
         else
         {
-            Terminate(new NirPanic(NirPanicKind.Unwrap));
+            Terminate(new NirPanic(operand.Type.Enum!.OptionType is null ? NirPanicKind.Unwrap : NirPanicKind.UnwrapNull));
         }
 
         _current = okBlock;
@@ -1047,7 +1079,11 @@ public sealed class NirBuilder
         var low = slice.Low is null ? new NirConst(0, _types.USize) : bounds[0];
         var high = slice.High is null ? length : bounds[^1];
         var staticallyValid = low is NirConst l && high is NirConst h && length is NirConst n && l.Value <= h.Value && h.Value <= n.Value;
-        if ((slice.Low is not null || slice.High is not null) && !staticallyValid)
+        if (slice.Type.IsStringView && (slice.Low is not null || slice.High is not null))
+        {
+            Emit(new NirRangeCheck(low, high, length) { Text = array }); // the bytes decide the boundaries
+        }
+        else if ((slice.Low is not null || slice.High is not null) && !staticallyValid)
         {
             Emit(new NirRangeCheck(low, high, length));
         }

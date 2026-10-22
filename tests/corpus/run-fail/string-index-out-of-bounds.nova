@@ -1,0 +1,11 @@
+fn main() {
+    let text = "abc";
+    var i: usize = 0;
+    while (true) {
+        Console.writeLine(text[i]); // expect-panic: index out of bounds
+        i += 1;
+    }
+}
+// expect-stdout: 97
+// expect-stdout: 98
+// expect-stdout: 99

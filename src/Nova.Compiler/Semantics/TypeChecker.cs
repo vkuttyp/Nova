@@ -417,6 +417,16 @@ internal sealed class TypeChecker
         return hir;
     }
 
+    /// <summary>True if every scoped value in <paramref name="type"/> is a <c>StringView</c> (§22.2).</summary>
+    private static bool OnlyViews(NovaType type) => type switch
+    {
+        { IsStringView: true } => true,
+        { IsReference: true } => false,
+        { Enum.ResultTypes: var (ok, err) } => (!TypeTable.IsScoped(ok) || OnlyViews(ok)) && (!TypeTable.IsScoped(err) || OnlyViews(err)),
+        { Enum.OptionType: { } value } => OnlyViews(value),
+        _ => false,
+    };
+
     /// <summary>The parameters a returned reference may be derived from (type-system.md §13.5, lifetimes.md §7).</summary>
     private ImmutableArray<int> ResolveReturnSources(FunctionDecl fn, HirFunction hir)
     {
@@ -425,6 +435,10 @@ internal sealed class TypeChecker
         var referenceParameters = hir.Parameters.Where(p => TypeTable.IsScoped(p.Type)).ToList();
         if (syntax is not { HasSources: true })
         {
+            if (referenceParameters.Count == 0 && OnlyViews(hir.ReturnType))
+            {
+                return []; // string views of static text (§22.2); the return check still rejects local loans
+            }
             if (referenceParameters.Count == 1)
             {
                 var only = referenceParameters[0];
@@ -761,6 +775,8 @@ internal sealed class TypeChecker
                 return BoxOf(Substitute(type.Pointee!, map), type.Allocator!);
             case TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err):
                 return ResultOf(Substitute(ok, map), Substitute(err, map));
+            case TypeKind.Enum when type.Enum!.OptionType is { } value:
+                return OptionOf(Substitute(value, map));
             case TypeKind.Struct when _items.GetValueOrDefault(type.Struct!.Syntax.Name.Name) is StructEntry template:
                 return InstantiateStruct(template, [.. type.Struct.TypeArguments.Select(a => Substitute(a, map))]).Type;
             case TypeKind.Enum when _items.GetValueOrDefault(type.Enum!.Syntax!.Name.Name) is EnumEntry enumTemplate:
@@ -1078,6 +1094,7 @@ internal sealed class TypeChecker
     {
         { Kind: TypeKind.Array } => Flatten(type.Element!),
         { Enum.ResultTypes: var (ok, err) } => Flatten(ok).Concat(Flatten(err)),
+        { Enum.OptionType: { } value } => Flatten(value),
         _ => [type],
     };
 
@@ -1170,6 +1187,11 @@ internal sealed class TypeChecker
 
     private NovaType ResolveType(TypeSyntax syntax, bool allowVoid, bool allowSources = false)
     {
+        if (syntax is OptionalType optional)
+        {
+            var value = ResolveType(optional.Inner, allowVoid: false, allowSources);
+            return value.IsBottom ? _types.Error : OptionOf(value);
+        }
         if (syntax is ReferenceType reference)
         {
             if (reference.HasSources && !allowSources)
@@ -1650,6 +1672,92 @@ internal sealed class TypeChecker
                 ResultOf(_types.SliceOf(value.Type, isMutable: true), allocError), call.Span);
     }
 
+    private NovaType OptionOf(NovaType value) =>
+        _types.OptionOf(value, _symbols.Intern("null"), _symbols.Intern("Some"), _symbols.Intern("_0"));
+
+    /// <summary><c>null</c>: needs an expected optional type (§22.1, N0260).</summary>
+    private HirExpr CheckNull(NullLiteralExpr literal, NovaType? expected)
+    {
+        if (expected?.Enum?.OptionType is not null)
+        {
+            return new HirEnumValue(expected.Enum.Variants[0], [], expected, literal.Span);
+        }
+        if (expected is null || !expected.IsBottom)
+        {
+            Error(DiagnosticCodes.ResultTypeUnknown, literal.Span, expected is null
+                ? "the optional type of 'null' is unknown here; give the variable or parameter a type 'T?'"
+                : $"'null' is an absent optional, but '{expected}' is expected here");
+        }
+        return ErrorResult(literal.Span);
+    }
+
+    /// <summary><c>Some(e)</c> (§22.1): against the expected <c>T?</c>, or of <c>e</c>'s own type.</summary>
+    private HirExpr CheckSomeValue(CallExpr call, NovaType? expected)
+    {
+        if (call.Arguments.Length != 1)
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, "'Some' takes one value: 'Some(v)'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (expected?.Enum?.OptionType is { } wrapped)
+        {
+            var payload = CheckExpr(call.Arguments[0], wrapped);
+            return payload.Type.IsBottom ? payload : new HirEnumValue(expected.Enum.Variants[1], [payload], expected, call.Span);
+        }
+        var value = Synth(call.Arguments[0], null);
+        value = Coerce(value, value.Type, call.Arguments[0].Span); // a `borrow mut` variable is reborrowed
+        if (value.Type.IsBottom)
+        {
+            return value;
+        }
+        if (value.Type.Kind == TypeKind.Void)
+        {
+            Error(DiagnosticCodes.VoidNotAllowed, call.Arguments[0].Span, "'Some' needs a value; 'void' has none");
+            return ErrorResult(call.Span);
+        }
+        var option = OptionOf(value.Type);
+        return new HirEnumValue(option.Enum!.Variants[1], [value], option, call.Span);
+    }
+
+    /// <summary>
+    /// <c>o == null</c> / <c>o != null</c> (§22.1): reads the tag through a shared borrow, so the optional
+    /// is not consumed.
+    /// </summary>
+    private HirExpr SynthNullTest(BinaryExpr binary)
+    {
+        var isNull = binary.Op == BinaryOp.Equal;
+        var operandSyntax = binary.Left is NullLiteralExpr ? binary.Right : binary.Left;
+        if (operandSyntax is NullLiteralExpr)
+        {
+            Error(DiagnosticCodes.InvalidOperandTypes, binary.Span, "comparing 'null' with 'null' is always true; compare an optional value with 'null'");
+            return ErrorResult(binary.Span);
+        }
+        var value = Synth(operandSyntax, null);
+        while (value.Type.IsReference && value.Type.Pointee!.IsReference)
+        {
+            value = new HirDeref(value, operandSyntax.Span);
+        }
+        if (value.Type.IsBottom)
+        {
+            return ErrorResult(binary.Span);
+        }
+        var option = value.Type.IsReference ? value.Type.Pointee! : value.Type;
+        if (option.Enum?.OptionType is null)
+        {
+            Error(DiagnosticCodes.InvalidOperandTypes, binary.Span,
+                $"only an optional value can be compared with 'null', found '{value.Type}'");
+            return ErrorResult(binary.Span);
+        }
+        var reference = _types.ReferenceTo(option, isMutable: false);
+        HirExpr borrowed = value.Type.IsReference
+            ? new HirReborrow(false, value, reference, operandSyntax.Span)
+            : ToPlace(value) is { } place
+                ? new HirBorrow(false, place, reference, operandSyntax.Span)
+                : new HirBorrowTemp(false, value, reference, operandSyntax.Span);
+        return new HirIsNull(borrowed, isNull, _types.Bool, binary.Span);
+    }
+
     private NovaType ResultOf(NovaType ok, NovaType err) =>
         _types.ResultOf(ok, err, _symbols.Intern("Ok"), _symbols.Intern("Err"), _symbols.Intern("_0"));
 
@@ -1685,7 +1793,7 @@ internal sealed class TypeChecker
         return new HirEnumValue(variant, payload, expected, call.Span);
     }
 
-    /// <summary>The operand of <c>e?</c> or <c>e!</c>: a value of a <c>Result</c> type (N0262).</summary>
+    /// <summary>The operand of <c>e?</c> or <c>e!</c>: a <c>Result</c> or optional value (N0262).</summary>
     private HirExpr? CheckResultOperand(Expr operand, string text)
     {
         var value = Synth(operand, null);
@@ -1693,11 +1801,11 @@ internal sealed class TypeChecker
         {
             return null;
         }
-        if (value.Type.Enum is not { ResultTypes: not null })
+        if (value.Type.Enum is not ({ ResultTypes: not null } or { OptionType: not null }))
         {
-            Error(DiagnosticCodes.NotAResult, operand.Span, value.Type.Pointee?.Enum is { ResultTypes: not null }
-                ? $"'{text}' needs a 'Result' value, but this is a reference to one; '{text}' consumes the result"
-                : $"'{text}' needs a 'Result<T, E>' value, found '{value.Type}'");
+            Error(DiagnosticCodes.NotAResult, operand.Span, value.Type.Pointee?.Enum is { ResultTypes: not null } or { OptionType: not null }
+                ? $"'{text}' needs a 'Result' or optional value, but this is a reference to one; '{text}' consumes the value"
+                : $"'{text}' needs a 'Result<T, E>' or optional value, found '{value.Type}'");
             return null;
         }
         return value;
@@ -1710,8 +1818,21 @@ internal sealed class TypeChecker
         {
             return ErrorResult(expr.Span);
         }
-        var (ok, err) = operand.Type.Enum!.ResultTypes!.Value;
         var returnType = _function?.ReturnType;
+        if (operand.Type.Enum!.OptionType is { } value)
+        {
+            if (_deferDepth > 0)
+            {
+                Error(DiagnosticCodes.JumpInDefer, expr.Span, "a deferred statement cannot contain '?': it would return from the function");
+            }
+            else if (returnType?.Enum?.OptionType is null && (returnType is null || !returnType.IsBottom))
+            {
+                Error(DiagnosticCodes.TryReturnMismatch, expr.Span,
+                    $"'?' on an optional returns 'null' from the function, so '{(_function is null ? "this" : Name(_function.Name))}' must return an optional 'T?'");
+            }
+            return new HirTry(operand, value, expr.Span);
+        }
+        var (ok, err) = operand.Type.Enum!.ResultTypes!.Value;
         if (_deferDepth > 0)
         {
             Error(DiagnosticCodes.JumpInDefer, expr.Span, "a deferred statement cannot contain '?': it would return from the function");
@@ -1803,6 +1924,9 @@ internal sealed class TypeChecker
             case TypeKind.Enum when declared.Enum!.ResultTypes is var (ok, err) && actual.Enum!.ResultTypes is var (actualOk, actualErr):
                 Unify(ok, actualOk, parameters, found);
                 Unify(err, actualErr, parameters, found);
+                break;
+            case TypeKind.Enum when declared.Enum!.OptionType is { } value && actual.Enum!.OptionType is { } actualValue:
+                Unify(value, actualValue, parameters, found);
                 break;
             case TypeKind.Enum when declared.Enum!.Syntax is not null && declared.Enum.Syntax == actual.Enum!.Syntax:
                 foreach (var (d, a) in declared.Enum.TypeArguments.Zip(actual.Enum.TypeArguments))
@@ -2183,8 +2307,13 @@ internal sealed class TypeChecker
         if (forStmt.End is null)
         {
             start = AutoDeref(Synth(forStmt.Start, null));
-            variableType = start.Type.Kind == TypeKind.Array ? start.Type.Element! : _types.Error;
-            if (!start.Type.IsBottom && start.Type.Kind != TypeKind.Array)
+            variableType = start.Type.Kind == TypeKind.Array && !start.Type.IsStr ? start.Type.Element! : _types.Error;
+            if (start.Type.IsStr)
+            {
+                Error(DiagnosticCodes.TypeMismatch, forStmt.Start.Span,
+                    "'for' does not iterate over a 'StringView'; iterate over its bytes with 's.bytes()'");
+            }
+            else if (!start.Type.IsBottom && start.Type.Kind != TypeKind.Array)
             {
                 Error(DiagnosticCodes.TypeMismatch, forStmt.Start.Span,
                     $"'for' iterates over an array, a slice or a range 'a..b'; found '{start.Type}'");
@@ -2242,6 +2371,7 @@ internal sealed class TypeChecker
         var seenVariants = new HashSet<EnumVariant>();
         var seenValues = new HashSet<Int128>();
         var wildcard = false;
+        var patternFailed = false; // an invalid pattern already reported: exhaustiveness would only add noise
         foreach (var arm in match.Arms)
         {
             if (wildcard)
@@ -2278,9 +2408,24 @@ internal sealed class TypeChecker
                     }
                     break;
                 }
+                case NullPattern nullPattern when ok:
+                    if (type.Enum?.OptionType is null)
+                    {
+                        Error(DiagnosticCodes.TypeMismatch, nullPattern.Span, $"a 'null' pattern needs an optional, but the value has type '{type}'");
+                        patternFailed = true;
+                        break;
+                    }
+                    kind = HirPatternKind.Variant;
+                    variant = type.Enum.Variants[0];
+                    if (!seenVariants.Add(variant))
+                    {
+                        Error(DiagnosticCodes.UnreachableArm, nullPattern.Span, "'null' is already matched by an earlier arm");
+                    }
+                    break;
                 case VariantPattern pattern when ok:
                     kind = HirPatternKind.Variant;
                     variant = CheckVariantPattern(pattern, type, reference, bindings);
+                    patternFailed |= variant is null;
                     if (variant is not null && !seenVariants.Add(variant))
                     {
                         Error(DiagnosticCodes.UnreachableArm, pattern.Span, $"variant '{Name(variant.Name)}' is already matched by an earlier arm");
@@ -2295,11 +2440,12 @@ internal sealed class TypeChecker
             });
         }
 
-        if (ok && !wildcard)
+        if (ok && !wildcard && !patternFailed)
         {
             var missing = type.Kind switch
             {
-                TypeKind.Enum => type.Enum!.Variants.Where(v => !seenVariants.Contains(v)).Select(v => $"{type}.{Name(v.Name)}").ToList(),
+                TypeKind.Enum => type.Enum!.Variants.Where(v => !seenVariants.Contains(v))
+                    .Select(v => type.Enum.Syntax is null ? Name(v.Name) : $"{type}.{Name(v.Name)}").ToList(),
                 TypeKind.Bool => s_boolValues.Where(b => !seenValues.Contains(b ? 1 : 0)).Select(b => b ? "true" : "false").ToList(),
                 _ => ["_"],
             };
@@ -2335,6 +2481,16 @@ internal sealed class TypeChecker
                 return null;
             }
             variant = resultVariant;
+        }
+        else if (type.Enum.OptionType is not null)
+        {
+            // Optional patterns: Some(x) and null (§22.1).
+            if (parts.Length != 1 || Name(parts[0].Name) != "Some")
+            {
+                Error(DiagnosticCodes.TypeMismatch, pattern.Path.Span, $"expected 'Some(…)' or 'null' for a value of type '{type}'");
+                return null;
+            }
+            variant = type.Enum.Variants[1];
         }
         else if (parts.Length != 2 || parts[0].Name != type.Enum.Syntax!.Name.Name)
         {
@@ -2695,6 +2851,15 @@ internal sealed class TypeChecker
                 return read;
             }
         }
+        if (expected.Enum?.OptionType is { } wrapped)
+        {
+            // A `T` where a `T?` is expected is `Some(value)` (§22.1).
+            var inner = Quietly(() => Coerce(hir, wrapped, span));
+            if (!inner.Type.IsBottom)
+            {
+                return new HirEnumValue(expected.Enum.Variants[1], [inner], expected, span);
+            }
+        }
         Error(DiagnosticCodes.TypeMismatch, span, $"expected '{expected}', found '{hir.Type}'");
         return ErrorResult(span);
     }
@@ -2851,7 +3016,15 @@ internal sealed class TypeChecker
     private HirExpr CheckExpr(Expr expr, NovaType? expected) =>
         Coerce(Synth(expr, expected?.Pointee ?? expected), expected, expr.Span);
 
-    private static NovaType? IntegerHint(NovaType? expected) => expected is { IsInteger: true } ? expected : null;
+    /// <summary>
+    /// The <c>StringView</c> an auto-dereferenced value reads, if it is the text of one: auto-deref goes
+    /// down to the unsized <c>str</c>, but views are used as values (§22.2).
+    /// </summary>
+    private static HirExpr ViewOf(HirExpr value) => value is HirDeref { Type.IsStr: true } text ? text.Reference : value;
+
+    /// <summary>The integer type a literal takes from <paramref name="expected"/>, looking through an optional (§22.1).</summary>
+    private static NovaType? IntegerHint(NovaType? expected) =>
+        (expected?.Enum?.OptionType ?? expected) is { IsInteger: true } integer ? integer : null;
 
     private HirExpr Synth(Expr expr, NovaType? expected)
     {
@@ -2861,16 +3034,16 @@ internal sealed class TypeChecker
                 return CheckIntLiteral(literal, negative: false, expected, literal.Span);
             case BoolLiteralExpr b:
                 return new HirBoolConst(b.Value, _types.Bool, b.Span);
+            case NullLiteralExpr nullLiteral:
+                return CheckNull(nullLiteral, expected);
             case FloatLiteralExpr:
                 Error(DiagnosticCodes.Unsupported, expr.Span, "floating-point numbers are not supported in M1");
                 return ErrorResult(expr.Span);
             case CharLiteralExpr:
                 Error(DiagnosticCodes.Unsupported, expr.Span, "'char' values are not supported in M1");
                 return ErrorResult(expr.Span);
-            case StringLiteralExpr:
-                Error(DiagnosticCodes.Unsupported, expr.Span,
-                    "string literals can only be passed directly to Console.write or Console.writeLine in M1");
-                return ErrorResult(expr.Span);
+            case StringLiteralExpr text:
+                return new HirStringConst(text.Value, _types.StringView, text.Span); // static bytes: no loans (§22.2)
             case ParenExpr paren:
                 return Synth(paren.Inner, expected) with { Span = paren.Span };
             case ThisExpr:
@@ -2972,6 +3145,9 @@ internal sealed class TypeChecker
             case CallExpr { Callee: NameExpr { TypeArguments.IsEmpty: true } constructor } call
                 when Name(constructor.Name.Name) is "Ok" or "Err" && Lookup(constructor.Name.Name) is null:
                 return CheckResultValue(call, constructor, expected);
+            case CallExpr { Callee: NameExpr { TypeArguments.IsEmpty: true } some } someCall
+                when Name(some.Name.Name) == "Some" && Lookup(some.Name.Name) is null:
+                return CheckSomeValue(someCall, expected);
             case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } boxName } boxMember } boxCall
                 when Lookup(boxName.Name.Name) is Builtin.Box:
                 return CheckBoxCreate(boxCall, boxMember, expected);
@@ -2993,7 +3169,7 @@ internal sealed class TypeChecker
                 var operand = CheckResultOperand(unwrap.Operand, "!");
                 return operand is null
                     ? ErrorResult(unwrap.Span)
-                    : new HirUnwrap(operand, operand.Type.Enum!.ResultTypes!.Value.Ok, unwrap.Span);
+                    : new HirUnwrap(operand, operand.Type.Enum!.OptionType ?? operand.Type.Enum.ResultTypes!.Value.Ok, unwrap.Span);
             }
             case MemberExpr member:
                 return SynthMember(member, expected);
@@ -3044,6 +3220,15 @@ internal sealed class TypeChecker
             Error(DiagnosticCodes.BorrowOfNonPlace, span,
                 "only a variable, a field, or a place reached through a reference can be sliced; bind the value to a local first");
             return ErrorResult(span);
+        }
+        if (target.Type.IsStr)
+        {
+            if (isMutable)
+            {
+                Error(DiagnosticCodes.BorrowMutOfImmutable, span, "a 'StringView' is read-only; it cannot be sliced as mutable");
+                return ErrorResult(span);
+            }
+            return new HirSlice(false, place, low, high, _types.StringView, span); // checks character boundaries too
         }
         if (isMutable && MutabilityError(place) is { } reason)
         {
@@ -3271,6 +3456,10 @@ internal sealed class TypeChecker
     private HirExpr SynthBinary(BinaryExpr binary, NovaType? expected)
     {
         var op = binary.Op;
+        if (op is BinaryOp.Equal or BinaryOp.NotEqual && (binary.Left is NullLiteralExpr || binary.Right is NullLiteralExpr))
+        {
+            return SynthNullTest(binary);
+        }
         if (op is BinaryOp.LogicalAnd or BinaryOp.LogicalOr)
         {
             var l = CheckExpr(binary.Left, _types.Bool);
@@ -3317,6 +3506,17 @@ internal sealed class TypeChecker
         if (leftHir.Type.IsBottom || rightHir.Type.IsBottom)
         {
             return ErrorResult(binary.Span);
+        }
+        leftHir = ViewOf(leftHir);
+        rightHir = ViewOf(rightHir);
+        if (leftHir.Type.IsStringView && rightHir.Type.IsStringView)
+        {
+            if (op is not (BinaryOp.Equal or BinaryOp.NotEqual))
+            {
+                Error(DiagnosticCodes.InvalidOperandTypes, binary.Span, $"operator '{OperatorText(op)}' cannot be applied to type 'StringView'; views compare with '==' and '!='");
+                return ErrorResult(binary.Span);
+            }
+            return new HirBinary(op, leftHir, rightHir, _types.Bool, binary.Span); // compares the bytes (§22.2)
         }
         if (!ReferenceEquals(leftHir.Type, rightHir.Type))
         {
@@ -3451,10 +3651,7 @@ internal sealed class TypeChecker
     {
         foreach (var argument in call.Arguments)
         {
-            if (argument is not StringLiteralExpr)
-            {
-                Synth(argument, null);
-            }
+            Synth(argument, null);
         }
     }
 
@@ -3615,6 +3812,25 @@ internal sealed class TypeChecker
         return CheckUserCall(call, function);
     }
 
+    /// <summary><c>s.bytes()</c> (§22.2): the view's bytes as a <c>Slice&lt;u8&gt;</c>, with the view's loans.</summary>
+    private HirExpr CheckViewMethod(CallExpr call, MemberExpr member, HirExpr view)
+    {
+        if (Name(member.Member.Name) != "bytes")
+        {
+            Error(DiagnosticCodes.UndefinedName, member.Member.Span,
+                $"'StringView' has no method '{Name(member.Member.Name)}'; it has 'bytes()' and 'length'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (call.Arguments.Length != 0)
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, "'bytes' takes no arguments: 's.bytes()'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        return new HirCast(view, _types.SliceOf(_types.U8, isMutable: false), call.Span);
+    }
+
     /// <summary><c>e.m(args)</c>: a method call; <c>e</c> is evaluated first and passed as `this`.</summary>
     private HirExpr CheckMethodCall(CallExpr call, MemberExpr member)
     {
@@ -3627,6 +3843,10 @@ internal sealed class TypeChecker
         if (receiver.Type.IsBox || receiver.Type.Pointee is { IsBox: true })
         {
             receiver = AutoDeref(receiver); // the method receives the box's contents (§18.2)
+        }
+        if (ViewOf(AutoDeref(receiver)) is { Type.IsStringView: true } view)
+        {
+            return CheckViewMethod(call, member, view);
         }
         var structType = receiver.Type.Pointee ?? receiver.Type;
         if (structType.Region == RegionKind.Pool)
@@ -3759,16 +3979,11 @@ internal sealed class TypeChecker
         var arguments = ImmutableArray.CreateBuilder<HirExpr>(count);
         foreach (var argument in call.Arguments)
         {
-            if (argument is StringLiteralExpr text)
-            {
-                arguments.Add(new HirStringConst(text.Value, _types.StringLiteral, text.Span));
-                continue;
-            }
-            var value = AutoDeref(Synth(argument, null));
-            if (!value.Type.IsBottom && !value.Type.IsInteger && value.Type.Kind != TypeKind.Bool)
+            var value = ViewOf(AutoDeref(Synth(argument, null)));
+            if (!value.Type.IsBottom && !value.Type.IsInteger && value.Type.Kind != TypeKind.Bool && !value.Type.IsStringView)
             {
                 Error(DiagnosticCodes.InvalidOperandTypes, argument.Span,
-                    $"'Console.{memberName}' can print integers, bools and string literals, not '{value.Type}'");
+                    $"'Console.{memberName}' can print integers, bools and string views, not '{value.Type}'");
                 value = ErrorResult(argument.Span);
             }
             arguments.Add(value);

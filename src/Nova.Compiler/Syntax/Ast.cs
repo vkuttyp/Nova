@@ -134,6 +134,9 @@ public sealed record NamedType(QualifiedName Name, TextSpan Span) : TypeSyntax(S
 
 public sealed record MissingType(TextSpan Span) : TypeSyntax(Span);
 
+/// <summary><c>T?</c> (type-system.md §22.1).</summary>
+public sealed record OptionalType(TypeSyntax Inner, TextSpan Span) : TypeSyntax(Span);
+
 /// <summary><c>[T; N]</c> (type-system.md §16.1); <see cref="Length"/> is an integer literal.</summary>
 public sealed record ArrayType(TypeSyntax Element, Expr Length, TextSpan Span) : TypeSyntax(Span);
 
@@ -177,6 +180,9 @@ public sealed record MatchArm(Pattern Pattern, BlockStmt Body, TextSpan Span) : 
 public abstract record Pattern(TextSpan Span) : SyntaxNode(Span);
 
 public sealed record WildcardPattern(TextSpan Span) : Pattern(Span);
+
+/// <summary>The <c>null</c> pattern of an optional (§22.1).</summary>
+public sealed record NullPattern(TextSpan Span) : Pattern(Span);
 
 /// <summary>An integer (possibly negated) or bool literal.</summary>
 public sealed record LiteralPattern(Expr Literal, TextSpan Span) : Pattern(Span);
@@ -238,6 +244,9 @@ public sealed record StringLiteralExpr(string Value, TextSpan Span) : Expr(Span)
 public sealed record CharLiteralExpr(int Value, TextSpan Span) : Expr(Span);
 
 public sealed record BoolLiteralExpr(bool Value, TextSpan Span) : Expr(Span);
+
+/// <summary><c>null</c>: an absent optional (type-system.md §22.1).</summary>
+public sealed record NullLiteralExpr(TextSpan Span) : Expr(Span);
 
 /// <summary>A name, optionally with generic arguments (<c>truncate&lt;i64&gt;</c>, grammar.md §2.1).</summary>
 public sealed record NameExpr(Identifier Name, ImmutableArray<TypeSyntax> TypeArguments, TextSpan Span) : Expr(Span);

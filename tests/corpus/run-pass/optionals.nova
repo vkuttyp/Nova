@@ -1,0 +1,119 @@
+// Optionals `T?` (type-system.md §22.1): null, Some, implicit wrapping, match, == null, ? and !.
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+
+fn find(xs: Slice<i32>, wanted: i32) -> usize? {
+    for (i in 0..xs.length) {
+        if (xs[i] == wanted) {
+            return i; // usize converts to usize?
+        }
+    }
+    return null;
+}
+
+fn plusOne(xs: Slice<i32>, wanted: i32) -> usize? {
+    let a = find(xs, wanted)?; // null propagates
+    return a + 1;
+}
+
+fn make(id: i32, present: bool) -> Res? {
+    if (present) {
+        return Res { id: id };
+    }
+    return null;
+}
+
+// `?` returns null: the live local is dropped first.
+fn pair(second: bool) -> i32? {
+    let first = make(1, true)?;
+    let other = make(2, second)?;
+    return first.id + other.id;
+}
+
+fn firstOf<T>(value: T?, fallback: T) -> T {
+    match (value) {
+        Some(v) => { return v; }
+        null => { return fallback; }
+    }
+}
+
+// An optional reference is scoped like the reference it may hold.
+fn firstAbove(xs: Slice<i32>, limit: i32) -> borrow i32? {
+    for (i in 0..xs.length) {
+        if (xs[i] > limit) {
+            return borrow xs[i];
+        }
+    }
+    return null;
+}
+
+fn describe(o: borrow i32?) {
+    match (o) {
+        Some(v) => { Console.writeLine(v); }
+        null => { Console.writeLine("none"); }
+    }
+}
+
+// An optional box inside a result: `?` on the allocation, then the implicit wrap.
+fn boxed(make: bool) -> Result<Box<Res>?, AllocError> {
+    if (!make) { return Ok(null); }
+    return Ok(Box.create(Res { id: 9 })?);
+}
+
+fn main() {
+    let numbers = [3, 1, 2];
+    match (find(numbers[..], 2)) {
+        Some(i) => { Console.writeLine(i); }
+        null => { Console.writeLine("absent"); }
+    }
+    Console.writeLine(plusOne(numbers[..], 9) == null);
+    Console.writeLine(plusOne(numbers[..], 1)!);
+
+    let present: i32? = 5;
+    let absent: i32? = null;
+    Console.writeLine(present != null);
+    Console.writeLine(absent != null);
+    describe(firstAbove(numbers[..], 2));
+    describe(firstAbove(numbers[..], 5));
+    Console.writeLine(present! + 1);
+
+    Console.writeLine(pair(true)!);
+    Console.writeLine(pair(false) == null);
+
+    let r = make(7, true);
+    Console.writeLine(r != null); // only reads: r is still owned here
+    match (r) {
+        Some(_) => { Console.writeLine("some"); }
+        null => { Console.writeLine("null"); }
+    }
+    Console.writeLine(r!.id);
+
+    let s = Some(4u8);
+    Console.writeLine(firstOf(s, 0u8));
+    Console.writeLine(firstOf<i64>(null, -1));
+
+    Console.writeLine(boxed(false)! == null);
+    let bx = boxed(true)!;
+    Console.writeLine(bx!.id);
+}
+// expect-stdout: 2
+// expect-stdout: true
+// expect-stdout: 2
+// expect-stdout: true
+// expect-stdout: false
+// expect-stdout: 3
+// expect-stdout: none
+// expect-stdout: 6
+// expect-stdout: drop 2
+// expect-stdout: drop 1
+// expect-stdout: 3
+// expect-stdout: drop 1
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: some
+// expect-stdout: 7
+// expect-stdout: drop 7
+// expect-stdout: 4
+// expect-stdout: -1
+// expect-stdout: true
+// expect-stdout: 9
+// expect-stdout: drop 9

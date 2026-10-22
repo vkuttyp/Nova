@@ -1,0 +1,8 @@
+fn tail(s: StringView, from: usize) -> StringView => s[from..];
+
+fn main() {
+    let s = "héllo";
+    let t = tail(s, 3);
+    if (t == "llo") { Console.writeLine(t); }
+    Console.writeLine(t.bytes().length);
+}

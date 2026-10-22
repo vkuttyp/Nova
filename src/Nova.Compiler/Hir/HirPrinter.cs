@@ -196,6 +196,7 @@ public sealed class HirPrinter
         HirSliceLength l => $"(length {Expr(l.Slice)}):{l.Type}",
         HirTry t => $"(try {Expr(t.Operand)}):{t.Type}",
         HirUnwrap u => $"(unwrap {Expr(u.Operand)}):{u.Type}",
+        HirIsNull n => $"({(n.IsNull ? "is-null" : "is-some")} {Expr(n.Reference)}):{n.Type}",
         HirError => "<error>",
         _ => throw new InvalidOperationException($"unknown HIR expression {expr.GetType().Name}"),
     };

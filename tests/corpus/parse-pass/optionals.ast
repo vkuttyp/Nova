@@ -1,0 +1,22 @@
+(unit
+  (fn default find (params (xs (Slice i32)) (wanted i32)) (returns (optional usize))
+    (block
+      (let o : (optional (borrow i32)) = null)
+      (let n : (optional (optional (Box i32))) = (call Some null))
+      (match o
+        (arm (Some v)
+          (block)
+        )
+        (arm null
+          (block)
+        )
+      )
+      (if (|| (== o null) (!= n null))
+        (block
+          (return (try (call find xs wanted)))
+        )
+      )
+      (return (unwrap (unwrap n)))
+    )
+  )
+)

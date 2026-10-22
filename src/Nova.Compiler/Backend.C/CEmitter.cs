@@ -231,7 +231,7 @@ public sealed class CEmitter
     /// </summary>
     private static string DropGlueName(NovaType type) => type.Kind == TypeKind.Region
             ? type.Region switch { RegionKind.Arena => "nova_arena_drop", RegionKind.Pool => "nova_pool_drop", _ => "nova_scratch_drop" }
-        : type.Enum?.ResultTypes is not null || type.IsBox || IsInstance(type) ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
+        : type.Enum?.ResultTypes is not null || type.Enum?.OptionType is not null || type.IsBox || IsInstance(type) ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
 
     /// <summary>An instantiation of a generic struct or enum (§20.4); its C names come from <see cref="Mangle"/>.</summary>
     private static bool IsInstance(NovaType type) =>
@@ -477,7 +477,8 @@ public sealed class CEmitter
     private IEnumerable<NovaType> Aggregates => _program.Structs.Concat(Composites);
 
     /// <summary>The built-in instantiations (arrays, slices, results, boxes) that generic code does not mention.</summary>
-    private IEnumerable<NovaType> Composites => _types.Composites.Where(t => !t.IsGeneric);
+    // `nv_str` (StringView) is defined by the runtime header.
+    private IEnumerable<NovaType> Composites => _types.Composites.Where(t => !t.IsGeneric && !t.IsStringView);
 
     private void EmitDropGluePrototypes()
     {
@@ -674,6 +675,9 @@ public sealed class CEmitter
             case NirBoundsCheck check:
                 Line($"    nv_check_index({Operand(check.Index)}, {Operand(check.Length)}, {Location(_function!.Source.Source, check.Span)});");
                 break;
+            case NirRangeCheck { Text: { } text } check:
+                Line($"    nv_check_str_range({Place(text)}, {Operand(check.Low)}, {Operand(check.High)}, {Location(_function!.Source.Source, check.Span)});");
+                break;
             case NirRangeCheck check:
                 Line($"    nv_check_range({Operand(check.Low)}, {Operand(check.High)}, {Operand(check.Length)}, {Location(_function!.Source.Source, check.Span)});");
                 break;
@@ -716,6 +720,7 @@ public sealed class CEmitter
             {
                 NirString s => $"    nova_write_str({CStringLiteral(s.Value)}, {Encoding.UTF8.GetByteCount(s.Value)}u);",
                 _ when argument.Type.Kind == TypeKind.Bool => $"    nova_write_bool({Operand(argument)});",
+                _ when argument.Type.IsStringView => $"    nova_write_view({Operand(argument)});",
                 _ when argument.Type.IsSigned => $"    nova_write_i64((int64_t){Operand(argument)});",
                 _ => $"    nova_write_u64((uint64_t){Operand(argument)});",
             });
@@ -759,8 +764,8 @@ public sealed class CEmitter
             case NirExit exit:
                 Line($"    nova_exit({Operand(exit.Code)});");
                 break;
-            case NirPanic:
-                Line($"    nova_panic(NV_PANIC_UNWRAP, {Location(function.Source.Source, terminator.Span)});");
+            case NirPanic panic:
+                Line($"    nova_panic({(panic.Kind == NirPanicKind.UnwrapNull ? "NV_PANIC_UNWRAP_NULL" : "NV_PANIC_UNWRAP")}, {Location(function.Source.Source, terminator.Span)});");
                 break;
             case NirUnreachable:
                 Line($"    nova_panic(NV_PANIC_UNREACHABLE, {Location(function.Source.Source, function.Source.Syntax.Name.Span)});");
@@ -776,6 +781,9 @@ public sealed class CEmitter
         NirBinary binary => Binary(binary),
         NirUnary { Op: UnaryOp.Not } not => $"!{Operand(not.Operand)}",
         NirUnary negate => $"nv_neg_{Suffix(negate.Type)}({Operand(negate.Operand)}, {Location(negate.Source, negate.Span)})",
+        // `s.bytes()`: the same pointer and length as a `Slice<u8>` (§22.2).
+        NirCast { Operand.Type.IsStringView: true } bytes =>
+            $"(({CType(bytes.Type)}){{ .ptr = {Operand(bytes.Operand)}.ptr, .len = {Operand(bytes.Operand)}.len }})",
         NirCast cast => $"({CType(cast.Type)}){Operand(cast.Operand)}",
         NirTruncate truncate => Truncate(truncate),
         NirCall call => $"{FunctionName(call.Callee)}({string.Join(", ", call.Arguments.Select(Operand))})",
@@ -811,6 +819,10 @@ public sealed class CEmitter
         var right = Operand(binary.Right);
         var operandType = binary.Left.Type;
         var loc = Location(binary.Source, binary.Span);
+        if (operandType.IsStringView)
+        {
+            return $"{(binary.Op == BinaryOp.NotEqual ? "!" : "")}nova_str_eq({left}, {right})";
+        }
         switch (binary.Op)
         {
             case BinaryOp.Add: return $"nv_add_{Suffix(operandType)}({left}, {right}, {loc})";
@@ -857,6 +869,8 @@ public sealed class CEmitter
     {
         NirPlaceOperand place => Place(place.Place),
         NirConst c => Constant(c.Value, c.Type),
+        // String literals are static data, so a view of one never dangles (§22.2).
+        NirString s => $"((nv_str){{ .ptr = (const uint8_t *){CStringLiteral(s.Value)}, .len = {Encoding.UTF8.GetByteCount(s.Value)}u }})",
         _ => throw new InvalidOperationException($"cannot emit operand {operand}"),
     };
 
@@ -955,8 +969,10 @@ public sealed class CEmitter
         TypeKind.Struct when IsInstance(type) => $"nvT_{Mangle(type)[1..]}",
         TypeKind.Struct => $"nvT_{type.Name}",
         TypeKind.Enum when type.Enum!.ResultTypes is not null => $"nvR_{Mangle(type)[1..]}",
+        TypeKind.Enum when type.Enum!.OptionType is not null => $"nvO_{Mangle(type)[1..]}",
         TypeKind.Enum when IsInstance(type) => $"nvE_{Mangle(type)[1..]}",
         TypeKind.Enum => $"nvE_{type.Name}",
+        TypeKind.Reference when type.IsStringView => "nv_str",
         TypeKind.Reference when type.IsSlice => $"nvS{(type.IsMutableReference ? "m" : "l")}_{Mangle(type.Pointee!.Element!)}",
         // A shared reference to a box is a pointer to a const pointer (`T *const *`), not to a const T.
         // Region methods mutate through a shared reference (allocation is interior mutability, §19.2).
@@ -987,8 +1003,10 @@ public sealed class CEmitter
         TypeKind.Struct when IsInstance(type) => $"S{BaseName(type).Length}{BaseName(type)}{MangledArguments(type.Struct!.TypeArguments)}",
         TypeKind.Struct => $"S{type.Name.Length}{type.Name}",
         TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => $"R{Mangle(ok)}{Mangle(err)}",
+        TypeKind.Enum when type.Enum!.OptionType is { } value => $"O{Mangle(value)}",
         TypeKind.Enum when IsInstance(type) => $"E{BaseName(type).Length}{BaseName(type)}{MangledArguments(type.Enum!.TypeArguments)}",
         TypeKind.Enum => $"E{type.Name.Length}{type.Name}",
+        TypeKind.Array when type.IsStr => "Z",
         TypeKind.Array when type.IsUnsized => $"U{Mangle(type.Element!)}",
         TypeKind.Array => $"A{type.ArrayLength}_{Mangle(type.Element!)}",
         TypeKind.Box when type.IsPoolBox => $"Y{Mangle(type.Pointee!)}",

@@ -142,9 +142,9 @@ references, so the borrow checker reports their conflicts as N0240–N0245.
 
 | Code | Meaning | Example |
 |---|---|---|
-| N0260 | `Ok(...)` / `Err(...)` (or, since M4c, `Pool.create(...)`) without an expected type that fixes its type arguments, or where another type is expected | `let a = Ok(1);`, `let p = Pool.create(SystemHeap {}, 4u32);` |
-| N0261 | `?` in a function that does not return a `Result` with the same error type | `?` on `Result<i32, F>` in a function returning `Result<i32, E>` |
-| N0262 | `?` or `!` on something that is not a `Result` value (a reference to one included) | `n?` with `n: i32` |
+| N0260 | `Ok(...)` / `Err(...)` (or, since M4c, `Pool.create(...)`; since M6c, `null`) without an expected type that fixes its type arguments, or where another type is expected | `let a = Ok(1);`, `let p = Pool.create(SystemHeap {}, 4u32);`, `let n = null;` |
+| N0261 | `?` in a function that does not return a `Result` with the same error type; `?` on an optional in a function that does not return an optional (M6c) | `?` on `Result<i32, F>` in a function returning `Result<i32, E>` |
+| N0262 | `?` or `!` on something that is not a `Result` or optional value (a reference to one included) | `n?` with `n: i32` |
 | N0263 | An allocator argument that is not an allocator type (`SystemHeap`, `FailingAllocator`) | `Box<i32, Point>`, `Box.createIn(point, 1)` |
 | N0265 | Type arguments that cannot be inferred: a generic call, struct literal or enum value whose arguments, fields or expected type do not determine every type parameter | `let d = Maybe.Nothing;`, `let e = make();` |
 | N0266 | Generic instantiation nested more than 64 deep (polymorphic recursion) | `fn deep<T>(x: Maybe<T>) { deep(Maybe.Just(x)); }` |

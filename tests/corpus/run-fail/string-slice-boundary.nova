@@ -1,0 +1,7 @@
+fn main() {
+    let text = "héllo";
+    Console.writeLine(text[0..1]);
+    let broken = text[0..2]; // expect-panic: string slice not on a character boundary
+    Console.writeLine(broken);
+}
+// expect-stdout: h

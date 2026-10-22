@@ -44,6 +44,10 @@ void nova_write_str(const char *text, size_t length) {
     nova_platform_write_stdout((const uint8_t *)text, length);
 }
 
+void nova_write_view(nv_str text) {
+    nova_platform_write_stdout(text.ptr, (size_t)text.len);
+}
+
 void nova_write_newline(void) {
     static const uint8_t newline = '\n';
     nova_platform_write_stdout(&newline, 1u);
@@ -79,6 +83,8 @@ _Noreturn void nova_panic(nv_panic_kind kind, nv_loc loc) {
     case NV_PANIC_SLICE: reason = "slice range out of bounds"; break;
     case NV_PANIC_UNWRAP: reason = "unwrapped an Err value"; break;
     case NV_PANIC_SCRATCH: reason = "a scratch frame is already active; nest with frame.enter()"; break;
+    case NV_PANIC_UNWRAP_NULL: reason = "unwrapped null"; break;
+    case NV_PANIC_STR_BOUNDARY: reason = "string slice not on a character boundary"; break;
     default: reason = "unknown panic"; break;
     }
     write_err_cstr("nova panic: ");

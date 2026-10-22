@@ -91,6 +91,7 @@ public static class NirPrinter
         NirBoxFree { Flag: null } f => $"BoxFree({Place(f.Box, symbols)})",
         NirBoxFree f => $"BoxFree({Place(f.Box, symbols)}) if {Local(f.Flag!, symbols)}",
         NirBoundsCheck c => $"BoundsCheck({Operand(c.Index, symbols)} < {Operand(c.Length, symbols)})",
+        NirRangeCheck { Text: not null } c => $"StrRangeCheck({Operand(c.Low, symbols)} <= {Operand(c.High, symbols)} <= {Operand(c.Length, symbols)})",
         NirRangeCheck c => $"RangeCheck({Operand(c.Low, symbols)} <= {Operand(c.High, symbols)} <= {Operand(c.Length, symbols)})",
         NirStorageDead d => $"StorageDead({Local(d.Local, symbols)})",
         NirDrop { Flag: null } d => $"Drop({Place(d.Place, symbols)})",

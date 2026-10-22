@@ -16,7 +16,8 @@ codes are listed in `diagnostics.md`.
 | *never* | no value; the expression does not complete | internal only (`Process.exit`); not nameable |
 
 Not in M1 (error N0216): floats, `char`, strings as values, user-defined types, references.
-A string literal is allowed **only** as a direct argument of `Console.write`/`writeLine`.
+In M1 a string literal was allowed **only** as a direct argument of `Console.write`/`writeLine`;
+since M6c it is a `StringView` value (§22.2).
 
 `void` may appear only as a return type (writing `-> void` is the same as omitting the
 return type). A *never* expression is accepted wherever any type is expected.
@@ -971,3 +972,83 @@ ImplDecl      = 'impl' Type 'for' Type '{' FunctionDecl* '}'
 
 Diagnostics: N0267 (an `impl` that does not match its interface, a duplicate `impl`, or an
 ambiguous bound method), N0268 (a type argument that does not satisfy a bound).
+
+## 22. Optionals and string views (M6c)
+
+### 22.1 Optionals `T?`
+```nova
+fn find(xs: Slice<i32>, wanted: i32) -> usize? {
+    for (i in 0..xs.length) { if (xs[i] == wanted) { return i; } }   // i converts to usize?
+    return null;
+}
+
+fn firstTwo(xs: Slice<i32>) -> usize? {
+    let a = find(xs, 1)?;                  // null propagates
+    return a + 1;
+}
+
+fn main() {
+    let numbers = [3, 1, 2];
+    match (find(numbers[..], 2)) {
+        Some(i) => { Console.writeLine(i); }
+        null => { Console.writeLine("absent"); }
+    }
+    let i = find(numbers[..], 3)!;         // panics on null
+}
+```
+- `T?` (postfix `?` in a type) is an optional `T`, for any non-`void` `T`. It is a built-in enum with
+  two variants, in this order: `null` (no payload) and `Some(T)`. Everything in §15.1 applies:
+  it is Copy iff `T` is, needs drop iff `T` does, and is scoped iff `T` is (`borrow T?`).
+- **Values.**
+  - `null` needs an expected optional type (N0260).
+  - `Some(e)` makes a present value; with an expected `T?`, `e` is checked against `T`, otherwise
+    `T` is `e`'s type.
+  - Where a `T?` is expected (an initialiser, an argument, a return value, a field), a value of
+    type `T` converts to `Some(value)` implicitly.
+- **Matching.** Patterns `null`, `Some(x)` and `Some(_)` are written without a type prefix; the
+  rules of §15.2 and §18.4 apply.
+- **Comparisons.** `o == null` and `o != null` test for absence, for any `T` (the value is only
+  read, not consumed). Other comparisons of optionals are not defined (N0207).
+- **`o!`** is the value, or **panics** with "unwrapped null".
+- **`o?`** is the value, or returns `null` from the enclosing function, which must return an
+  optional (N0261). `?` on an optional in a function returning a `Result` is N0261 in v0
+  (`language-spec.md` Ex11).
+- **Layout (v0):** like any enum, `{ tag; T }`. The niche optimisation for `Box` and references
+  (`language-spec.md` §2) is future work; it changes no semantics.
+
+### 22.2 `StringView`
+```nova
+fn greeting(loud: bool) -> StringView {
+    if (loud) { return "HELLO"; }
+    return "hello";
+}
+
+fn main() {
+    let s: StringView = "Nova language";
+    Console.writeLine(s);
+    Console.writeLine(s.length);                 // 13 (bytes)
+    let first = s[0..4];                         // "Nova": a view of s
+    Console.writeLine(first == "Nova");
+    for (b in s.bytes()) { … }                   // Slice<u8>
+}
+```
+- `StringView` is a **shared, read-only view of UTF-8 text** `(pointer, length in bytes)`. It is
+  scoped like `Slice<T>` (§16.1), and Copy.
+- **String literals** have type `StringView` (their bytes are static data). A literal's view holds
+  no loans. A function may therefore return a `StringView` without scoped parameters (like
+  `greeting` above). The return check still rejects any view that borrows a local (N0244).
+- **Operations.**
+  - `s.length` is the length in bytes (`usize`);
+  - `s[i]` is the byte at `i` (`u8`, bounds-checked);
+  - `s.bytes()` is the same bytes as a `Slice<u8>`;
+  - `s[lo..hi]` (any bound may be omitted) is a `StringView` of bytes `lo` up to `hi`. Besides the
+    range check of §16.3, both bounds must fall on character boundaries (not inside a UTF-8
+    multi-byte sequence). Otherwise it **panics** with "string slice not on a character
+    boundary";
+  - `==` and `!=` compare the bytes;
+  - `Console.write(s)` and `Console.writeLine(s)` print it.
+- `for (b in s)` is not defined: iterate over `s.bytes()` (characters come with `String`
+  methods later).
+
+Diagnostics: none new. `null` without an expected type is N0260; `?` and `!` on non-optional,
+non-result values are N0262.

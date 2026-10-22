@@ -1,0 +1,10 @@
+fn find(xs: Slice<i32>, wanted: i32) -> usize? {
+    let o: borrow i32? = null;
+    let n: Box<i32>?? = Some(null);
+    match (o) {
+        Some(v) => { }
+        null => { }
+    }
+    if (o == null || n != null) { return find(xs, wanted)?; }
+    return n!!;
+}

@@ -36,7 +36,9 @@ stmt      = Assign(place, rvalue)
           | Unpack(place, V, [local?])          -- M3c: move every payload of variant V out of a consumed enum local
           | BoxFree(place, flag?)               -- M3c: free a partially moved box without destroying its contents
           | BoundsCheck(index, length)          -- panics unless index < length (M2d)
-          | RangeCheck(low, high, length)       -- panics unless low <= high <= length (M2d)
+          | RangeCheck(low, high, length)       -- panics unless low <= high <= length (M2d);
+                                                 -- with a `Text` place (M6c), also unless both bounds
+                                                 -- are UTF-8 character boundaries of that StringView
 rvalue    = Use(operand)
           | Binary(op, operand, operand, span)     -- op semantics: type-system.md §6 (may panic)
           | Unary(op, operand, span)
@@ -55,7 +57,7 @@ terminator= Goto(bb) | Branch(operand, then_bb, else_bb) | Return(operand?)
           | Switch(operand, [(value, bb)], otherwise_bb)    -- match (M2d)
           | Exit(operand)                          -- Process.exit
           | Unreachable                            -- after a call of type never
-          | Panic(kind)                            -- `e!` on Err (M3a); aborts
+          | Panic(kind)                            -- `e!` on Err (M3a), `o!` on null (M6c); aborts
 ```
 
 Lowering rules (HIR → NIR, `NirBuilder`):
@@ -128,6 +130,13 @@ Lowering rules (HIR → NIR, `NirBuilder`):
     the payload `t as Ok .0`.
   - On `Err`, `?` builds `Err(t as Err .0)` of the function's return type and returns through the
     same path as `return`; `!` ends in `Panic`.
+  - **Optionals (M6c)** lower the same way with `Some` (tag 1) as the success variant: on `null`,
+    `?` returns the `null` of the function's return type and `!` ends in `Panic(UnwrapNull)`.
+    `o == null` (HIR `IsNull`) takes a shared borrow of `o` (or of a temporary), reads
+    `Discriminant(*r)` and compares it with 0, so `o` is not consumed.
+  - **String views (M6c).** A literal is a constant operand of type `StringView` (no loans); a place
+    is needed only when it is spilled into a temporary. `s[lo..hi]` always emits a `RangeCheck`
+    with `Text`; `s.bytes()` is a `Cast` to `Slice<u8>` that keeps the view's loans.
   - Moving a variant payload out of a local (only these lowerings do that) uninitialises the whole
     local in the move dataflow, so the consumed result is not destroyed again.
   - **Open temporaries.** The builder records the temporaries of every statement still being

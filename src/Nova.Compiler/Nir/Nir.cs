@@ -231,7 +231,11 @@ public sealed record NirAssign(NirPlace Target, NirRvalue Value) : NirStatement;
 public sealed record NirBoundsCheck(NirOperand Index, NirOperand Length) : NirStatement;
 
 /// <summary>Panics ("slice range out of bounds") unless Low &lt;= High &lt;= Length.</summary>
-public sealed record NirRangeCheck(NirOperand Low, NirOperand High, NirOperand Length) : NirStatement;
+public sealed record NirRangeCheck(NirOperand Low, NirOperand High, NirOperand Length) : NirStatement
+{
+    /// <summary>For a slice of a <c>StringView</c>: its text, whose character boundaries are checked too (§22.2).</summary>
+    public NirPlace? Text { get; init; }
+}
 
 /// <summary>
 /// Moves every payload of variant <see cref="Variant"/> out of the enum value in <see cref="Source"/> (a local)
@@ -278,6 +282,9 @@ public enum NirPanicKind
 {
     /// <summary><c>e!</c> on an <c>Err</c> (type-system.md §17.4).</summary>
     Unwrap,
+
+    /// <summary><c>o!</c> on <c>null</c> (type-system.md §22.1).</summary>
+    UnwrapNull,
 }
 
 /// <summary>Aborts with a panic message; nothing is destroyed (panic = abort).</summary>

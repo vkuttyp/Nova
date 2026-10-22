@@ -1,0 +1,22 @@
+fn noSource() -> Slice<u8> { // error[N0245]
+    return "abc".bytes();
+}
+
+fn twoViews(a: StringView, b: StringView) -> StringView { // error[N0245]
+    return a;
+}
+
+fn main() {
+    let s: StringView = "text";
+    for (b in s) { } // error[N0205]
+    Console.writeLine(s < "u"); // error[N0207]
+    Console.writeLine(s == 1); // error[N0207]
+    s.trim(); // error[N0200]
+    let b = s.bytes(1); // error[N0209]
+    let x: Slice<u8> = s; // error[N0205]
+    let y: StringView = s.bytes(); // error[N0205]
+    Console.writeLine(s.bytes()); // error[N0207]
+    let c: u8 = s[0];
+    let d: i32 = s[0]; // error[N0205]
+    let e: str = s; // error[N0204]
+}

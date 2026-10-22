@@ -1,0 +1,29 @@
+// Optionals follow the move and borrow rules of their payload (§22.1).
+struct Res { id: i32; drop { } }
+
+fn take(r: Res?) { }
+
+fn firstAbove(xs: Slice<i32>, limit: i32) -> borrow i32? {
+    if (xs[0] > limit) { return borrow xs[0]; }
+    return null;
+}
+
+fn escapes(xs: Slice<i32>) -> borrow i32? {
+    let local = [1, 2];
+    return firstAbove(local[..], 0); // error[N0244]
+}
+
+fn main() {
+    let r: Res? = Res { id: 1 };
+    take(r);
+    Console.writeLine(r != null); // error[N0250]
+
+    let s: Res? = Res { id: 2 };
+    let id = s!.id;
+    take(s); // error[N0250]
+
+    var xs = [1, 2, 3];
+    let found = firstAbove(xs[..], 1);
+    xs[0] = 5; // error[N0240]
+    Console.writeLine(found != null);
+}

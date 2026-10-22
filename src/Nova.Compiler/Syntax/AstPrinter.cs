@@ -268,6 +268,7 @@ public sealed class AstPrinter
         StringLiteralExpr s => Quote(s.Value, '"'),
         CharLiteralExpr c => Quote(char.ConvertFromUtf32(c.Value), '\''),
         BoolLiteralExpr b => b.Value ? "true" : "false",
+        NullLiteralExpr => "null",
         NameExpr n when n.TypeArguments.IsEmpty => _symbols.GetName(n.Name.Name),
         NameExpr n => $"(generic {_symbols.GetName(n.Name.Name)} {string.Join(" ", n.TypeArguments.Select(Type))})",
         ParenExpr p => $"(paren {Expr(p.Inner)})",
@@ -298,6 +299,7 @@ public sealed class AstPrinter
     private string PatternText(Pattern pattern) => pattern switch
     {
         WildcardPattern => "_",
+        NullPattern => "null",
         LiteralPattern l => Expr(l.Literal),
         VariantPattern { Bindings.IsDefault: true } v => Name(v.Path),
         VariantPattern v => $"({Name(v.Path)} {string.Join(" ", v.Bindings.Select((b, i) => b is null ? "_" : (v.IsMutable(i) ? "var " : "") + Name(b)))})",
@@ -308,6 +310,7 @@ public sealed class AstPrinter
     {
         NamedType n => Name(n.Name),
         MissingType => "<missing-type>",
+        OptionalType o => $"(optional {Type(o.Inner)})",
         ArrayType a => $"[{Type(a.Element)}; {Expr(a.Length)}]",
         GenericType g => $"({Name(g.Name)} {string.Join(" ", g.Arguments.Select(Type))})",
         ReferenceType r => $"({(r.IsMutable ? "borrow-mut" : "borrow")}{(r.HasSources ? "(" + string.Join(" ", r.Sources.Select(Name)) + ")" : "")} {Type(r.Pointee)})",

@@ -1,0 +1,13 @@
+fn lookup(present: bool) -> i32? {
+    if (present) {
+        return 1;
+    }
+    return null;
+}
+
+fn main() {
+    Console.writeLine(lookup(true)!);
+    let x = lookup(false)!; // expect-panic: unwrapped null
+    Console.writeLine(x);
+}
+// expect-stdout: 1

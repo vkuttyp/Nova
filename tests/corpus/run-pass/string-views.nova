@@ -1,0 +1,83 @@
+// StringView (type-system.md §22.2): literals, length, indexing, slicing, bytes(), comparison, printing.
+fn greeting(loud: bool) -> StringView {
+    if (loud) { return "HELLO"; } // static text: no scoped parameter needed
+    return "hello";
+}
+
+fn firstWord(s: StringView) -> StringView {
+    for (i in 0..s.length) {
+        if (s[i] == 32u8) { return s[..i]; }
+    }
+    return s;
+}
+
+fn find(s: StringView, wanted: u8) -> usize? {
+    let bytes = s.bytes();
+    for (i in 0..bytes.length) {
+        if (bytes[i] == wanted) { return i; }
+    }
+    return null;
+}
+
+struct Labeled { id: i32; }
+
+fn label(l: borrow Labeled) -> StringView {
+    if (l.id > 0) { return "positive"; }
+    return "other";
+}
+
+fn main() {
+    let s: StringView = "Nova language";
+    Console.writeLine(s);
+    Console.writeLine(s.length);
+    let first = s[0..4];
+    Console.writeLine(first == "Nova");
+    Console.writeLine(first != "Nova");
+    Console.writeLine(firstWord(s));
+    Console.writeLine(firstWord("single"));
+    Console.write(greeting(true));
+    Console.write(" ");
+    Console.writeLine(greeting(false));
+    Console.writeLine(s[5]);
+    Console.writeLine("abc".length);
+    Console.writeLine(find(s, 108u8)!);
+    Console.writeLine(find(s, 0u8) == null);
+    var total: u64 = 0;
+    for (b in s.bytes()) { total += b as u64; }
+    Console.writeLine(total);
+
+    let text = "héllo"; // é is two bytes
+    Console.writeLine(text.length);
+    Console.writeLine(text[0..1]);
+    Console.writeLine(text[3..]);
+    Console.writeLine(text[..3] == "hé");
+    Console.writeLine(text[..] == text);
+
+    let o: StringView? = "maybe";
+    Console.writeLine(o!);
+    let l = Labeled { id: 3 };
+    Console.writeLine(label(l));
+    Console.writeLine("");
+    Console.writeLine("".length);
+}
+// expect-stdout: Nova language
+// expect-stdout: 13
+// expect-stdout: true
+// expect-stdout: false
+// expect-stdout: Nova
+// expect-stdout: single
+// expect-stdout: HELLO hello
+// expect-stdout: 108
+// expect-stdout: 3
+// expect-stdout: 5
+// expect-stdout: true
+// expect-stdout: 1272
+// expect-stdout: 6
+// expect-stdout: h
+// expect-stdout: llo
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: maybe
+// expect-stdout: positive
+// expect-stdout: 
+// expect-stdout: 0

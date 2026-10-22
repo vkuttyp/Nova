@@ -38,7 +38,9 @@ typedef enum nv_panic_kind {
     NV_PANIC_INDEX = 5,
     NV_PANIC_SLICE = 6,
     NV_PANIC_UNWRAP = 7,
-    NV_PANIC_SCRATCH = 8
+    NV_PANIC_SCRATCH = 8,
+    NV_PANIC_UNWRAP_NULL = 9,
+    NV_PANIC_STR_BOUNDARY = 10
 } nv_panic_kind;
 
 /* A Nova source location; `file` points to a string in the generated program's file table. */
@@ -230,6 +232,30 @@ static inline void nv_check_range(uint64_t low, uint64_t high, uint64_t length, 
     if (low > high || high > length) nova_panic(NV_PANIC_SLICE, loc);
 }
 
+/* ---- String views (type-system.md §22.2) ------------------------------------------------- */
+
+/* `StringView`: UTF-8 bytes, laid out like a `Slice<u8>`. */
+typedef struct nv_str { const uint8_t *ptr; uint64_t len; } nv_str;
+
+/* True if `index` is not inside a UTF-8 multi-byte sequence (the end counts as a boundary). */
+static inline bool nv_str_boundary(nv_str text, uint64_t index) {
+    return index >= text.len || (text.ptr[index] & 0xC0u) != 0x80u;
+}
+
+/* The range check of `s[lo..hi]`, then both bounds on character boundaries. */
+static inline void nv_check_str_range(nv_str text, uint64_t low, uint64_t high, nv_loc loc) {
+    nv_check_range(low, high, text.len, loc);
+    if (!nv_str_boundary(text, low) || !nv_str_boundary(text, high)) nova_panic(NV_PANIC_STR_BOUNDARY, loc);
+}
+
+static inline bool nova_str_eq(nv_str a, nv_str b) {
+    if (a.len != b.len) return false;
+    for (uint64_t i = 0; i < a.len; i++) {
+        if (a.ptr[i] != b.ptr[i]) return false;
+    }
+    return true;
+}
+
 /* ---- Platform services (supplied by the profile runtime) -------------------------------- */
 
 void nova_platform_write_stdout(const uint8_t *bytes, size_t length);
@@ -348,6 +374,7 @@ void nova_write_i64(int64_t value);
 void nova_write_u64(uint64_t value);
 void nova_write_bool(bool value);
 void nova_write_str(const char *text, size_t length);
+void nova_write_view(nv_str text);
 void nova_write_newline(void);
 _Noreturn void nova_exit(int32_t code);
 

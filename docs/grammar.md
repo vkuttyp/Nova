@@ -113,6 +113,7 @@ Type = QualifiedName
      | '[' Type ';' IntLiteral ']'             (* M2d fixed array *)
      | ('Slice' | 'SliceMut') '<' Type '>'     (* M2d slices *)
      | 'Result' '<' Type ',' Type '>'          (* M3a; type-system.md §17 *)
+     | Type '?'                                (* M6c: optional; `borrow T?` is an optional reference *)
      | Identifier '<' Type (',' Type)* '>'     (* M6a: an instantiation of a generic struct or enum; also Box, Pool, … *)
 Sources = '(' Identifier (',' Identifier)* ')'
 

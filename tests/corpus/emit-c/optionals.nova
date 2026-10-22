@@ -1,0 +1,14 @@
+fn half(n: i32) -> i32? {
+    if (n % 2 != 0) { return null; }
+    return n / 2;
+}
+
+fn quarter(n: i32) -> i32? {
+    let h = half(n)?;
+    return half(h);
+}
+
+fn main() {
+    let q = quarter(8);
+    if (q != null) { Console.writeLine(q!); }
+}

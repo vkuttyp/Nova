@@ -128,6 +128,7 @@ internal sealed class FlowAnalysis
         HirSliceLength length => Diverges(length.Slice),
         HirTry t => Diverges(t.Operand),
         HirUnwrap u => Diverges(u.Operand),
+        HirIsNull n => Diverges(n.Reference),
         _ => false,
     };
 }

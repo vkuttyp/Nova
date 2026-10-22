@@ -23,8 +23,6 @@ public enum TypeKind
     Void,
     /// <summary>The type of expressions that never complete (Process.exit). Not nameable.</summary>
     Never,
-    /// <summary>A string literal argument of a Console built-in. Not nameable, not storable.</summary>
-    StringLiteral,
     /// <summary>The type of an expression that already produced a diagnostic; suppresses cascades.</summary>
     Error,
     /// <summary>A user-defined struct (type-system.md §12); see <see cref="NovaType.Struct"/>.</summary>
@@ -186,6 +184,9 @@ public sealed class EnumDefinition
     /// <summary>For an instantiation of a generic enum (§20.4): its type arguments; empty otherwise.</summary>
     public ImmutableArray<NovaType> TypeArguments { get; internal set; } = [];
 
+    /// <summary>For an optional <c>T?</c> (type-system.md §22.1): T. Its variants are <c>null</c> (0) and <c>Some</c> (1).</summary>
+    public NovaType? OptionType { get; internal set; }
+
     public List<EnumVariant> Variants { get; } = [];
 
     public bool IsCopy { get; internal set; } = true;
@@ -256,8 +257,8 @@ public sealed class NovaType
         : this(TypeKind.Enum, name) => Enum = definition;
 
     internal NovaType(NovaType pointee, bool isMutable)
-        : this(TypeKind.Reference, pointee.IsUnsized
-            ? (isMutable ? "SliceMut<" : "Slice<") + pointee.Element!.Name + ">"
+        : this(TypeKind.Reference, pointee.IsStr ? "StringView"
+            : pointee.IsUnsized ? (isMutable ? "SliceMut<" : "Slice<") + pointee.Element!.Name + ">"
             : (isMutable ? "borrow mut " : "borrow ") + pointee.Name)
     {
         Pointee = pointee;
@@ -291,11 +292,12 @@ public sealed class NovaType
         Allocator = allocator;
     }
 
-    internal NovaType(NovaType element, long length)
-        : this(TypeKind.Array, length < 0 ? $"[{element.Name}]" : $"[{element.Name}; {length}]")
+    internal NovaType(NovaType element, long length, bool isStr = false)
+        : this(TypeKind.Array, isStr ? "str" : length < 0 ? $"[{element.Name}]" : $"[{element.Name}; {length}]")
     {
         Element = element;
         ArrayLength = length;
+        IsStr = isStr;
     }
 
     internal NovaType(TypeKind kind, string name, int bits = 0, bool isSigned = false)
@@ -336,6 +338,15 @@ public sealed class NovaType
     /// <summary><c>Slice&lt;T&gt;</c> or <c>SliceMut&lt;T&gt;</c>.</summary>
     public bool IsSlice => Kind == TypeKind.Reference && Pointee!.IsUnsized;
 
+    /// <summary>
+    /// The unsized UTF-8 text a <c>StringView</c> refers to (§22.2): bytes like <c>[u8]</c>, but a distinct
+    /// type, so a view is not a <c>Slice&lt;u8&gt;</c>. Not nameable.
+    /// </summary>
+    public bool IsStr { get; }
+
+    /// <summary><c>StringView</c>: a shared reference to <c>str</c>.</summary>
+    public bool IsStringView => Kind == TypeKind.Reference && Pointee!.IsStr;
+
     /// <summary>The referent type of a reference, or the contents of a box; null for every other kind.</summary>
     public NovaType? Pointee { get; }
 
@@ -352,7 +363,8 @@ public sealed class NovaType
         || (Pointee?.IsGeneric ?? false) || (Element?.IsGeneric ?? false)
         || (Struct?.TypeArguments.Any(a => a.IsGeneric) ?? false)
         || (Enum?.TypeArguments.Any(a => a.IsGeneric) ?? false)
-        || (Enum?.ResultTypes is var (ok, err) && (ok.IsGeneric || err.IsGeneric));
+        || (Enum?.ResultTypes is var (ok, err) && (ok.IsGeneric || err.IsGeneric))
+        || (Enum?.OptionType?.IsGeneric ?? false);
 
     /// <summary><c>PoolBox&lt;T&gt;</c> (type-system.md §19.6): a box whose allocator is a pool; scoped.</summary>
     public bool IsPoolBox => Kind == TypeKind.Box && Allocator!.Region == RegionKind.Pool;
@@ -410,7 +422,7 @@ public sealed class TypeTable
         Bool = new NovaType(TypeKind.Bool, "bool");
         Void = new NovaType(TypeKind.Void, "void");
         Never = new NovaType(TypeKind.Never, "never");
-        StringLiteral = new NovaType(TypeKind.StringLiteral, "string literal");
+        Str = new NovaType(U8, -1, isStr: true);
         Error = new NovaType(TypeKind.Error, "<error>");
         Arena = new NovaType(RegionKind.Arena, "Arena");
         FixedBufferAllocator = new NovaType(RegionKind.FixedBuffer, "FixedBufferAllocator");
@@ -421,6 +433,8 @@ public sealed class TypeTable
         {
             _byName.Add(t.Name, t);
         }
+        StringView = ReferenceTo(Str, isMutable: false);
+        _byName.Add(StringView.Name, StringView);
     }
 
     public TargetInfo Target { get; }
@@ -438,7 +452,11 @@ public sealed class TypeTable
     public NovaType Bool { get; }
     public NovaType Void { get; }
     public NovaType Never { get; }
-    public NovaType StringLiteral { get; }
+    /// <summary>The unsized text behind a <c>StringView</c> (§22.2).</summary>
+    public NovaType Str { get; }
+
+    /// <summary><c>StringView</c> (§22.2).</summary>
+    public NovaType StringView { get; }
     public NovaType Error { get; }
     public NovaType Arena { get; }
     public NovaType FixedBufferAllocator { get; }
@@ -481,6 +499,25 @@ public sealed class TypeTable
 
     private readonly Dictionary<(NovaType, NovaType), NovaType> _results = [];
     private readonly Dictionary<(NovaType, NovaType), NovaType> _boxes = [];
+    private readonly Dictionary<NovaType, NovaType> _options = [];
+
+    /// <summary>The unique optional <c>value?</c> (§22.1): an enum with variants <c>null</c> and <c>Some(value)</c>.</summary>
+    public NovaType OptionOf(NovaType value, Symbol nullName, Symbol someName, Symbol payloadName)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (!_options.TryGetValue(value, out var option))
+        {
+            var definition = new EnumDefinition(null, null) { OptionType = value };
+            definition.Variants.Add(new EnumVariant(nullName, 0, default));
+            var some = new EnumVariant(someName, 1, default);
+            some.Payload.Add(new StructField(payloadName, value, 0, default));
+            definition.Variants.Add(some);
+            option = new NovaType($"{value.Name}?", definition);
+            _options.Add(value, option);
+            _composites.Add(option);
+        }
+        return option;
+    }
 
     private readonly Dictionary<NovaType, NovaType> _pools = [];
 
@@ -686,6 +723,7 @@ public sealed class TypeTable
             TypeKind.TypeParameter => type.IsCopyBound, // a move type (§20.3) unless bounded by Copy (§21.2)
             TypeKind.Struct => type.Struct!.IsCopy,
             TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => IsCopy(ok) && IsCopy(err),
+            TypeKind.Enum when type.Enum!.OptionType is { } value => IsCopy(value),
             TypeKind.Enum => type.Enum!.IsCopy,
             TypeKind.Reference => !type.IsMutableReference,
             TypeKind.Box or TypeKind.Region => false,
@@ -704,6 +742,10 @@ public sealed class TypeTable
         {
             return true;
         }
+        if (type.Enum?.OptionType is { } value)
+        {
+            return NeedsDrop(value);
+        }
         if (type.Enum?.ResultTypes is var (ok, err))
         {
             return NeedsDrop(ok) || NeedsDrop(err); // T and E may be declared later than the Result is named
@@ -719,7 +761,8 @@ public sealed class TypeTable
     {
         ArgumentNullException.ThrowIfNull(type);
         return type.IsReference || type.IsPoolBox || type.Region is RegionKind.FixedBuffer or RegionKind.ScratchFrame
-            || (type.Enum?.ResultTypes is var (ok, err) && (IsScoped(ok) || IsScoped(err)));
+            || (type.Enum?.ResultTypes is var (ok, err) && (IsScoped(ok) || IsScoped(err)))
+            || (type.Enum?.OptionType is { } value && IsScoped(value));
     }
 
     /// <summary>Is every value of <paramref name="from"/> representable in <paramref name="to"/>? (type-system.md §7)</summary>

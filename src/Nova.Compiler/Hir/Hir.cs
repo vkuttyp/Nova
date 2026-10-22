@@ -334,5 +334,8 @@ public sealed record HirTry(HirExpr Operand, NovaType Type, TextSpan Span) : Hir
 /// <summary><c>e!</c>: the <c>Ok</c> payload of <see cref="Operand"/>, or a panic.</summary>
 public sealed record HirUnwrap(HirExpr Operand, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
 
+/// <summary><c>o == null</c> (<see cref="IsNull"/>) or <c>o != null</c>; <see cref="Reference"/> is a shared borrow of the optional (§22.1).</summary>
+public sealed record HirIsNull(HirExpr Reference, bool IsNull, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
 /// <summary>Stands in for an expression that produced a diagnostic.</summary>
 public sealed record HirError(NovaType Type, TextSpan Span) : HirExpr(Type, Span);

@@ -1,0 +1,47 @@
+struct Res { id: i32; }
+
+fn lookup(present: bool) -> i32? {
+    if (present) { return 1; }
+    return null;
+}
+
+fn notOptional() -> i32 {
+    let v = lookup(true)?; // error[N0261]
+    return v;
+}
+
+fn resultReturn() -> Result<i32, i32> {
+    let v = lookup(true)?; // error[N0261]
+    return Ok(v);
+}
+
+fn main() {
+    let a = null; // error[N0260]
+    let b: i32 = null; // error[N0260]
+    let c: i32? = true; // error[N0205]
+    let d: u8? = 300; // error[N0206]
+    let n = 5;
+    let e = n!; // error[N0262]
+    Console.writeLine(n == null); // error[N0207]
+    Console.writeLine(null == null); // error[N0207]
+    let o = lookup(true);
+    Console.writeLine(o == 1); // error[N0207]
+    match (o) { // error[N0256]
+        Some(x) => { }
+    }
+    match (o) {
+        Ok(x) => { } // error[N0205]
+        null => { }
+    }
+    match (n) {
+        null => { } // error[N0205]
+        _ => { }
+    }
+    match (o) {
+        null => { }
+        null => { } // error[N0257]
+        Some(_) => { }
+    }
+    let f = Some(); // error[N0209]
+    let g: void? = null; // error[N0226]
+}
