@@ -421,7 +421,8 @@ Binding   = Identifier | 'var' Identifier | '_'        -- 'var': M3c (§18.4)
   1 ≤ N ≤ 2^48 − 1, and the array is at most 2^31 − 1 bytes. It is laid out as `N` consecutive `T`s:
   size `N × size(T)`, the alignment of `T`.
   - **v0 restriction:** `T` must be a Copy type, so arrays are Copy and never need drop. Arrays of
-    move types need element-wise move tracking (future).
+    move types need element-wise move tracking (future). Slices may have move-type elements
+    since M6b (§21.3).
   - Otherwise arrays may appear anywhere a value may: locals, parameters, results, struct fields,
     enum payloads and other arrays. Constants of array type are not supported yet (N0216).
 - `Slice<T>` / `SliceMut<T>` are **borrowed views** `(pointer, length)` of a run of `T`s in an array
@@ -908,3 +909,65 @@ EnumDecl     = 'enum' Identifier TypeParams? '{' … '}'
   recursion such as `f<T>` calling `f<Box<T>>`) is N0266.
 
 Diagnostics: N0265 (type arguments that cannot be inferred), N0266 (instantiation too deep).
+
+## 21. Interfaces (M6b)
+
+```nova
+interface Shape {
+    fn area(borrow this) -> i64;
+}
+
+struct Square { side: i64; }
+impl Shape for Square {
+    fn area(borrow this) -> i64 => this.side * this.side;
+}
+
+fn total<S: Shape>(shapes: Slice<S>) -> i64 {
+    var t = 0i64;
+    for (i in 0..shapes.length) { t += shapes[i].area(); }
+    return t;
+}
+```
+
+### 21.1 Declarations
+```text
+InterfaceDecl = 'interface' Identifier TypeParams? '{' MethodSig* '}'
+MethodSig     = 'fn' Identifier '(' Receiver (',' Param)* ')' ('->' Type)? ';'
+ImplDecl      = 'impl' Type 'for' Type '{' FunctionDecl* '}'
+```
+- An **interface** lists method signatures. Every method has a receiver (`this`, `borrow this`,
+  `borrow mut this`). An interface may be generic (`interface Comparable<T>`). Its methods
+  cannot have type parameters of their own, and v0 has no `Self` type.
+- **`impl I for T { … }`** implements interface `I` (with its type arguments, `I<X>`) for a
+  concrete type `T`: a struct, an enum, or a built-in type such as `i32`. `T` must not be generic
+  in v0 (`impl<T> I for Pair<T>` is future work).
+  - The block must define exactly the interface's methods, each with the same receiver kind,
+    parameter types and return type, after the interface's type arguments are substituted
+    (N0267). It may not define other functions.
+  - Each type may implement each interface instantiation at most once (N0267).
+  - An `impl` block's methods are ordinary methods of `T`. `x.area()` works on any `Square`, and
+    their names must not clash with `T`'s other methods (N0228).
+- Interfaces are not types: there is no `dyn Shape` value in v0 (OD-10). They are used only as
+  bounds.
+
+### 21.2 Bounds
+- A type parameter may have bounds: `<T: Shape>`, `<T: Comparable<T> + Copy>`.
+- **Inside generic code**, a value whose type is `T` (or a reference to one) may call the methods
+  of `T`'s bounds, with the signatures the interfaces give (after substitution). A call that no
+  bound provides is N0234. If two bounds provide the same method name, the call is ambiguous
+  (N0267).
+- **`Copy`** is a built-in bound: a `T: Copy` is a Copy type in the generic code (it can be used
+  twice and stored in arrays) and never needs drop. Only Copy types satisfy it.
+- **At every instantiation** (a call, type or value that gives `T`), each bound must hold: the
+  argument implements the interface (for a type parameter argument, its own bounds include it),
+  or is Copy for `Copy`. Otherwise it is N0268, reported where the instantiation is written.
+- Dispatch is static: an instantiation calls `T`'s `impl` method directly (monomorphisation).
+
+### 21.3 Slices of move types (correction to §16.1)
+- `Slice<T>` and `SliceMut<T>` may have any non-scoped element type, not just Copy ones. A slice
+  only views elements: reading one by value still needs a Copy type (N0251 otherwise), but
+  borrowing one (`borrow s[i]`, `s[i].method()`) does not. Arrays still need Copy elements
+  (§16.1), since an array owns its elements and v0 tracks no per-element moves.
+
+Diagnostics: N0267 (an `impl` that does not match its interface, a duplicate `impl`, or an
+ambiguous bound method), N0268 (a type argument that does not satisfy a bound).

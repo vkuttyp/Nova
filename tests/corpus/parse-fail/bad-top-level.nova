@@ -1,5 +1,5 @@
 let x = 1; // error[N0101]
-interface I { } // error[N0101]
+let x = 1; // error[N0101]
 class C { } // error[N0101]
 public let y = 2; // error[N0101]
 fn ok() { }

@@ -148,6 +148,8 @@ references, so the borrow checker reports their conflicts as N0240–N0245.
 | N0263 | An allocator argument that is not an allocator type (`SystemHeap`, `FailingAllocator`) | `Box<i32, Point>`, `Box.createIn(point, 1)` |
 | N0265 | Type arguments that cannot be inferred: a generic call, struct literal or enum value whose arguments, fields or expected type do not determine every type parameter | `let d = Maybe.Nothing;`, `let e = make();` |
 | N0266 | Generic instantiation nested more than 64 deep (polymorphic recursion) | `fn deep<T>(x: Maybe<T>) { deep(Maybe.Just(x)); }` |
+| N0267 | An `impl` that does not match its interface (receiver, parameter or return type, a missing or extra method), a duplicate `impl`, an `impl` for a generic or scoped type, an interface method without a receiver, or a method call that two bounds both provide | `impl Shape for Square { fn area(this) -> i64 … }` |
+| N0268 | A type argument that does not satisfy a bound of its type parameter (an interface it does not implement, or `Copy`) | `total(plain)` with `fn total<S: Shape>(…)` |
 | N0264 | A type a region cannot hold (R2): one that needs drop, a scoped type, or a non-Copy fill value for `allocArray` | `arena.alloc(Res { id: 1 })`, `arena.alloc(someReference)` |
 
 Generic code (M6a) reuses codes:
@@ -156,7 +158,10 @@ Generic code (M6a) reuses codes:
 - a generic type without its arguments, or with the wrong number of them, is N0204;
 - a duplicate or shadowing type parameter is N0201;
 - a method with type parameters of its own is N0216;
-- a generic `main` is N0219.
+- a generic `main` is N0219;
+- naming something that is not an interface as a bound or in an `impl` is N0204;
+- a method on a type parameter that no bound declares is N0234;
+- an `impl` method clashing with a type's own method is N0228.
 
 Region values reuse codes:
 - assigning a `using` binding as a whole is N0211;

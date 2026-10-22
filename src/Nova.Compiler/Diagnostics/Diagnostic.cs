@@ -104,6 +104,8 @@ public static class DiagnosticCodes
     public const string NotRegionContent = "N0264";
     public const string CannotInferTypeArguments = "N0265";
     public const string InstantiationTooDeep = "N0266";
+    public const string ImplMismatch = "N0267";
+    public const string BoundNotSatisfied = "N0268";
 
     // Build: N0300-N0399
     public const string MissingMain = "N0300";

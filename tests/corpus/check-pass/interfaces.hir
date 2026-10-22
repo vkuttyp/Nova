@@ -1,0 +1,65 @@
+(program
+  (fn grown ((s#0: S)) -> S
+    (block
+      (var t#1: S = s#0)
+      (expr (call S.grow (borrow-mut t#1)):void)
+      (return t#1)
+    )
+  )
+  (fn same ((a#0: T) (b#1: T)) -> bool
+    (block
+      (return (&& (== (call T.compare (borrow a#0) (borrow b#1)):i32 0:i32):bool (== (call T.compare (borrow b#1) (borrow a#0)):i32 0:i32):bool):bool)
+    )
+  )
+  (fn forward ((s#0: S)) -> S
+    (block
+      (return (call grown s#0):S)
+    )
+  )
+  (fn main () -> void
+    (block
+      (let s#0: Square = (call forward (new Square (side 2:i64))):Square)
+      (let a#1: i64 = (call Square.area (borrow s#0)):i64)
+      (let e#2: bool = (call same 1:u8 2:u8):bool)
+    )
+  )
+  (fn Square.area ((this#0: borrow Square)) -> i64
+    (block
+      (return (* (. (deref this#0):Square side):i64 (. (deref this#0):Square side):i64):i64)
+    )
+  )
+  (fn Square.grow ((this#0: borrow mut Square)) -> void
+    (block
+      (+= (*this#0).side 1:i64)
+    )
+  )
+  (fn u8.compare ((this#0: borrow u8) (other#1: borrow u8)) -> i32
+    (block
+      (return 0:i32)
+    )
+  )
+  (fn grown ((s#0: S)) -> S
+    (block
+      (var t#1: S = s#0)
+      (expr (call S.grow (borrow-mut t#1)):void)
+      (return t#1)
+    )
+  )
+  (fn forward ((s#0: Square)) -> Square
+    (block
+      (return (call grown s#0):Square)
+    )
+  )
+  (fn same ((a#0: u8) (b#1: u8)) -> bool
+    (block
+      (return (&& (== (call u8.compare (borrow a#0) (borrow b#1)):i32 0:i32):bool (== (call u8.compare (borrow b#1) (borrow a#0)):i32 0:i32):bool):bool)
+    )
+  )
+  (fn grown ((s#0: Square)) -> Square
+    (block
+      (var t#1: Square = s#0)
+      (expr (call Square.grow (borrow-mut t#1)):void)
+      (return t#1)
+    )
+  )
+)

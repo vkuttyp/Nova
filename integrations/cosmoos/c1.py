@@ -236,8 +236,8 @@ def check_corpus(serial, programs):
             exited = re.match(rf"\[ INFO\] process: pid \d+ '{re.escape(program.guest_name)}' exited with status (\d+)", line)
             if exited:
                 status = int(exited.group(1))
-            elif line.startswith("[ INFO]") or line in ("abort()",) or line.startswith("sh: "):
-                continue  # kernel log lines, libc's abort() note, the shell's job report
+            elif line.startswith("[ INFO]") or line in ("abort()", "Aborted") or line.startswith("sh: "):
+                continue  # kernel log lines, libc's abort() note, the shells' job reports (busybox: "Aborted")
             elif program.panic and line.startswith("nova panic: "):
                 if not line.startswith(program.panic):
                     failures.append(f"{program.relative}: panic message {line!r}, expected {program.panic!r}...")

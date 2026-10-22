@@ -1,0 +1,44 @@
+// Interfaces, impls and bounds (type-system.md §21).
+interface Shape { fn area(borrow this) -> i64; }
+interface Named { fn name(borrow this) -> i32; fn area(borrow this) -> i64; }
+interface Pairwise<T> { fn with(borrow this, other: T) -> T; }
+interface NoReceiver { fn make() -> i32; } // error[N0267]
+struct Square { side: i64; }
+struct Circle { r: i64; fn area(borrow this) -> i64 => this.r; } // error[N0228]
+struct NotShape { x: i32; }
+struct Plain { x: i32; }
+
+impl Shape for Square {
+    fn area(this) -> i64 => this.side; // error[N0267]
+}
+impl Shape for Square { // error[N0267]
+    fn area(borrow this) -> i64 => this.side;
+}
+impl Named for Square { // error[N0267]
+    fn name(borrow this) -> i64 => 1i64; // error[N0267]
+}
+impl Pairwise<i32> for Square {
+    fn with(borrow this, other: i64) -> i32 => 1; // error[N0267]
+}
+impl Shape for Circle { // the clash is reported at Circle's own 'area'
+    fn area(borrow this) -> i64 => this.r * this.r;
+}
+impl Shape for NotShape {
+    fn area(borrow this) -> i64 => 0i64;
+    fn extra(borrow this) -> i64 => 0i64; // error[N0267]
+}
+impl NotShape for Square { } // error[N0204]
+impl Shape for borrow Square { } // error[N0267]
+
+fn total<S: Shape>(s: borrow S) -> i64 => s.area();
+fn noBound<T>(t: borrow T) -> i64 => t.area(); // error[N0234]
+fn both<T: Shape + Named>(t: borrow T) -> i64 => t.area(); // error[N0267]
+fn needsCopy<T: Copy>(t: T) -> [T; 2] => [t, t];
+fn bad<T: NotShape>(t: T) { } // error[N0204]
+
+fn uses() {
+    let q = Plain { x: 1 };
+    let a = total(q); // error[N0268]
+    let b = needsCopy(Square { side: 1i64 });
+    let c = needsCopy(Box.create(1)!); // error[N0268]
+}

@@ -49,6 +49,15 @@ public enum TypeKind
     TypeParameter,
 }
 
+/// <summary>
+/// An interface bound <c>T: I&lt;Args&gt;</c> (type-system.md §21.2). <see cref="Interface"/> identifies the
+/// interface declaration (the checker's entry); <see cref="Arguments"/> may mention type parameters.
+/// </summary>
+public sealed record InterfaceBound(object Interface, string Name, ImmutableArray<NovaType> Arguments)
+{
+    public override string ToString() => Arguments.IsEmpty ? Name : $"{Name}<{string.Join(", ", Arguments)}>";
+}
+
 /// <summary>The built-in region types (ADR 0004).</summary>
 public enum RegionKind
 {
@@ -260,6 +269,12 @@ public sealed class NovaType
         : this(TypeKind.TypeParameter, name)
     {
     }
+
+    /// <summary>For a type parameter: its interface bounds (§21.2).</summary>
+    public List<InterfaceBound> Bounds { get; } = [];
+
+    /// <summary>For a type parameter: bounded by <c>Copy</c>, so a Copy type that never needs drop (§21.2).</summary>
+    public bool IsCopyBound { get; internal set; }
 
     internal NovaType(RegionKind region, string name, NovaType? element = null)
         : this(TypeKind.Region, name)
@@ -668,7 +683,7 @@ public sealed class TypeTable
         ArgumentNullException.ThrowIfNull(type);
         return type.Kind switch
         {
-            TypeKind.TypeParameter => false, // a move type (§20.3)
+            TypeKind.TypeParameter => type.IsCopyBound, // a move type (§20.3) unless bounded by Copy (§21.2)
             TypeKind.Struct => type.Struct!.IsCopy,
             TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => IsCopy(ok) && IsCopy(err),
             TypeKind.Enum => type.Enum!.IsCopy,
@@ -681,7 +696,11 @@ public sealed class TypeTable
     public static bool NeedsDrop(NovaType type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        if (type.IsBox || type.Kind == TypeKind.TypeParameter || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
+        if (type.Kind == TypeKind.TypeParameter)
+        {
+            return !type.IsCopyBound;
+        }
+        if (type.IsBox || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
         {
             return true;
         }

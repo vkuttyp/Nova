@@ -20,6 +20,8 @@ public sealed class Parser
     private readonly DiagnosticBag _diagnostics;
 
     private int _pos;
+    /// <summary>Inside an interface: function declarations end with ';' instead of a body.</summary>
+    private bool _parsingSignatures;
     private bool _recovering;
 
     private Parser(LexedSource stream, SymbolTable symbols, DiagnosticBag diagnostics)
@@ -158,7 +160,8 @@ public sealed class Parser
     }
 
     private static bool IsItemStart(TokenKind kind) => kind is TokenKind.FnKeyword or TokenKind.ConstKeyword
-        or TokenKind.StructKeyword or TokenKind.EnumKeyword or TokenKind.PublicKeyword or TokenKind.InternalKeyword or TokenKind.PrivateKeyword;
+        or TokenKind.StructKeyword or TokenKind.EnumKeyword or TokenKind.InterfaceKeyword or TokenKind.ImplKeyword
+        or TokenKind.PublicKeyword or TokenKind.InternalKeyword or TokenKind.PrivateKeyword;
 
     /// <summary>Keywords that begin a declaration in some milestone; top-level recovery stops at them.</summary>
     private static bool IsDeclarationKeyword(TokenKind kind) => IsItemStart(kind) || kind is TokenKind.NamespaceKeyword
@@ -225,9 +228,17 @@ public sealed class Parser
         {
             return ParseEnum(visibility, start);
         }
+        if (At(TokenKind.InterfaceKeyword))
+        {
+            return ParseInterface(visibility, start);
+        }
+        if (At(TokenKind.ImplKeyword))
+        {
+            return ParseImpl(visibility, start);
+        }
 
         Error(DiagnosticCodes.ExpectedItem, Current.Span,
-            $"expected 'fn', 'const', 'struct' or 'enum', found {TokenFacts.Describe(Current.Kind)}");
+            $"expected 'fn', 'const', 'struct', 'enum', 'interface' or 'impl', found {TokenFacts.Describe(Current.Kind)}");
         // Consume the offender: recovery stops at declaration keywords, so leaving e.g. `let` would re-report it.
         Advance();
         return null;
@@ -275,7 +286,11 @@ public sealed class Parser
 
         BlockStmt? body = null;
         Expr? expressionBody = null;
-        if (At(TokenKind.OpenBrace))
+        if (_parsingSignatures && Eat(TokenKind.Semicolon))
+        {
+            // An interface method: a signature without a body (type-system.md §21.1).
+        }
+        else if (At(TokenKind.OpenBrace))
         {
             body = ParseBlock();
         }
@@ -376,6 +391,46 @@ public sealed class Parser
             Drop = drop,
             TypeParameters = typeParameters,
         };
+    }
+
+    /// <summary><c>interface I&lt;T&gt; { fn m(…) -> R; … }</c> (type-system.md §21.1).</summary>
+    private InterfaceDecl ParseInterface(Visibility visibility, int start)
+    {
+        Expect(TokenKind.InterfaceKeyword);
+        var name = ParseIdentifier();
+        var typeParameters = ParseTypeParameters();
+        var methods = ImmutableArray.CreateBuilder<FunctionDecl>();
+        Expect(TokenKind.OpenBrace);
+        _parsingSignatures = true;
+        while (At(TokenKind.FnKeyword))
+        {
+            methods.Add(ParseFunction(Visibility.Default, Current.Span.Start));
+        }
+        _parsingSignatures = false;
+        Expect(TokenKind.CloseBrace);
+        return new InterfaceDecl(visibility, name, methods.ToImmutable(), SpanFrom(start)) { TypeParameters = typeParameters };
+    }
+
+    /// <summary><c>impl I for T { fn … }</c> (type-system.md §21.1).</summary>
+    private ImplDecl ParseImpl(Visibility visibility, int start)
+    {
+        Expect(TokenKind.ImplKeyword);
+        var interfaceType = ParseType();
+        Expect(TokenKind.ForKeyword);
+        var forType = ParseType();
+        var functions = ImmutableArray.CreateBuilder<FunctionDecl>();
+        Expect(TokenKind.OpenBrace);
+        while (At(TokenKind.FnKeyword) || At(TokenKind.PublicKeyword))
+        {
+            var functionStart = Current.Span.Start;
+            var functionVisibility = ParseVisibility();
+            functions.Add(ParseFunction(functionVisibility, functionStart));
+        }
+        Expect(TokenKind.CloseBrace);
+        var name = interfaceType is NamedType { Name.Parts: [var first, ..] } ? first
+            : interfaceType is GenericType { Name.Parts: [var generic, ..] } ? generic
+            : new Identifier(_symbols.Intern("<impl>"), interfaceType.Span) { IsMissing = true };
+        return new ImplDecl(visibility, name, interfaceType, forType, functions.ToImmutable(), SpanFrom(start));
     }
 
     private EnumDecl ParseEnum(Visibility visibility, int start)

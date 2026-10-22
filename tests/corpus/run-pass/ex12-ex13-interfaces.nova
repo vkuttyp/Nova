@@ -1,0 +1,62 @@
+// language-spec.md Ex12 (if statement instead of an if expression) and Ex13 (integer geometry, ADR 0005).
+interface Comparable<T> {
+    fn compare(borrow this, other: borrow T) -> i32;
+}
+
+impl Comparable<i32> for i32 {
+    fn compare(borrow this, other: borrow i32) -> i32 {
+        if (this < other) { return -1; }
+        if (this > other) { return 1; }
+        return 0;
+    }
+}
+
+struct Version { major: u32; minor: u32; }
+impl Comparable<Version> for Version {
+    fn compare(borrow this, other: borrow Version) -> i32 {
+        if (this.major != other.major) { return if1(this.major > other.major); }
+        if (this.minor != other.minor) { return if1(this.minor > other.minor); }
+        return 0;
+    }
+}
+fn if1(b: bool) -> i32 { if (b) { return 1; } return -1; }
+
+fn max<T: Comparable<T>>(a: borrow T, b: borrow T) -> borrow(a, b) T {
+    if (a.compare(b) >= 0) { return a; }
+    return b;
+}
+
+interface Shape {
+    fn area(borrow this) -> i64;
+}
+struct Circle { r: i64; }
+struct Rect { w: i64; h: i64; }
+impl Shape for Circle { fn area(borrow this) -> i64 => 3 * this.r * this.r; }
+impl Shape for Rect { fn area(borrow this) -> i64 => this.w * this.h; }
+
+fn total<S: Shape>(shapes: Slice<S>) -> i64 {
+    var t = 0i64;
+    for (i in 0..shapes.length) { t += shapes[i].area(); }
+    return t;
+}
+
+fn twice<T: Copy>(x: T) -> [T; 2] => [x, x];
+
+fn main() {
+    Console.writeLine(max(3, 9));
+    let older = Version { major: 1u32, minor: 4u32 };
+    let newer = Version { major: 1u32, minor: 7u32 };
+    let v = max(older, newer);
+    Console.writeLine(v.minor);
+    let circles = [Circle { r: 1i64 }, Circle { r: 2i64 }];
+    let rects = [Rect { w: 2i64, h: 3i64 }];
+    Console.writeLine(total(circles[..]) + total(rects[..]));
+    let pair = twice(5u8);
+    Console.writeLine(pair[1]);
+    Console.writeLine(Circle { r: 3i64 }.area());
+}
+// expect-stdout: 9
+// expect-stdout: 7
+// expect-stdout: 21
+// expect-stdout: 5
+// expect-stdout: 27

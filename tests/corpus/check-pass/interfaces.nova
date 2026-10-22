@@ -1,0 +1,22 @@
+interface Shape { fn area(borrow this) -> i64; fn grow(borrow mut this); }
+interface Comparable<T> { fn compare(borrow this, other: borrow T) -> i32; }
+struct Square { side: i64; }
+impl Shape for Square {
+    fn area(borrow this) -> i64 => this.side * this.side;
+    fn grow(borrow mut this) { this.side += 1i64; }
+}
+impl Comparable<u8> for u8 { fn compare(borrow this, other: borrow u8) -> i32 => 0; }
+
+fn grown<S: Shape>(s: S) -> S {
+    var t = s;
+    t.grow();
+    return t;
+}
+fn same<T: Comparable<T> + Copy>(a: T, b: T) -> bool => a.compare(b) == 0 && b.compare(a) == 0;
+fn forward<S: Shape>(s: S) -> S => grown(s);
+
+fn main() {
+    let s = forward(Square { side: 2i64 });
+    let a = s.area();
+    let e = same(1u8, 2u8);
+}

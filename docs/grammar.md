@@ -87,6 +87,9 @@ QualifiedName   = Identifier ('.' Identifier)*
 
 Item       = Visibility? (FunctionDecl | ConstDecl | StructDecl | EnumDecl)
 TypeParams = '<' TypeParam (',' TypeParam)* '>'               (* M6a; type-system.md §20 *)
+InterfaceDecl = 'interface' Identifier TypeParams? '{' MethodSig* '}'   (* M6b; §21 *)
+MethodSig  = 'fn' Identifier '(' Receiver (',' Param)* ')' ('->' Type)? ';'
+ImplDecl   = 'impl' Type 'for' Type '{' FunctionDecl* '}'              (* M6b; §21 *)
 TypeParam  = Identifier (':' Type ('+' Type)*)?                (* bounds: M6b *)
 EnumDecl   = 'enum' Identifier TypeParams? '{' (Variant (',' Variant)* ','?)? '}'        (* M2d *)
 Variant    = Identifier ('(' Type (',' Type)* ','? ')')?

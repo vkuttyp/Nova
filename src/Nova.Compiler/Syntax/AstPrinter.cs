@@ -97,6 +97,26 @@ public sealed class AstPrinter
             case ConstDecl c:
                 Line($"(const {visibility} {Name(c.Name)} {Type(c.Type)} {Expr(c.Value)})");
                 break;
+            case InterfaceDecl i:
+                Line($"(interface {visibility} {Name(i.Name)}{TypeParams(i.TypeParameters)}");
+                _indent++;
+                foreach (var method in i.Methods)
+                {
+                    PrintFunction(method);
+                }
+                _indent--;
+                Line(")");
+                break;
+            case ImplDecl impl:
+                Line($"(impl {Type(impl.Interface)} for {Type(impl.ForType)}");
+                _indent++;
+                foreach (var function in impl.Functions)
+                {
+                    PrintFunction(function);
+                }
+                _indent--;
+                Line(")");
+                break;
             default:
                 throw new InvalidOperationException($"unknown item {item.GetType().Name}");
         }

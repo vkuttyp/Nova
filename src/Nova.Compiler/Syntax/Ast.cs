@@ -91,6 +91,28 @@ public sealed record EnumDecl(
     public ImmutableArray<TypeParameter> TypeParameters { get; init; } = [];
 }
 
+/// <summary><c>interface I&lt;T&gt; { fn m(borrow this) -> R; … }</c> (type-system.md §21.1): signatures only.</summary>
+public sealed record InterfaceDecl(
+    Visibility Visibility,
+    Identifier Name,
+    ImmutableArray<FunctionDecl> Methods,
+    TextSpan Span) : Item(Visibility, Name, Span)
+{
+    public ImmutableArray<TypeParameter> TypeParameters { get; init; } = [];
+}
+
+/// <summary>
+/// <c>impl I for T { … }</c> (type-system.md §21.1). <see cref="Item.Name"/> is the interface's name
+/// (impl blocks are not named items).
+/// </summary>
+public sealed record ImplDecl(
+    Visibility Visibility,
+    Identifier Name,
+    TypeSyntax Interface,
+    TypeSyntax ForType,
+    ImmutableArray<FunctionDecl> Functions,
+    TextSpan Span) : Item(Visibility, Name, Span);
+
 public sealed record VariantDecl(Identifier Name, ImmutableArray<TypeSyntax> Payload, TextSpan Span) : SyntaxNode(Span);
 
 public sealed record FieldDecl(Visibility Visibility, Identifier Name, TypeSyntax Type, TextSpan Span) : SyntaxNode(Span);

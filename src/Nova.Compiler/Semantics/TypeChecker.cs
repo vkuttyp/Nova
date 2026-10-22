@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using Nova.Compiler.Diagnostics;
 using Nova.Compiler.Hir;
 using Nova.Compiler.Syntax;
@@ -54,6 +55,14 @@ internal sealed class TypeChecker
         public Dictionary<string, EnumEntry> Instances { get; } = [];
     }
 
+    /// <summary>An interface (§21): its declaration and type parameters.</summary>
+    private sealed class InterfaceEntry(InterfaceDecl decl, SourceText source)
+    {
+        public InterfaceDecl Decl { get; } = decl;
+        public SourceText Source { get; } = source;
+        public ImmutableArray<NovaType> Parameters { get; set; } = [];
+    }
+
     /// <summary>A generic function (§20): its generic version, and its instantiations by type arguments.</summary>
     private sealed class GenericFunctionEntry(FunctionDecl decl, SourceText source)
     {
@@ -84,6 +93,16 @@ internal sealed class TypeChecker
     private IReadOnlyDictionary<Symbol, NovaType> _typeEnvironment = new Dictionary<Symbol, NovaType>();
     /// <summary>Set once every item is declared and every member resolved; later instantiations resolve at once.</summary>
     private bool _membersResolved;
+    private readonly List<(ImplDecl Decl, SourceText Source)> _impls = [];
+    /// <summary>Methods from `impl` blocks, by type (§21.1).</summary>
+    private readonly Dictionary<NovaType, Dictionary<Symbol, HirFunction>> _implMethods = [];
+    /// <summary>Which type implements which interface instantiation: keys "typeId|interface|args" (§21.1).</summary>
+    private readonly HashSet<string> _implementations = [];
+    /// <summary>Bound checks made before every `impl` is known; run once they are (§21.2).</summary>
+    private readonly List<Action> _pendingBoundChecks = [];
+    private bool _implsReady;
+    /// <summary>Signatures of bound methods called on a type parameter (§21.2), by type parameter, bound and name.</summary>
+    private readonly Dictionary<string, HirFunction> _boundMethods = [];
 
     private readonly Dictionary<Symbol, object> _items = [];
     private readonly Dictionary<Symbol, Builtin> _builtins;
@@ -141,7 +160,16 @@ internal sealed class TypeChecker
     public HirProgram Check()
     {
         DeclareAllocError();
-        // Struct names first, so every signature and field can refer to any struct.
+        // Interfaces first: bounds on every later declaration refer to them (§21).
+        foreach (var unit in _units)
+        {
+            _source = unit.Source;
+            foreach (var item in unit.Items.OfType<InterfaceDecl>())
+            {
+                DeclareInterface(item);
+            }
+        }
+        // Struct names next, so every signature and field can refer to any struct.
         foreach (var unit in _units)
         {
             _source = unit.Source;
@@ -161,11 +189,12 @@ internal sealed class TypeChecker
         foreach (var unit in _units)
         {
             _source = unit.Source;
-            foreach (var item in unit.Items.Where(i => i is not (StructDecl or EnumDecl)))
+            foreach (var item in unit.Items.Where(i => i is not (StructDecl or EnumDecl or InterfaceDecl)))
             {
                 Declare(item);
             }
         }
+        ProcessImpls();
         // Instantiations made while resolving members are resolved too (§20.4).
         for (int s = 0, e = 0; s < _structs.Count || e < _enums.Count;)
         {
@@ -268,6 +297,11 @@ internal sealed class TypeChecker
 
     private void Declare(Item item)
     {
+        if (item is ImplDecl impl)
+        {
+            _impls.Add((impl, _source)); // processed once every item is declared (§21.1)
+            return;
+        }
         var name = item.Name.Name;
         if (IsReservedName(item.Name))
         {
@@ -323,13 +357,14 @@ internal sealed class TypeChecker
     }
 
     /// <summary>Creates the HIR function for a top-level function or a struct member, resolving its signature.</summary>
-    private HirFunction DeclareFunction(FunctionDecl fn, NovaType? owner, IReadOnlyDictionary<Symbol, NovaType>? environment = null)
+    private HirFunction DeclareFunction(FunctionDecl fn, NovaType? owner, IReadOnlyDictionary<Symbol, NovaType>? environment = null,
+        bool register = true)
     {
         var savedEnvironment = _typeEnvironment;
         _typeEnvironment = environment ?? new Dictionary<Symbol, NovaType>();
         try
         {
-            return DeclareFunctionCore(fn, owner);
+            return DeclareFunctionCore(fn, owner, register);
         }
         finally
         {
@@ -337,7 +372,8 @@ internal sealed class TypeChecker
         }
     }
 
-    private HirFunction DeclareFunctionCore(FunctionDecl fn, NovaType? owner)
+    /// <param name="register">False for a signature only (an interface method): checked, never compiled.</param>
+    private HirFunction DeclareFunctionCore(FunctionDecl fn, NovaType? owner, bool register)
     {
         if (owner is not null && !fn.TypeParameters.IsEmpty)
         {
@@ -346,7 +382,7 @@ internal sealed class TypeChecker
             _typeEnvironment = DeclareTypeParameters(fn.TypeParameters, _typeEnvironment).Environment; // no cascade of unknown types
         }
         var returnType = fn.ReturnType is null ? _types.Void : ResolveType(fn.ReturnType, allowVoid: true, allowSources: true);
-        var hir = new HirFunction(_functions.Count, fn.Name.Name, returnType, _source, fn, owner) { Environment = _typeEnvironment };
+        var hir = new HirFunction(register ? _functions.Count : -1, fn.Name.Name, returnType, _source, fn, owner) { Environment = _typeEnvironment };
         if (owner is not null && fn.Receiver is not null)
         {
             // `this` is an immutable binding: the struct by value, or a reference to it (type-system.md §12, §13.2).
@@ -374,7 +410,10 @@ internal sealed class TypeChecker
         {
             hir.ReturnSources = ResolveReturnSources(fn, hir);
         }
-        _functions.Add(hir);
+        if (register)
+        {
+            _functions.Add(hir);
+        }
         return hir;
     }
 
@@ -473,15 +512,307 @@ internal sealed class TypeChecker
                     ? $"type parameter '{text}' is declared twice"
                     : $"type parameter '{text}' would shadow the type or item '{text}'");
             }
-            if (!parameter.Bounds.IsEmpty)
-            {
-                Error(DiagnosticCodes.Unsupported, parameter.Bounds[0].Span, "bounds on type parameters come with interfaces (M6b)");
-            }
             var type = TypeTable.CreateTypeParameter(text);
             environment[parameter.Name.Name] = type;
             parameters.Add(type);
         }
+        // Bounds may mention any of the parameters (`T: Comparable<T>`), so they are resolved last.
+        var saved = _typeEnvironment;
+        _typeEnvironment = environment;
+        for (var i = 0; i < syntax.Length; i++)
+        {
+            foreach (var bound in syntax[i].Bounds)
+            {
+                if (bound is NamedType { Name.Parts: [var copy] } && Name(copy.Name) == "Copy" && !_items.ContainsKey(copy.Name))
+                {
+                    parameters[i].IsCopyBound = true;
+                }
+                else if (ResolveInterface(bound) is { } resolved)
+                {
+                    parameters[i].Bounds.Add(resolved);
+                }
+            }
+        }
+        _typeEnvironment = saved;
         return (parameters.MoveToImmutable(), environment);
+    }
+
+    private void DeclareInterface(InterfaceDecl decl)
+    {
+        if (IsReservedName(decl.Name))
+        {
+            return;
+        }
+        if (_types.Lookup(Name(decl.Name.Name)) is not null || _items.ContainsKey(decl.Name.Name))
+        {
+            Error(DiagnosticCodes.DuplicateItem, decl.Name.Span, $"'{Name(decl.Name.Name)}' is already defined");
+            return;
+        }
+        var entry = new InterfaceEntry(decl, _source);
+        _items.Add(decl.Name.Name, entry);
+        entry.Parameters = DeclareTypeParameters(decl.TypeParameters, new Dictionary<Symbol, NovaType>()).Parameters;
+        foreach (var method in decl.Methods.Where(m => m.Receiver is null))
+        {
+            Error(DiagnosticCodes.ImplMismatch, method.Name.Span, $"interface method '{Name(method.Name.Name)}' needs a receiver: this, borrow this or borrow mut this");
+        }
+    }
+
+    /// <summary>An interface reference <c>I</c> or <c>I&lt;Args&gt;</c> in a bound or an `impl` (§21); null after an error.</summary>
+    private InterfaceBound? ResolveInterface(TypeSyntax syntax)
+    {
+        var (identifier, argumentSyntax) = syntax switch
+        {
+            NamedType { Name.Parts: [var only] } => (only, ImmutableArray<TypeSyntax>.Empty),
+            GenericType { Name.Parts: [var only] } generic => (only, generic.Arguments),
+            _ => (null, []),
+        };
+        if (identifier is null || _items.GetValueOrDefault(identifier.Name) is not InterfaceEntry entry)
+        {
+            Error(DiagnosticCodes.UnknownType, syntax.Span, identifier is null
+                ? "expected an interface"
+                : $"'{Name(identifier.Name)}' is not an interface");
+            return null;
+        }
+        if (argumentSyntax.Length != entry.Parameters.Length)
+        {
+            Error(DiagnosticCodes.UnknownType, syntax.Span,
+                $"interface '{Name(identifier.Name)}' takes {entry.Parameters.Length} type argument(s), but {argumentSyntax.Length} were given");
+            return null;
+        }
+        var arguments = argumentSyntax.Select(a => ResolveType(a, allowVoid: false)).ToImmutableArray();
+        return arguments.Any(a => a.IsBottom) ? null : new InterfaceBound(entry, Name(identifier.Name), arguments);
+    }
+
+    private static string ImplementationKey(NovaType type, InterfaceBound bound) =>
+        $"{type.Id}|{RuntimeHelpers.GetHashCode(bound.Interface)}|{TypeKey(bound.Arguments)}";
+
+    /// <summary>
+    /// Every `impl I for T` (§21.1): resolves both sides, declares the methods as methods of T, and checks
+    /// them against the interface (N0267). Then runs the bound checks that waited for them.
+    /// </summary>
+    private void ProcessImpls()
+    {
+        foreach (var (decl, source) in _impls)
+        {
+            _source = source;
+            ProcessImpl(decl);
+        }
+        _implsReady = true;
+        foreach (var check in _pendingBoundChecks)
+        {
+            check();
+        }
+        _pendingBoundChecks.Clear();
+    }
+
+    private void ProcessImpl(ImplDecl decl)
+    {
+        var forType = ResolveType(decl.ForType, allowVoid: false);
+        var bound = ResolveInterface(decl.Interface);
+        if (forType.IsBottom || bound is null)
+        {
+            return;
+        }
+        if (forType.IsGeneric || TypeTable.IsScoped(forType))
+        {
+            Error(DiagnosticCodes.ImplMismatch, decl.ForType.Span,
+                $"'impl … for {forType}': v0 implements interfaces only for concrete, unscoped types");
+            return;
+        }
+        if (!_implementations.Add(ImplementationKey(forType, bound)))
+        {
+            Error(DiagnosticCodes.ImplMismatch, decl.Span, $"'{forType}' already implements '{bound}'");
+            return;
+        }
+        var interfaceEntry = (InterfaceEntry)bound.Interface;
+        var environment = interfaceEntry.Decl.TypeParameters.Zip(bound.Arguments).ToDictionary(p => p.First.Name.Name, p => p.Second);
+        if (!_implMethods.TryGetValue(forType, out var methods))
+        {
+            methods = [];
+            _implMethods.Add(forType, methods);
+        }
+        var implemented = new Dictionary<Symbol, HirFunction>();
+        foreach (var function in decl.Functions)
+        {
+            var signature = interfaceEntry.Decl.Methods.FirstOrDefault(m => m.Name.Name == function.Name.Name);
+            if (signature is null)
+            {
+                Error(DiagnosticCodes.ImplMismatch, function.Name.Span,
+                    $"'{bound}' has no method '{Name(function.Name.Name)}'; an impl block holds only the interface's methods");
+                continue;
+            }
+            var hir = DeclareFunction(function, forType);
+            if (!methods.TryAdd(function.Name.Name, hir) || !implemented.TryAdd(function.Name.Name, hir))
+            {
+                Error(DiagnosticCodes.DuplicateMember, function.Name.Span, $"'{forType}' already has a method named '{Name(function.Name.Name)}'");
+                continue;
+            }
+            var expected = DeclareFunction(signature, forType, environment, register: false);
+            if (SignatureMismatch(expected, hir) is { } problem)
+            {
+                Error(DiagnosticCodes.ImplMismatch, function.Name.Span,
+                    $"'{Name(function.Name.Name)}' does not match '{bound}': {problem}");
+            }
+        }
+        foreach (var signature in interfaceEntry.Decl.Methods.Where(m => !implemented.ContainsKey(m.Name.Name)))
+        {
+            Error(DiagnosticCodes.ImplMismatch, decl.Interface.Span,
+                $"'impl {bound} for {forType}' is missing method '{Name(signature.Name.Name)}'");
+        }
+    }
+
+    /// <summary>Null if <paramref name="actual"/> has the interface's signature <paramref name="expected"/>; else what differs.</summary>
+    private static string? SignatureMismatch(HirFunction expected, HirFunction actual)
+    {
+        if (expected.ReceiverKind != actual.ReceiverKind)
+        {
+            return $"the receiver must be {ReceiverText(expected.ReceiverKind)}, not {ReceiverText(actual.ReceiverKind)}";
+        }
+        if (expected.Parameters.Length != actual.Parameters.Length)
+        {
+            return $"it must take {expected.Parameters.Length - 1} parameter(s) besides the receiver";
+        }
+        for (var i = 1; i < expected.Parameters.Length; i++)
+        {
+            if (!ReferenceEquals(expected.Parameters[i].Type, actual.Parameters[i].Type))
+            {
+                return $"parameter {i} must have type '{expected.Parameters[i].Type}', not '{actual.Parameters[i].Type}'";
+            }
+        }
+        return ReferenceEquals(expected.ReturnType, actual.ReturnType)
+            ? null
+            : $"it must return '{expected.ReturnType}', not '{actual.ReturnType}'";
+    }
+
+    private static string ReceiverText(ReceiverKind kind) => kind switch
+    {
+        ReceiverKind.Borrow => "'borrow this'",
+        ReceiverKind.BorrowMut => "'borrow mut this'",
+        _ => "'this'",
+    };
+
+    /// <summary>
+    /// Do <paramref name="arguments"/> satisfy the bounds of <paramref name="parameters"/> (§21.2)? Reported
+    /// as N0268 at <paramref name="span"/>; deferred until every `impl` is known.
+    /// </summary>
+    private void CheckBounds(ImmutableArray<NovaType> parameters, ImmutableArray<NovaType> arguments, TextSpan span)
+    {
+        if (!parameters.Any(p => p.IsCopyBound || p.Bounds.Count > 0))
+        {
+            return;
+        }
+        if (!_implsReady)
+        {
+            var source = _source;
+            _pendingBoundChecks.Add(() =>
+            {
+                var saved = _source;
+                _source = source;
+                CheckBounds(parameters, arguments, span);
+                _source = saved;
+            });
+            return;
+        }
+        var map = parameters.Zip(arguments).ToDictionary(p => p.First, p => p.Second);
+        foreach (var (parameter, argument) in parameters.Zip(arguments))
+        {
+            if (argument.IsBottom)
+            {
+                continue;
+            }
+            if (parameter.IsCopyBound && !TypeTable.IsCopy(argument))
+            {
+                Error(DiagnosticCodes.BoundNotSatisfied, span, $"'{argument}' is not Copy, but '{parameter}' must be ('{parameter}: Copy')");
+            }
+            foreach (var bound in parameter.Bounds)
+            {
+                var required = bound with { Arguments = [.. bound.Arguments.Select(a => Substitute(a, map))] };
+                if (!Implements(argument, required))
+                {
+                    Error(DiagnosticCodes.BoundNotSatisfied, span, $"'{argument}' does not implement '{required}', which '{parameter}' requires");
+                }
+            }
+        }
+    }
+
+    /// <summary>Does <paramref name="type"/> implement <paramref name="bound"/>: an `impl`, or for a type parameter, its own bounds?</summary>
+    private bool Implements(NovaType type, InterfaceBound bound) => type.Kind == TypeKind.TypeParameter
+        ? type.Bounds.Any(b => b.Interface == bound.Interface && b.Arguments.SequenceEqual(bound.Arguments))
+        : _implementations.Contains(ImplementationKey(type, bound));
+
+    /// <summary>A type with type parameters replaced by <paramref name="map"/> (for bounds such as <c>Comparable&lt;T&gt;</c>).</summary>
+    private NovaType Substitute(NovaType type, IReadOnlyDictionary<NovaType, NovaType> map)
+    {
+        if (map.TryGetValue(type, out var mapped))
+        {
+            return mapped;
+        }
+        if (!type.IsGeneric)
+        {
+            return type;
+        }
+        switch (type.Kind)
+        {
+            case TypeKind.Reference:
+                return _types.ReferenceTo(Substitute(type.Pointee!, map), type.IsMutableReference);
+            case TypeKind.Array:
+                return _types.ArrayOf(Substitute(type.Element!, map), type.ArrayLength);
+            case TypeKind.Box:
+                return BoxOf(Substitute(type.Pointee!, map), type.Allocator!);
+            case TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err):
+                return ResultOf(Substitute(ok, map), Substitute(err, map));
+            case TypeKind.Struct when _items.GetValueOrDefault(type.Struct!.Syntax.Name.Name) is StructEntry template:
+                return InstantiateStruct(template, [.. type.Struct.TypeArguments.Select(a => Substitute(a, map))]).Type;
+            case TypeKind.Enum when _items.GetValueOrDefault(type.Enum!.Syntax!.Name.Name) is EnumEntry enumTemplate:
+                return InstantiateEnum(enumTemplate, [.. type.Enum.TypeArguments.Select(a => Substitute(a, map))]).Type;
+            default:
+                return type;
+        }
+    }
+
+    /// <summary>
+    /// The methods a value of <paramref name="type"/> has: its own, those of its `impl` blocks, or for a
+    /// type parameter, its bounds' (§21). Null if there is none of that name; reports an ambiguous bound.
+    /// </summary>
+    private HirFunction? FindMethod(NovaType type, Symbol name, TextSpan span)
+    {
+        if (type.Struct?.Functions.TryGetValue(name, out var own) == true)
+        {
+            return own;
+        }
+        if (_implMethods.TryGetValue(type, out var methods) && methods.TryGetValue(name, out var implemented))
+        {
+            return implemented;
+        }
+        if (type.Kind != TypeKind.TypeParameter)
+        {
+            return null;
+        }
+        var candidates = type.Bounds
+            .Select(b => (Bound: b, Signature: ((InterfaceEntry)b.Interface).Decl.Methods.FirstOrDefault(m => m.Name.Name == name)))
+            .Where(c => c.Signature is not null).ToList();
+        if (candidates.Count > 1)
+        {
+            Error(DiagnosticCodes.ImplMismatch, span,
+                $"'{Name(name)}' is ambiguous: both '{candidates[0].Bound}' and '{candidates[1].Bound}' declare it");
+        }
+        if (candidates.Count == 0)
+        {
+            return null;
+        }
+        var (bound, signature) = candidates[0];
+        var key = $"{type.Id}|{ImplementationKey(type, bound)}|{Name(name)}";
+        if (!_boundMethods.TryGetValue(key, out var function))
+        {
+            var entry = (InterfaceEntry)bound.Interface;
+            var environment = entry.Decl.TypeParameters.Zip(bound.Arguments).ToDictionary(p => p.First.Name.Name, p => p.Second);
+            var savedSource = _source;
+            _source = entry.Source;
+            function = DeclareFunction(signature!, type, environment, register: false);
+            _source = savedSource;
+            _boundMethods.Add(key, function);
+        }
+        return function;
     }
 
     /// <summary>A stable key for a list of types (identity-based: distinct types never share a key).</summary>
@@ -491,12 +822,13 @@ internal sealed class TypeChecker
     /// The instantiation of generic struct <paramref name="template"/> with <paramref name="arguments"/>
     /// (§20.4). Made once; its members are resolved at once if the declaration phase is over.
     /// </summary>
-    private StructEntry InstantiateStruct(StructEntry template, ImmutableArray<NovaType> arguments)
+    private StructEntry InstantiateStruct(StructEntry template, ImmutableArray<NovaType> arguments, TextSpan span = default)
     {
         if (arguments.SequenceEqual(template.Type.Struct!.TypeArguments))
         {
             return template;
         }
+        CheckBounds(template.Type.Struct.TypeArguments, arguments, span);
         var key = TypeKey(arguments);
         if (template.Instances.TryGetValue(key, out var existing))
         {
@@ -512,7 +844,7 @@ internal sealed class TypeChecker
         if (_membersResolved)
         {
             _instantiating++;
-            ResolveStructMembers(entry);
+            Quietly(() => { ResolveStructMembers(entry); return 0; }); // checked in the generic version
             _instantiating--;
             FinishLateTypes();
         }
@@ -520,12 +852,13 @@ internal sealed class TypeChecker
     }
 
     /// <summary>As <see cref="InstantiateStruct"/>, for enums.</summary>
-    private EnumEntry InstantiateEnum(EnumEntry template, ImmutableArray<NovaType> arguments)
+    private EnumEntry InstantiateEnum(EnumEntry template, ImmutableArray<NovaType> arguments, TextSpan span = default)
     {
         if (arguments.SequenceEqual(template.Type.Enum!.TypeArguments))
         {
             return template;
         }
+        CheckBounds(template.Type.Enum.TypeArguments, arguments, span);
         var key = TypeKey(arguments);
         if (template.Instances.TryGetValue(key, out var existing))
         {
@@ -541,7 +874,7 @@ internal sealed class TypeChecker
         if (_membersResolved)
         {
             _instantiating++;
-            ResolveEnumVariants(entry);
+            Quietly(() => { ResolveEnumVariants(entry); return 0; }); // checked in the generic version
             _instantiating--;
             FinishLateTypes();
         }
@@ -574,6 +907,7 @@ internal sealed class TypeChecker
         {
             return entry.Generic;
         }
+        CheckBounds(entry.Parameters, arguments, span);
         var key = TypeKey(arguments);
         if (entry.Instances.TryGetValue(key, out var existing))
         {
@@ -589,7 +923,8 @@ internal sealed class TypeChecker
         var environment = entry.Decl.TypeParameters.Zip(arguments).ToDictionary(p => p.First.Name.Name, p => p.Second);
         var savedSource = _source;
         _source = entry.Source;
-        var instance = DeclareFunction(entry.Decl, owner: null, environment);
+        // The generic version's signature was checked; the instantiation's would only repeat it (§20.3).
+        var instance = Quietly(() => DeclareFunction(entry.Decl, owner: null, environment));
         _source = savedSource;
         instance.TypeArguments = arguments;
         instance.InstantiationDepth = depth;
@@ -714,7 +1049,8 @@ internal sealed class TypeChecker
         }
         foreach (var function in entry.Decl.Functions)
         {
-            if (!memberNames.Add(function.Name.Name))
+            if (!memberNames.Add(function.Name.Name)
+                || (_implMethods.TryGetValue(entry.Type, out var implemented) && implemented.ContainsKey(function.Name.Name)))
             {
                 Error(DiagnosticCodes.DuplicateMember, function.Name.Span,
                     $"'{entry.Type}' already has a member named '{Name(function.Name.Name)}'");
@@ -1422,8 +1758,8 @@ internal sealed class TypeChecker
             arguments.Add(type);
         }
         return item is StructEntry structEntry
-            ? Used(InstantiateStruct(structEntry, arguments.MoveToImmutable())).Type
-            : Used(InstantiateEnum((EnumEntry)item, arguments.MoveToImmutable())).Type;
+            ? Used(InstantiateStruct(structEntry, arguments.MoveToImmutable(), syntax.Span)).Type
+            : Used(InstantiateEnum((EnumEntry)item, arguments.MoveToImmutable(), syntax.Span)).Type;
     }
 
     /// <summary>
@@ -1569,7 +1905,8 @@ internal sealed class TypeChecker
 
     private void CheckElementCopy(NovaType element, long length, TextSpan span)
     {
-        if (!TypeTable.IsCopy(element))
+        // Arrays own their elements and v0 tracks no per-element moves; slices only view them (§21.3).
+        if (length >= 0 && !TypeTable.IsCopy(element))
         {
             Error(DiagnosticCodes.InvalidArray, span,
                 $"array and slice elements must be Copy types in v0; '{element}' is not Copy (it has a drop block or contains a move type)");
@@ -1582,7 +1919,7 @@ internal sealed class TypeChecker
     }
 
     /// <summary>False if the type contains a recursive aggregate, which has no layout (N0227 was reported).</summary>
-    private static bool HasLayout(NovaType type) => Flatten(type).All(inner =>
+    private static bool HasLayout(NovaType type) => !type.IsGeneric && Flatten(type).All(inner =>
         inner.Struct is not { IsRecursive: true } && inner.Enum is not { IsRecursive: true }
         && Contained(inner).All(c => HasLayout(c.Type)));
 
@@ -2785,7 +3122,7 @@ internal sealed class TypeChecker
                 }
                 return ErrorResult(literal.Span);
             }
-            entry = InstantiateStruct(entry, found);
+            entry = InstantiateStruct(entry, found, literal.Span);
         }
         else if (!literal.TypeArguments.IsEmpty)
         {
@@ -3170,7 +3507,7 @@ internal sealed class TypeChecker
                 }
                 return ErrorResult(span);
             }
-            entry = InstantiateEnum(entry, found);
+            entry = InstantiateEnum(entry, found, span);
         }
         else if (!typeArguments.IsDefaultOrEmpty)
         {
@@ -3300,18 +3637,21 @@ internal sealed class TypeChecker
         {
             return CheckArenaMethod(call, member, receiver);
         }
-        if (structType.Struct is not { } definition)
+        // Own methods, `impl` methods, or a type parameter's bound methods (§21).
+        if (FindMethod(structType, member.Member.Name, member.Member.Span) is not { } function)
         {
-            Error(DiagnosticCodes.NotAStruct, member.Member.Span,
-                $"type '{structType}' has no methods; '{Name(member.Member.Name)}' cannot be called on it");
-            CheckArgumentsLoosely(call);
-            return ErrorResult(call.Span);
-        }
-        if (!definition.Functions.TryGetValue(member.Member.Name, out var function))
-        {
-            Error(DiagnosticCodes.UndefinedName, member.Member.Span, definition.FindField(member.Member.Name) is not null
-                ? $"'{receiver.Type}.{Name(member.Member.Name)}' is a field, not a function"
-                : $"'{receiver.Type}' has no method named '{Name(member.Member.Name)}'");
+            if (structType.Struct is { } definition)
+            {
+                Error(DiagnosticCodes.UndefinedName, member.Member.Span, definition.FindField(member.Member.Name) is not null
+                    ? $"'{receiver.Type}.{Name(member.Member.Name)}' is a field, not a function"
+                    : $"'{receiver.Type}' has no method named '{Name(member.Member.Name)}'");
+            }
+            else
+            {
+                Error(DiagnosticCodes.NotAStruct, member.Member.Span, structType.Kind == TypeKind.TypeParameter
+                    ? $"type '{structType}' has no methods; '{Name(member.Member.Name)}' needs a bound that declares it ('{structType}: Interface')"
+                    : $"type '{structType}' has no methods; '{Name(member.Member.Name)}' cannot be called on it");
+            }
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
         }

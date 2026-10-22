@@ -72,3 +72,26 @@ to 200 attempts. The guest sweep confirms the same behaviour with CosmoOS's `mal
 **C2 acceptance is met** on both architectures. Open items, carried forward:
 - real-exhaustion behaviour of userland `malloc` (see "Not in C2");
 - the kernel profile's allocator (C5).
+
+## Parallels mode (added 2026-10-22, during M6b)
+
+`c2.py --arch aarch64 --parallels "CosmoOS 1.0.7"` runs the same checks in an already running
+CosmoOS VM in Parallels Desktop, instead of a fresh QEMU boot:
+- the ELFs are served over HTTP from the host (on the VM's shared network, host address
+  `10.211.55.2`);
+- the guest's busybox `wget` fetches them into `/tmp/nova` (a ramfs), and the checks run
+  through the VM's serial socket (`prlctl` `serial0` in socket server mode);
+- nothing else in the VM changes, and there is no shutdown check;
+- the same corpus and sweep checks apply. The VM's busybox shell reports `Aborted` after an
+  abort, which the checker ignores like CosmoOS's own `abort()` note.
+
+Facts recorded on 2026-10-22: the VM named "CosmoOS 1.0.7" reports
+`Linux cosmo 6.0.0-cosmo CosmoOS 0.0.1 v1.0.10 aarch64` (`uname -a`), so its name probably
+predates an upgrade (inferred). The Nova ELFs, built against CosmoOS `c4ac584b`'s libc, ran
+unchanged.
+
+| Run | Result | Wall time |
+|---|---|---|
+| Parallels VM, aarch64 (M6b corpus) | 120/120 programs, 179/179 sweep runs | 76 s, against about 15 min per arch in QEMU TCG |
+
+x86-64 has no Parallels VM on this host, so it still runs in QEMU.
