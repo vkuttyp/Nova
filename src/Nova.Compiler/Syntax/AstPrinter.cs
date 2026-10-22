@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
 
@@ -62,7 +63,7 @@ public sealed class AstPrinter
                 PrintFunction(fn);
                 break;
             case StructDecl s:
-                Line($"(struct {visibility} {Name(s.Name)}");
+                Line($"(struct {visibility} {Name(s.Name)}{TypeParams(s.TypeParameters)}");
                 _indent++;
                 foreach (var field in s.Fields)
                 {
@@ -84,7 +85,7 @@ public sealed class AstPrinter
                 Line(")");
                 break;
             case EnumDecl e:
-                Line($"(enum {visibility} {Name(e.Name)}");
+                Line($"(enum {visibility} {Name(e.Name)}{TypeParams(e.TypeParameters)}");
                 _indent++;
                 foreach (var variant in e.Variants)
                 {
@@ -116,7 +117,7 @@ public sealed class AstPrinter
         }
         var parameters = string.Join(" ", parts);
         var returns = fn.ReturnType is null ? "" : $" (returns {Type(fn.ReturnType)})";
-        Line($"(fn {visibility} {Name(fn.Name)} (params{(parameters.Length > 0 ? " " + parameters : "")}){returns}");
+        Line($"(fn {visibility} {Name(fn.Name)}{TypeParams(fn.TypeParameters)} (params{(parameters.Length > 0 ? " " + parameters : "")}){returns}");
         _indent++;
         if (fn.Body is not null)
         {
@@ -263,8 +264,8 @@ public sealed class AstPrinter
         MutArgExpr m => $"(mut-arg {Expr(m.Operand)})",
         MoveExpr m => $"(move {Expr(m.Operand)})",
         StructLiteralExpr s => s.Fields.IsEmpty
-            ? $"(new {Name(s.TypeName)})"
-            : $"(new {Name(s.TypeName)} {string.Join(" ", s.Fields.Select(f => $"({Name(f.Name)} {Expr(f.Value)})"))})",
+            ? $"(new {Name(s.TypeName)}{TypeArgs(s.TypeArguments)})"
+            : $"(new {Name(s.TypeName)}{TypeArgs(s.TypeArguments)} {string.Join(" ", s.Fields.Select(f => $"({Name(f.Name)} {Expr(f.Value)})"))})",
         ArrayLiteralExpr a => $"(array {string.Join(" ", a.Elements.Select(Expr))})",
         ArrayRepeatExpr a => $"(array-repeat {Expr(a.Value)} {Expr(a.Count)})",
         TryExpr t => $"(try {Expr(t.Operand)})",
@@ -294,6 +295,15 @@ public sealed class AstPrinter
     };
 
     private string Name(Identifier id) => _symbols.GetName(id.Name);
+
+    private string TypeArgs(ImmutableArray<TypeSyntax> arguments) =>
+        arguments.IsEmpty ? "" : "<" + string.Join(" ", arguments.Select(Type)) + ">";
+
+    /// <summary>` (type-params T (U I J))` for generic declarations; empty otherwise.</summary>
+    private string TypeParams(ImmutableArray<TypeParameter> parameters) => parameters.IsEmpty ? "" :
+        " (type-params " + string.Join(" ", parameters.Select(p => p.Bounds.IsEmpty
+            ? Name(p.Name)
+            : $"({Name(p.Name)} {string.Join(" ", p.Bounds.Select(Type))})")) + ")";
 
     private string Name(QualifiedName name) => string.Join(".", name.Parts.Select(Name));
 

@@ -237,6 +237,7 @@ public sealed class Parser
     {
         Expect(TokenKind.FnKeyword);
         var name = ParseIdentifier();
+        var typeParameters = ParseTypeParameters();
 
         Expect(TokenKind.OpenParen);
         Receiver? receiver = null;
@@ -290,7 +291,10 @@ public sealed class Parser
             expressionBody = new ErrorExpr(new TextSpan(Current.Span.Start, 0));
         }
 
-        return new FunctionDecl(visibility, name, receiver, parameters.ToImmutable(), returnType, body, expressionBody, SpanFrom(start));
+        return new FunctionDecl(visibility, name, receiver, parameters.ToImmutable(), returnType, body, expressionBody, SpanFrom(start))
+        {
+            TypeParameters = typeParameters,
+        };
     }
 
     private Visibility ParseVisibility()
@@ -313,6 +317,7 @@ public sealed class Parser
     {
         Expect(TokenKind.StructKeyword);
         var name = ParseIdentifier();
+        var typeParameters = ParseTypeParameters();
         var fields = ImmutableArray.CreateBuilder<FieldDecl>();
         var functions = ImmutableArray.CreateBuilder<FunctionDecl>();
         DropBlock? drop = null;
@@ -366,13 +371,18 @@ public sealed class Parser
             }
         }
         Expect(TokenKind.CloseBrace);
-        return new StructDecl(visibility, name, fields.ToImmutable(), functions.ToImmutable(), SpanFrom(start)) { Drop = drop };
+        return new StructDecl(visibility, name, fields.ToImmutable(), functions.ToImmutable(), SpanFrom(start))
+        {
+            Drop = drop,
+            TypeParameters = typeParameters,
+        };
     }
 
     private EnumDecl ParseEnum(Visibility visibility, int start)
     {
         Expect(TokenKind.EnumKeyword);
         var name = ParseIdentifier();
+        var typeParameters = ParseTypeParameters();
         var variants = ImmutableArray.CreateBuilder<VariantDecl>();
         Expect(TokenKind.OpenBrace);
         while (At(TokenKind.Identifier))
@@ -399,7 +409,7 @@ public sealed class Parser
             }
         }
         Expect(TokenKind.CloseBrace);
-        return new EnumDecl(visibility, name, variants.ToImmutable(), SpanFrom(start));
+        return new EnumDecl(visibility, name, variants.ToImmutable(), SpanFrom(start)) { TypeParameters = typeParameters };
     }
 
     /// <summary>Recovery inside a struct body (grammar.md §3): skip to the next member start or the closing brace.</summary>
@@ -1037,9 +1047,9 @@ public sealed class Parser
             {
                 var name = ParseIdentifier();
                 var typeArguments = IsGenericArgumentListAhead() ? ParseGenericArguments() : [];
-                if (typeArguments.IsEmpty && At(TokenKind.OpenBrace))
+                if (At(TokenKind.OpenBrace))
                 {
-                    return ParseStructLiteral(name, token.Span.Start);
+                    return ParseStructLiteral(name, token.Span.Start) with { TypeArguments = typeArguments };
                 }
                 return new NameExpr(name, typeArguments, SpanFrom(token.Span.Start));
             }
@@ -1136,25 +1146,59 @@ public sealed class Parser
         {
             return false;
         }
-        var i = 1;
-        while (true)
+        // Only tokens that can appear in types, with balanced '<' '>' and '[' ']' (§20.2).
+        var depth = 0;
+        for (var i = 0; ; i++)
         {
-            if (Peek(i).Kind != TokenKind.Identifier)
+            switch (Peek(i).Kind)
             {
-                return false;
+                case TokenKind.Less or TokenKind.OpenBracket:
+                    depth++;
+                    break;
+                case TokenKind.Greater or TokenKind.CloseBracket:
+                    depth--;
+                    if (depth == 0)
+                    {
+                        // Then a call, a member (`Pair<i32>.make`) or a literal (`Pair<u8> { … }`).
+                        return Peek(i).Kind == TokenKind.Greater
+                               && Peek(i + 1).Kind is TokenKind.OpenParen or TokenKind.Dot or TokenKind.OpenBrace;
+                    }
+                    break;
+                case TokenKind.Identifier or TokenKind.Dot or TokenKind.Comma or TokenKind.Semicolon or TokenKind.IntLiteral
+                    or TokenKind.BorrowKeyword or TokenKind.MutKeyword:
+                    break;
+                default:
+                    return false;
             }
-            i++;
-            while (Peek(i).Kind == TokenKind.Dot && Peek(i + 1).Kind == TokenKind.Identifier)
-            {
-                i += 2;
-            }
-            if (Peek(i).Kind == TokenKind.Comma)
-            {
-                i++;
-                continue;
-            }
-            return Peek(i).Kind == TokenKind.Greater && Peek(i + 1).Kind == TokenKind.OpenParen;
         }
+    }
+
+    /// <summary><c>'&lt;' T (':' Bound ('+' Bound)*)? (',' …)* '&gt;'</c> after a declaration's name (§20.1, §21).</summary>
+    private ImmutableArray<TypeParameter> ParseTypeParameters()
+    {
+        if (!Eat(TokenKind.Less))
+        {
+            return [];
+        }
+        var parameters = ImmutableArray.CreateBuilder<TypeParameter>();
+        do
+        {
+            var start = Current.Span.Start;
+            var name = ParseIdentifier();
+            var bounds = ImmutableArray.CreateBuilder<TypeSyntax>();
+            if (Eat(TokenKind.Colon))
+            {
+                do
+                {
+                    bounds.Add(ParseType());
+                }
+                while (Eat(TokenKind.Plus));
+            }
+            parameters.Add(new TypeParameter(name, bounds.ToImmutable(), SpanFrom(start)));
+        }
+        while (Eat(TokenKind.Comma));
+        Expect(TokenKind.Greater);
+        return parameters.ToImmutable();
     }
 
     private ImmutableArray<TypeSyntax> ParseGenericArguments()

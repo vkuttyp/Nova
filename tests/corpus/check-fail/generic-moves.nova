@@ -1,0 +1,27 @@
+// A type parameter is a move type that may need drop: generic code is checked for every T (§20.3).
+struct Pair<T> { first: T; second: T; }
+fn consume<T>(x: T) { }
+
+fn twice<T>(x: T) -> Pair<T> => Pair { first: x, second: x }; // error[N0250]
+
+fn useAfterMove<T>(x: T) {
+    consume(x);
+    consume(x); // error[N0250]
+}
+
+fn moveOutOfBorrow<T>(p: borrow Pair<T>) -> T {
+    return p.first; // error[N0251]
+}
+
+fn borrowConflict<T>(p: Pair<T>) {
+    var q = p;
+    let r = borrow q.first;
+    q.first = q.second; // error[N0250] // error[N0240]
+    let again = r;
+}
+
+// Never instantiated: still checked.
+fn neverUsed<T>(x: T, y: borrow T) -> T {
+    let z = x;
+    return x; // error[N0250]
+}

@@ -94,6 +94,27 @@ public sealed class HirFunction
     /// <summary>The struct this function is declared in, or null for a top-level function.</summary>
     public NovaType? Owner { get; }
 
+    /// <summary>For an instantiated generic function (§20.4): its own type arguments; empty otherwise.</summary>
+    public ImmutableArray<NovaType> TypeArguments { get; internal set; } = [];
+
+    /// <summary>The type parameters in scope (the function's and its owner's), mapped to their types.</summary>
+    internal IReadOnlyDictionary<Symbol, NovaType> Environment { get; set; } = new Dictionary<Symbol, NovaType>();
+
+    /// <summary>
+    /// Generic code (§20.3): a type parameter is in scope unsubstituted. It is checked (types, moves,
+    /// borrows) but never compiled.
+    /// </summary>
+    public bool IsGeneric => Environment.Values.Any(t => t.IsGeneric) || (Owner?.IsGeneric ?? false);
+
+    /// <summary>
+    /// A monomorphised copy of generic code: its generic version was checked (§20.3), so its own checks
+    /// would only repeat those diagnostics.
+    /// </summary>
+    public bool IsInstantiation => Environment.Count > 0 && !IsGeneric;
+
+    /// <summary>How many instantiations led here (§20.4: at most 64).</summary>
+    internal int InstantiationDepth { get; set; }
+
     /// <summary>True for a method: its first parameter is the <c>this</c> receiver (type-system.md §12).</summary>
     public bool IsMethod => Syntax.Receiver is not null && Owner is not null;
 

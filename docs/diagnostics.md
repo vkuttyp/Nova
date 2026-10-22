@@ -146,7 +146,17 @@ references, so the borrow checker reports their conflicts as N0240–N0245.
 | N0261 | `?` in a function that does not return a `Result` with the same error type | `?` on `Result<i32, F>` in a function returning `Result<i32, E>` |
 | N0262 | `?` or `!` on something that is not a `Result` value (a reference to one included) | `n?` with `n: i32` |
 | N0263 | An allocator argument that is not an allocator type (`SystemHeap`, `FailingAllocator`) | `Box<i32, Point>`, `Box.createIn(point, 1)` |
+| N0265 | Type arguments that cannot be inferred: a generic call, struct literal or enum value whose arguments, fields or expected type do not determine every type parameter | `let d = Maybe.Nothing;`, `let e = make();` |
+| N0266 | Generic instantiation nested more than 64 deep (polymorphic recursion) | `fn deep<T>(x: Maybe<T>) { deep(Maybe.Just(x)); }` |
 | N0264 | A type a region cannot hold (R2): one that needs drop, a scoped type, or a non-Copy fill value for `allocArray` | `arena.alloc(Res { id: 1 })`, `arena.alloc(someReference)` |
+
+Generic code (M6a) reuses codes:
+- an operator on a type parameter is N0207, a field or method on one is N0234, and a literal for
+  one is N0205;
+- a generic type without its arguments, or with the wrong number of them, is N0204;
+- a duplicate or shadowing type parameter is N0201;
+- a method with type parameters of its own is N0216;
+- a generic `main` is N0219.
 
 Region values reuse codes:
 - assigning a `using` binding as a whole is N0211;

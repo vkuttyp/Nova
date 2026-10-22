@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
 using Nova.Compiler.Hir;
@@ -61,7 +62,7 @@ public sealed class CEmitter
 
         EmitStructs();
 
-        foreach (var function in _program.Functions)
+        foreach (var function in CompiledFunctions)
         {
             Line($"static NV_UNUSED {Signature(function, withNames: false)};");
         }
@@ -74,7 +75,7 @@ public sealed class CEmitter
         }
         Line();
 
-        foreach (var function in _program.Functions)
+        foreach (var function in CompiledFunctions)
         {
             EmitFunction(function);
             Line();
@@ -230,7 +231,18 @@ public sealed class CEmitter
     /// </summary>
     private static string DropGlueName(NovaType type) => type.Kind == TypeKind.Region
             ? type.Region switch { RegionKind.Arena => "nova_arena_drop", RegionKind.Pool => "nova_pool_drop", _ => "nova_scratch_drop" }
-        : type.Enum?.ResultTypes is not null || type.IsBox ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
+        : type.Enum?.ResultTypes is not null || type.IsBox || IsInstance(type) ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
+
+    /// <summary>An instantiation of a generic struct or enum (§20.4); its C names come from <see cref="Mangle"/>.</summary>
+    private static bool IsInstance(NovaType type) =>
+        !(type.Struct?.TypeArguments.IsEmpty ?? true) || !(type.Enum?.TypeArguments.IsEmpty ?? true);
+
+    /// <summary>The declared name of a struct or enum (an instantiation's name is <c>Base&lt;Args&gt;</c>).</summary>
+    private static string BaseName(NovaType type) => type.Name.IndexOf('<', StringComparison.Ordinal) is var i and >= 0 ? type.Name[..i] : type.Name;
+
+    /// <summary>The mangled type arguments of an instantiation: their count, then each (prefix-free) code.</summary>
+    private static string MangledArguments(ImmutableArray<NovaType> arguments) =>
+        arguments.Length.ToString(CultureInfo.InvariantCulture) + string.Concat(arguments.Select(Mangle));
 
     /// <summary>
     /// Does destroying a <paramref name="type"/> end, as its last step, in destroying a <paramref name="box"/>?
@@ -309,7 +321,7 @@ public sealed class CEmitter
     /// The <c>Result&lt;borrow mut T, AllocError&gt;</c> and <c>Result&lt;SliceMut&lt;T&gt;, AllocError&gt;</c> types
     /// that arena allocation produces (§19.2), in creation order.
     /// </summary>
-    private IEnumerable<NovaType> ArenaResults => _types.Composites.Where(t =>
+    private IEnumerable<NovaType> ArenaResults => Composites.Where(t =>
         t.Enum?.ResultTypes is ({ IsMutableReference: true, Pointee.Kind: not TypeKind.Region }, { Name: "AllocError" }));
 
     private static string ArenaHelperName(NovaType result)
@@ -319,7 +331,7 @@ public sealed class CEmitter
     }
 
     /// <summary>The <c>Result&lt;PoolBox&lt;T&gt;, AllocError&gt;</c> types that <c>pool.take</c> produces (§19.6).</summary>
-    private IEnumerable<NovaType> PoolTakeResults => _types.Composites.Where(t => t.Enum?.ResultTypes is ({ IsPoolBox: true }, { Name: "AllocError" }));
+    private IEnumerable<NovaType> PoolTakeResults => Composites.Where(t => t.Enum?.ResultTypes is ({ IsPoolBox: true }, { Name: "AllocError" }));
 
     private static string PoolTakeSignature(NovaType result)
     {
@@ -419,7 +431,7 @@ public sealed class CEmitter
         allocator.Name == "FailingAllocator" ? "NV_ALLOC_FAILING" : "NV_ALLOC_SYSTEM";
 
     /// <summary>The <c>Result&lt;Box&lt;T, A&gt;, AllocError&gt;</c> types that <c>Box.create</c> produces, in creation order.</summary>
-    private IEnumerable<NovaType> BoxCreateResults => _types.Composites.Where(t => t.Enum?.ResultTypes is ({ IsBox: true, IsPoolBox: false }, { Name: "AllocError" }));
+    private IEnumerable<NovaType> BoxCreateResults => Composites.Where(t => t.Enum?.ResultTypes is ({ IsBox: true, IsPoolBox: false }, { Name: "AllocError" }));
 
     private static string BoxCreateName(NovaType result) => $"nvB_{Mangle(result.Enum!.ResultTypes!.Value.Ok)}";
 
@@ -462,7 +474,10 @@ public sealed class CEmitter
     }
 
     /// <summary>User structs and enums, then the built-in instantiations, in a deterministic order.</summary>
-    private IEnumerable<NovaType> Aggregates => _program.Structs.Concat(_types.Composites);
+    private IEnumerable<NovaType> Aggregates => _program.Structs.Concat(Composites);
+
+    /// <summary>The built-in instantiations (arrays, slices, results, boxes) that generic code does not mention.</summary>
+    private IEnumerable<NovaType> Composites => _types.Composites.Where(t => !t.IsGeneric);
 
     private void EmitDropGluePrototypes()
     {
@@ -560,9 +575,21 @@ public sealed class CEmitter
     /// Top-level functions are <c>nv_name</c>; struct members are <c>nvM_&lt;length&gt;&lt;Struct&gt;_name</c>.
     /// The length prefix makes the struct/member boundary unambiguous, so the names cannot collide.
     /// </summary>
+    /// <remarks>
+    /// Instantiations (§20.4): members of a generic struct's instance are <c>nvM_&lt;mangled owner&gt;_name</c>
+    /// (the code starts with a letter, so it cannot collide with the length-prefixed form); a generic
+    /// function's instance is <c>nvG_&lt;length&gt;&lt;name&gt;&lt;mangled arguments&gt;</c>.
+    /// </remarks>
     private string FunctionName(HirFunction function) => function.Owner is { } owner
-        ? $"nvM_{owner.Name.Length}{owner.Name}_{_symbols.GetName(function.Name)}"
-        : "nv_" + _symbols.GetName(function.Name);
+        ? IsInstance(owner)
+            ? $"nvM_{Mangle(owner)}_{_symbols.GetName(function.Name)}"
+            : $"nvM_{owner.Name.Length}{owner.Name}_{_symbols.GetName(function.Name)}"
+        : function.TypeArguments.IsEmpty
+            ? "nv_" + _symbols.GetName(function.Name)
+            : $"nvG_{_symbols.GetName(function.Name).Length}{_symbols.GetName(function.Name)}{MangledArguments(function.TypeArguments)}";
+
+    /// <summary>The functions compiled to C: everything but generic versions (§20.3).</summary>
+    private IEnumerable<NirFunction> CompiledFunctions => _program.Functions.Where(f => !f.Source.IsGeneric);
 
     private string Signature(NirFunction function, bool withNames)
     {
@@ -925,8 +952,10 @@ public sealed class CEmitter
         TypeKind.Bool => "bool",
         TypeKind.Void => "void",
         TypeKind.Integer => $"{(type.IsSigned ? "int" : "uint")}{type.Bits}_t",
+        TypeKind.Struct when IsInstance(type) => $"nvT_{Mangle(type)[1..]}",
         TypeKind.Struct => $"nvT_{type.Name}",
         TypeKind.Enum when type.Enum!.ResultTypes is not null => $"nvR_{Mangle(type)[1..]}",
+        TypeKind.Enum when IsInstance(type) => $"nvE_{Mangle(type)[1..]}",
         TypeKind.Enum => $"nvE_{type.Name}",
         TypeKind.Reference when type.IsSlice => $"nvS{(type.IsMutableReference ? "m" : "l")}_{Mangle(type.Pointee!.Element!)}",
         // A shared reference to a box is a pointer to a const pointer (`T *const *`), not to a const T.
@@ -955,8 +984,10 @@ public sealed class CEmitter
     /// </summary>
     private static string Mangle(NovaType type) => type.Kind switch
     {
+        TypeKind.Struct when IsInstance(type) => $"S{BaseName(type).Length}{BaseName(type)}{MangledArguments(type.Struct!.TypeArguments)}",
         TypeKind.Struct => $"S{type.Name.Length}{type.Name}",
         TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => $"R{Mangle(ok)}{Mangle(err)}",
+        TypeKind.Enum when IsInstance(type) => $"E{BaseName(type).Length}{BaseName(type)}{MangledArguments(type.Enum!.TypeArguments)}",
         TypeKind.Enum => $"E{type.Name.Length}{type.Name}",
         TypeKind.Array when type.IsUnsized => $"U{Mangle(type.Element!)}",
         TypeKind.Array => $"A{type.ArrayLength}_{Mangle(type.Element!)}",

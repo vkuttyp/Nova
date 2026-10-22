@@ -86,16 +86,18 @@ NamespaceDecl   = 'namespace' QualifiedName ';'
 QualifiedName   = Identifier ('.' Identifier)*
 
 Item       = Visibility? (FunctionDecl | ConstDecl | StructDecl | EnumDecl)
-EnumDecl   = 'enum' Identifier '{' (Variant (',' Variant)* ','?)? '}'        (* M2d *)
+TypeParams = '<' TypeParam (',' TypeParam)* '>'               (* M6a; type-system.md §20 *)
+TypeParam  = Identifier (':' Type ('+' Type)*)?                (* bounds: M6b *)
+EnumDecl   = 'enum' Identifier TypeParams? '{' (Variant (',' Variant)* ','?)? '}'        (* M2d *)
 Variant    = Identifier ('(' Type (',' Type)* ','? ')')?
 Visibility = 'public' | 'internal' | 'private'
 
-FunctionDecl = 'fn' Identifier '(' ParamList? ')' ('->' Type)? FunctionBody
+FunctionDecl = 'fn' Identifier TypeParams? '(' ParamList? ')' ('->' Type)? FunctionBody
 ParamList    = (Receiver | Param) (',' Param)* ','?
 Receiver     = ('borrow' 'mut'?)? 'this'   (* M2a: by value; M2b: reference receivers *)
 Param        = Identifier ':' Type
 
-StructDecl   = 'struct' Identifier '{' Member* '}'          (* M2a *)
+StructDecl   = 'struct' Identifier TypeParams? '{' Member* '}'          (* M2a; TypeParams M6a *)
 Member       = Visibility? (FieldDecl | FunctionDecl) | DropBlock
 DropBlock    = 'drop' Block                (* M2c *)
 FieldDecl    = Identifier ':' Type ';'
@@ -108,6 +110,7 @@ Type = QualifiedName
      | '[' Type ';' IntLiteral ']'             (* M2d fixed array *)
      | ('Slice' | 'SliceMut') '<' Type '>'     (* M2d slices *)
      | 'Result' '<' Type ',' Type '>'          (* M3a; type-system.md §17 *)
+     | Identifier '<' Type (',' Type)* '>'     (* M6a: an instantiation of a generic struct or enum; also Box, Pool, … *)
 Sources = '(' Identifier (',' Identifier)* ')'
 
 Block = '{' Statement* '}'
@@ -164,11 +167,11 @@ The ordering puts bitwise operators **above** comparisons (as in Rust and Swift)
 ```
 Primary = IntLiteral | FloatLiteral | StringLiteral | CharLiteral | 'true' | 'false'
         | Identifier GenericArgs? | '(' Expr ')' | 'this'
-        | Identifier '{' FieldInits? '}'                    (* struct literal, M2a *)
+        | Identifier GenericArgs? '{' FieldInits? '}'       (* struct literal, M2a; GenericArgs M6a *)
         | '[' Expr (',' Expr)* ','? ']' | '[' Expr ';' IntLiteral ']'   (* array literals, M2d *)
 FieldInits = FieldInit (',' FieldInit)* ','?
 FieldInit  = Identifier ':' Expr
-GenericArgs = '<' Type (',' Type)* '>'      (* only when followed by '(' — see below *)
+GenericArgs = '<' Type (',' Type)* '>'      (* only when followed by '(', '.' or '{' — see below *)
 Postfix = Primary ( '(' ArgList? ')' | '.' Identifier | '[' IndexOrRange ']'
                   | '?' | '!' )*                     (* M3a: propagate / unwrap a Result *)
 IndexOrRange = Expr | Expr? '..' Expr?               (* M2d: element or slice *)
@@ -176,10 +179,11 @@ ArgList = Arg (',' Arg)* ','?
 Arg     = 'mut' Expr | Expr                (* `mut x` for a `borrow mut` parameter, M2b *)
 ```
 
-**Generic arguments in expressions** (needed for `truncate<i64>(x)`): after an
-identifier, if the tokens form `'<' QualifiedName (',' QualifiedName)* '>' '('`,
-they are parsed as generic arguments. Otherwise `<` is the less-than operator.
-`f<T>(x)` is always a generic call. Write `(f < T) > (x)` to mean the comparison.
+**Generic arguments in expressions** (`truncate<i64>(x)`, and since M6a `id<i32>(x)`,
+`Pair<u8>.make()` and `Pair<u8> { … }`): after an identifier, `<` starts generic arguments if the
+tokens up to the matching `>` can only form types (identifiers, `.`, `,`, `;`, integer literals,
+`borrow`, `mut`, and balanced `<…>` and `[…]`) and the `>` is followed by `(`, `.` or `{`.
+Otherwise `<` is the less-than operator. Write `(f < T) > (x)` to mean the comparison.
 
 **Struct literals** (M2a): in expression position, an identifier *immediately followed by `{`* is
 a struct literal. This is unambiguous in Nova because every `{` that opens a block follows a

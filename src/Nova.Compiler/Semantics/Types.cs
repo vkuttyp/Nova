@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Numerics;
 using Nova.Compiler.Hir;
 using Nova.Compiler.Syntax;
@@ -44,6 +45,8 @@ public enum TypeKind
     Box,
     /// <summary>A built-in region type (type-system.md §19): <see cref="NovaType.Region"/> says which.</summary>
     Region,
+    /// <summary>A type parameter inside a generic declaration (type-system.md §20.3): opaque.</summary>
+    TypeParameter,
 }
 
 /// <summary>The built-in region types (ADR 0004).</summary>
@@ -171,6 +174,9 @@ public sealed class EnumDefinition
     /// <summary>For <c>Result&lt;T, E&gt;</c> (type-system.md §17): T and E. Null for user enums.</summary>
     public (NovaType Ok, NovaType Err)? ResultTypes { get; internal set; }
 
+    /// <summary>For an instantiation of a generic enum (§20.4): its type arguments; empty otherwise.</summary>
+    public ImmutableArray<NovaType> TypeArguments { get; internal set; } = [];
+
     public List<EnumVariant> Variants { get; } = [];
 
     public bool IsCopy { get; internal set; } = true;
@@ -203,6 +209,9 @@ public sealed class StructDefinition
 
     /// <summary>Methods and static functions, by name.</summary>
     public Dictionary<Symbol, HirFunction> Functions { get; } = [];
+
+    /// <summary>For an instantiation of a generic struct (§20.4): its type arguments; empty otherwise.</summary>
+    public ImmutableArray<NovaType> TypeArguments { get; internal set; } = [];
 
     /// <summary>Set if the struct contains itself by value (N0227); such a struct has no layout.</summary>
     public bool IsRecursive { get; internal set; }
@@ -246,6 +255,12 @@ public sealed class NovaType
         IsMutableReference = isMutable;
     }
 
+    /// <summary>A type parameter (§20.3).</summary>
+    internal NovaType(string name)
+        : this(TypeKind.TypeParameter, name)
+    {
+    }
+
     internal NovaType(RegionKind region, string name, NovaType? element = null)
         : this(TypeKind.Region, name)
     {
@@ -283,6 +298,11 @@ public sealed class NovaType
 
     public TypeKind Kind { get; }
 
+    private static int s_nextId;
+
+    /// <summary>A unique number per type object: types compare by reference, and this keys caches by identity.</summary>
+    public int Id { get; } = Interlocked.Increment(ref s_nextId);
+
     /// <summary>The definition of a struct type; null for every other kind.</summary>
     public StructDefinition? Struct { get; }
 
@@ -308,6 +328,16 @@ public sealed class NovaType
     public NovaType? Allocator { get; }
 
     public bool IsBox => Kind == TypeKind.Box;
+
+    /// <summary>
+    /// Does the type mention a type parameter (§20.3)? Such types belong to generic code, which is
+    /// checked but never compiled to C.
+    /// </summary>
+    public bool IsGeneric => Kind == TypeKind.TypeParameter
+        || (Pointee?.IsGeneric ?? false) || (Element?.IsGeneric ?? false)
+        || (Struct?.TypeArguments.Any(a => a.IsGeneric) ?? false)
+        || (Enum?.TypeArguments.Any(a => a.IsGeneric) ?? false)
+        || (Enum?.ResultTypes is var (ok, err) && (ok.IsGeneric || err.IsGeneric));
 
     /// <summary><c>PoolBox&lt;T&gt;</c> (type-system.md §19.6): a box whose allocator is a pool; scoped.</summary>
     public bool IsPoolBox => Kind == TypeKind.Box && Allocator!.Region == RegionKind.Pool;
@@ -401,6 +431,9 @@ public sealed class TypeTable
 
     public static NovaType CreateStruct(string name, StructDecl syntax, SourceText source) =>
         new(name, new StructDefinition(syntax, source));
+
+    /// <summary>A fresh type parameter (each declaration's parameters are distinct types).</summary>
+    public static NovaType CreateTypeParameter(string name) => new(name);
 
     public static NovaType CreateEnum(string name, EnumDecl syntax, SourceText source) =>
         new(name, new EnumDefinition(syntax, source));
@@ -635,6 +668,7 @@ public sealed class TypeTable
         ArgumentNullException.ThrowIfNull(type);
         return type.Kind switch
         {
+            TypeKind.TypeParameter => false, // a move type (§20.3)
             TypeKind.Struct => type.Struct!.IsCopy,
             TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => IsCopy(ok) && IsCopy(err),
             TypeKind.Enum => type.Enum!.IsCopy,
@@ -647,7 +681,7 @@ public sealed class TypeTable
     public static bool NeedsDrop(NovaType type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        if (type.IsBox || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
+        if (type.IsBox || type.Kind == TypeKind.TypeParameter || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
         {
             return true;
         }

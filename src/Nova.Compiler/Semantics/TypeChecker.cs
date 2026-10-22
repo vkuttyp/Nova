@@ -28,18 +28,40 @@ internal sealed class TypeChecker
         public ConstState State { get; set; }
     }
 
+    /// <summary>
+    /// A struct, or one instantiation of a generic struct (§20). For a generic declaration the entry in
+    /// <c>_items</c> is its own generic instance (type parameters as arguments), whose
+    /// <see cref="Instances"/> cache the others.
+    /// </summary>
     private sealed class StructEntry(StructDecl decl, SourceText source, NovaType type)
     {
         public StructDecl Decl { get; } = decl;
         public SourceText Source { get; } = source;
         public NovaType Type { get; } = type;
+        public IReadOnlyDictionary<Symbol, NovaType> Environment { get; init; } = new Dictionary<Symbol, NovaType>();
+        public StructEntry? Template { get; init; }
+        public Dictionary<string, StructEntry> Instances { get; } = [];
     }
 
+    /// <summary>An enum, or one instantiation of a generic enum (as <see cref="StructEntry"/>).</summary>
     private sealed class EnumEntry(EnumDecl decl, SourceText source, NovaType type)
     {
         public EnumDecl Decl { get; } = decl;
         public SourceText Source { get; } = source;
         public NovaType Type { get; } = type;
+        public IReadOnlyDictionary<Symbol, NovaType> Environment { get; init; } = new Dictionary<Symbol, NovaType>();
+        public EnumEntry? Template { get; init; }
+        public Dictionary<string, EnumEntry> Instances { get; } = [];
+    }
+
+    /// <summary>A generic function (§20): its generic version, and its instantiations by type arguments.</summary>
+    private sealed class GenericFunctionEntry(FunctionDecl decl, SourceText source)
+    {
+        public FunctionDecl Decl { get; } = decl;
+        public SourceText Source { get; } = source;
+        public HirFunction Generic { get; set; } = null!;
+        public ImmutableArray<NovaType> Parameters { get; set; } = [];
+        public Dictionary<string, HirFunction> Instances { get; } = [];
     }
 
     private enum Builtin
@@ -57,7 +79,11 @@ internal sealed class TypeChecker
     private readonly IReadOnlyList<CompilationUnit> _units;
     private readonly SymbolTable _symbols;
     private readonly TypeTable _types;
-    private readonly DiagnosticBag _diagnostics;
+    private DiagnosticBag _diagnostics;
+    /// <summary>Type parameters in scope while resolving types (§20): the current declaration's substitution.</summary>
+    private IReadOnlyDictionary<Symbol, NovaType> _typeEnvironment = new Dictionary<Symbol, NovaType>();
+    /// <summary>Set once every item is declared and every member resolved; later instantiations resolve at once.</summary>
+    private bool _membersResolved;
 
     private readonly Dictionary<Symbol, object> _items = [];
     private readonly Dictionary<Symbol, Builtin> _builtins;
@@ -140,14 +166,19 @@ internal sealed class TypeChecker
                 Declare(item);
             }
         }
-        foreach (var entry in _structs)
+        // Instantiations made while resolving members are resolved too (§20.4).
+        for (int s = 0, e = 0; s < _structs.Count || e < _enums.Count;)
         {
-            ResolveStructMembers(entry);
+            for (; s < _structs.Count; s++)
+            {
+                ResolveStructMembers(_structs[s]);
+            }
+            for (; e < _enums.Count; e++)
+            {
+                ResolveEnumVariants(_enums[e]);
+            }
         }
-        foreach (var entry in _enums)
-        {
-            ResolveEnumVariants(entry);
-        }
+        _membersResolved = true;
         CheckStructRecursion();
         ComputeCopyAndDrop();
         _copyKnown = true;
@@ -162,16 +193,27 @@ internal sealed class TypeChecker
             EvaluateConstant(constant);
         }
 
-        foreach (var function in _functions)
+        // Instantiations made while checking bodies are checked too.
+        for (var i = 0; i < _functions.Count; i++)
         {
-            CheckFunctionBody(function);
+            var function = _functions[i];
+            if (function.IsInstantiation)
+            {
+                Quietly(() => { CheckFunctionBody(function); return 0; }); // its generic version reports (§20.3)
+            }
+            else
+            {
+                CheckFunctionBody(function);
+            }
         }
 
         CheckMain();
         // Built-in items are emitted only if the program uses them.
         bool Emitted(object entry) => !_builtinItems.Contains(entry) || _usedBuiltins.Contains(entry);
+        // Generic types (with type parameters unsubstituted) are checked but never emitted (§20.3).
         return new HirProgram([.. _functions], [.. _constants.Select(c => c.Hir)],
-            [.. _structs.Where(Emitted).Select(s => s.Type), .. _enums.Where(Emitted).Select(e => e.Type)]);
+            [.. _structs.Where(Emitted).Select(s => s.Type).Where(t => !t.IsGeneric),
+             .. _enums.Where(Emitted).Select(e => e.Type).Where(t => !t.IsGeneric)]);
     }
 
     private string Name(Symbol symbol) => _symbols.GetName(symbol);
@@ -246,6 +288,16 @@ internal sealed class TypeChecker
                     Error(DiagnosticCodes.ThisOutsideMethod, fn.Receiver.Span,
                         "'this' parameters are only allowed in functions declared inside a struct");
                 }
+                if (!fn.TypeParameters.IsEmpty)
+                {
+                    // Checked once with opaque type parameters; instantiated on use (§20).
+                    var generic = new GenericFunctionEntry(fn, _source);
+                    var (parameters, environment) = DeclareTypeParameters(fn.TypeParameters, new Dictionary<Symbol, NovaType>());
+                    generic.Parameters = parameters;
+                    generic.Generic = DeclareFunction(fn, owner: null, environment);
+                    _items.Add(name, generic);
+                    break;
+                }
                 _items.Add(name, DeclareFunction(fn, owner: null));
                 break;
             }
@@ -271,10 +323,30 @@ internal sealed class TypeChecker
     }
 
     /// <summary>Creates the HIR function for a top-level function or a struct member, resolving its signature.</summary>
-    private HirFunction DeclareFunction(FunctionDecl fn, NovaType? owner)
+    private HirFunction DeclareFunction(FunctionDecl fn, NovaType? owner, IReadOnlyDictionary<Symbol, NovaType>? environment = null)
     {
+        var savedEnvironment = _typeEnvironment;
+        _typeEnvironment = environment ?? new Dictionary<Symbol, NovaType>();
+        try
+        {
+            return DeclareFunctionCore(fn, owner);
+        }
+        finally
+        {
+            _typeEnvironment = savedEnvironment;
+        }
+    }
+
+    private HirFunction DeclareFunctionCore(FunctionDecl fn, NovaType? owner)
+    {
+        if (owner is not null && !fn.TypeParameters.IsEmpty)
+        {
+            Error(DiagnosticCodes.Unsupported, fn.TypeParameters[0].Span,
+                "methods cannot declare type parameters of their own in v0; use the struct's, or a top-level generic function");
+            _typeEnvironment = DeclareTypeParameters(fn.TypeParameters, _typeEnvironment).Environment; // no cascade of unknown types
+        }
         var returnType = fn.ReturnType is null ? _types.Void : ResolveType(fn.ReturnType, allowVoid: true, allowSources: true);
-        var hir = new HirFunction(_functions.Count, fn.Name.Name, returnType, _source, fn, owner);
+        var hir = new HirFunction(_functions.Count, fn.Name.Name, returnType, _source, fn, owner) { Environment = _typeEnvironment };
         if (owner is not null && fn.Receiver is not null)
         {
             // `this` is an immutable binding: the struct by value, or a reference to it (type-system.md §12, §13.2).
@@ -370,9 +442,159 @@ internal sealed class TypeChecker
             Error(DiagnosticCodes.DuplicateItem, decl.Name.Span, $"'{text}' is already defined");
             return;
         }
+        if (!decl.TypeParameters.IsEmpty)
+        {
+            // The generic version: its own type parameters as arguments (§20.3).
+            var (parameters, environment) = DeclareTypeParameters(decl.TypeParameters, new Dictionary<Symbol, NovaType>());
+            var genericType = TypeTable.CreateStruct($"{text}<{string.Join(", ", parameters)}>", decl, _source);
+            genericType.Struct!.TypeArguments = parameters;
+            var generic = new StructEntry(decl, _source, genericType) { Environment = environment };
+            _items.Add(name, generic);
+            _structs.Add(generic);
+            return;
+        }
         var entry = new StructEntry(decl, _source, TypeTable.CreateStruct(text, decl, _source));
         _items.Add(name, entry);
         _structs.Add(entry);
+    }
+
+    /// <summary>Fresh type parameters for a generic declaration (§20.1), added to <paramref name="outer"/>.</summary>
+    private (ImmutableArray<NovaType> Parameters, Dictionary<Symbol, NovaType> Environment) DeclareTypeParameters(
+        ImmutableArray<TypeParameter> syntax, IReadOnlyDictionary<Symbol, NovaType> outer)
+    {
+        var environment = new Dictionary<Symbol, NovaType>(outer);
+        var parameters = ImmutableArray.CreateBuilder<NovaType>(syntax.Length);
+        foreach (var parameter in syntax)
+        {
+            var text = Name(parameter.Name.Name);
+            if (environment.ContainsKey(parameter.Name.Name) || _types.Lookup(text) is not null || _items.ContainsKey(parameter.Name.Name))
+            {
+                Error(DiagnosticCodes.DuplicateItem, parameter.Name.Span, environment.ContainsKey(parameter.Name.Name)
+                    ? $"type parameter '{text}' is declared twice"
+                    : $"type parameter '{text}' would shadow the type or item '{text}'");
+            }
+            if (!parameter.Bounds.IsEmpty)
+            {
+                Error(DiagnosticCodes.Unsupported, parameter.Bounds[0].Span, "bounds on type parameters come with interfaces (M6b)");
+            }
+            var type = TypeTable.CreateTypeParameter(text);
+            environment[parameter.Name.Name] = type;
+            parameters.Add(type);
+        }
+        return (parameters.MoveToImmutable(), environment);
+    }
+
+    /// <summary>A stable key for a list of types (identity-based: distinct types never share a key).</summary>
+    private static string TypeKey(ImmutableArray<NovaType> types) => string.Join(",", types.Select(t => t.Id));
+
+    /// <summary>
+    /// The instantiation of generic struct <paramref name="template"/> with <paramref name="arguments"/>
+    /// (§20.4). Made once; its members are resolved at once if the declaration phase is over.
+    /// </summary>
+    private StructEntry InstantiateStruct(StructEntry template, ImmutableArray<NovaType> arguments)
+    {
+        if (arguments.SequenceEqual(template.Type.Struct!.TypeArguments))
+        {
+            return template;
+        }
+        var key = TypeKey(arguments);
+        if (template.Instances.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+        var text = Name(template.Decl.Name.Name);
+        var type = TypeTable.CreateStruct($"{text}<{string.Join(", ", arguments)}>", template.Decl, template.Source);
+        type.Struct!.TypeArguments = arguments;
+        var environment = template.Decl.TypeParameters.Zip(arguments).ToDictionary(p => p.First.Name.Name, p => p.Second);
+        var entry = new StructEntry(template.Decl, template.Source, type) { Environment = environment, Template = template };
+        template.Instances.Add(key, entry);
+        _structs.Add(entry);
+        if (_membersResolved)
+        {
+            _instantiating++;
+            ResolveStructMembers(entry);
+            _instantiating--;
+            FinishLateTypes();
+        }
+        return entry;
+    }
+
+    /// <summary>As <see cref="InstantiateStruct"/>, for enums.</summary>
+    private EnumEntry InstantiateEnum(EnumEntry template, ImmutableArray<NovaType> arguments)
+    {
+        if (arguments.SequenceEqual(template.Type.Enum!.TypeArguments))
+        {
+            return template;
+        }
+        var key = TypeKey(arguments);
+        if (template.Instances.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+        var text = Name(template.Decl.Name.Name);
+        var type = TypeTable.CreateEnum($"{text}<{string.Join(", ", arguments)}>", template.Decl, template.Source);
+        type.Enum!.TypeArguments = arguments;
+        var environment = template.Decl.TypeParameters.Zip(arguments).ToDictionary(p => p.First.Name.Name, p => p.Second);
+        var entry = new EnumEntry(template.Decl, template.Source, type) { Environment = environment, Template = template };
+        template.Instances.Add(key, entry);
+        _enums.Add(entry);
+        if (_membersResolved)
+        {
+            _instantiating++;
+            ResolveEnumVariants(entry);
+            _instantiating--;
+            FinishLateTypes();
+        }
+        return entry;
+    }
+
+    /// <summary>Nesting of instantiations whose members are being resolved (nested ones are finished with the outermost).</summary>
+    private int _instantiating;
+
+    /// <summary>
+    /// Recursion, Copy and drop for types instantiated after the declaration phase. Only once the
+    /// outermost instantiation is complete: an outer instance has no fields yet while an inner one is made.
+    /// </summary>
+    private void FinishLateTypes()
+    {
+        if (_copyKnown && _instantiating == 0)
+        {
+            CheckStructRecursion();
+            ComputeCopyAndDrop();
+        }
+    }
+
+    /// <summary>
+    /// The instantiation of generic function <paramref name="entry"/> with <paramref name="arguments"/>
+    /// (§20.4); null after N0266 (instantiation too deep).
+    /// </summary>
+    private HirFunction? InstantiateFunction(GenericFunctionEntry entry, ImmutableArray<NovaType> arguments, TextSpan span)
+    {
+        if (arguments.SequenceEqual(entry.Parameters))
+        {
+            return entry.Generic;
+        }
+        var key = TypeKey(arguments);
+        if (entry.Instances.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+        var depth = (_function?.InstantiationDepth ?? 0) + 1;
+        if (depth > 64)
+        {
+            Error(DiagnosticCodes.InstantiationTooDeep, span,
+                $"instantiating '{Name(entry.Decl.Name.Name)}' here makes more than 64 nested instantiations (polymorphic recursion?)");
+            return null;
+        }
+        var environment = entry.Decl.TypeParameters.Zip(arguments).ToDictionary(p => p.First.Name.Name, p => p.Second);
+        var savedSource = _source;
+        _source = entry.Source;
+        var instance = DeclareFunction(entry.Decl, owner: null, environment);
+        _source = savedSource;
+        instance.TypeArguments = arguments;
+        instance.InstantiationDepth = depth;
+        entry.Instances.Add(key, instance);
+        return instance;
     }
 
     private void DeclareEnum(EnumDecl decl)
@@ -390,12 +612,36 @@ internal sealed class TypeChecker
                 : $"'{text}' is already defined");
             return;
         }
+        if (!decl.TypeParameters.IsEmpty)
+        {
+            var (parameters, environment) = DeclareTypeParameters(decl.TypeParameters, new Dictionary<Symbol, NovaType>());
+            var genericType = TypeTable.CreateEnum($"{text}<{string.Join(", ", parameters)}>", decl, _source);
+            genericType.Enum!.TypeArguments = parameters;
+            var generic = new EnumEntry(decl, _source, genericType) { Environment = environment };
+            _items.Add(name, generic);
+            _enums.Add(generic);
+            return;
+        }
         var entry = new EnumEntry(decl, _source, TypeTable.CreateEnum(text, decl, _source));
         _items.Add(name, entry);
         _enums.Add(entry);
     }
 
     private void ResolveEnumVariants(EnumEntry entry)
+    {
+        var (savedSource, savedEnvironment) = (_source, _typeEnvironment);
+        _typeEnvironment = entry.Environment;
+        try
+        {
+            ResolveEnumVariantsCore(entry);
+        }
+        finally
+        {
+            (_source, _typeEnvironment) = (savedSource, savedEnvironment);
+        }
+    }
+
+    private void ResolveEnumVariantsCore(EnumEntry entry)
     {
         _source = entry.Source;
         var definition = entry.Type.Enum!;
@@ -425,6 +671,20 @@ internal sealed class TypeChecker
 
     private void ResolveStructMembers(StructEntry entry)
     {
+        var (savedSource, savedEnvironment) = (_source, _typeEnvironment);
+        _typeEnvironment = entry.Environment;
+        try
+        {
+            ResolveStructMembersCore(entry);
+        }
+        finally
+        {
+            (_source, _typeEnvironment) = (savedSource, savedEnvironment);
+        }
+    }
+
+    private void ResolveStructMembersCore(StructEntry entry)
+    {
         _source = entry.Source;
         var definition = entry.Type.Struct!;
         var memberNames = new HashSet<Symbol>();
@@ -450,7 +710,7 @@ internal sealed class TypeChecker
             // The drop block is checked as a `borrow mut this` method that user code cannot call.
             var syntax = new FunctionDecl(Visibility.Private, new Identifier(_symbols.Intern("drop"), drop.Span),
                 new Receiver(ReceiverKind.BorrowMut, drop.Span), [], null, drop.Body, null, drop.Span);
-            definition.DropFunction = DeclareFunction(syntax, entry.Type);
+            definition.DropFunction = DeclareFunction(syntax, entry.Type, entry.Environment);
         }
         foreach (var function in entry.Decl.Functions)
         {
@@ -460,7 +720,7 @@ internal sealed class TypeChecker
                     $"'{entry.Type}' already has a member named '{Name(function.Name.Name)}'");
                 continue;
             }
-            definition.Functions.Add(function.Name.Name, DeclareFunction(function, entry.Type));
+            definition.Functions.Add(function.Name.Name, DeclareFunction(function, entry.Type, entry.Environment));
         }
     }
 
@@ -488,9 +748,13 @@ internal sealed class TypeChecker
     private static bool IsAggregate(NovaType type) => type.Kind is TypeKind.Struct or TypeKind.Enum;
 
     /// <summary>An aggregate may not contain itself by value, directly or indirectly (N0227).</summary>
+    // Kept across calls: instantiations made later are checked incrementally (§20.4).
+    private readonly Dictionary<NovaType, int> _recursionState = []; // 1 = on the DFS stack, 2 = finished
+    private readonly HashSet<NovaType> _copyDone = [];
+
     private void CheckStructRecursion()
     {
-        var state = new Dictionary<NovaType, int>(); // 1 = on the DFS stack, 2 = finished
+        var state = _recursionState;
         var stack = new List<NovaType>();
 
         void Visit(NovaType type)
@@ -539,7 +803,7 @@ internal sealed class TypeChecker
     /// <summary>Copy and needs-drop for every struct and enum (type-system.md §14.1, §15.1); contained types first.</summary>
     private void ComputeCopyAndDrop()
     {
-        var done = new HashSet<NovaType>();
+        var done = _copyDone;
         void Visit(NovaType type)
         {
             if (!done.Add(type) || type.Struct is { IsRecursive: true } || type.Enum is { IsRecursive: true })
@@ -596,6 +860,11 @@ internal sealed class TypeChecker
                 return _types.Error;
             }
             return ArrayType(element, (long)literal.Value, arrayType.Element.Span);
+        }
+        if (syntax is GenericType { Name.Parts.Length: 1 } userGeneric
+            && _items.GetValueOrDefault(userGeneric.Name.Parts[0].Name) is StructEntry or EnumEntry)
+        {
+            return ResolveGenericItemType(userGeneric);
         }
         if (syntax is GenericType generic)
         {
@@ -658,7 +927,17 @@ internal sealed class TypeChecker
             return _types.Error;
         }
 
+        if (_typeEnvironment.TryGetValue(named.Name.Parts[0].Name, out var parameter))
+        {
+            return parameter; // a type parameter in scope, or what it is instantiated with (§20)
+        }
         var text = Name(named.Name.Parts[0].Name);
+        if (_items.GetValueOrDefault(named.Name.Parts[0].Name) is StructEntry { Decl.TypeParameters.IsEmpty: false }
+            or EnumEntry { Decl.TypeParameters.IsEmpty: false })
+        {
+            Error(DiagnosticCodes.UnknownType, named.Span, $"'{text}' is generic: give its type arguments, e.g. '{text}<i32>'");
+            return _types.Error;
+        }
         var type = _types.Lookup(text) ?? _items.GetValueOrDefault(named.Name.Parts[0].Name) switch
         {
             StructEntry s => Used(s).Type,
@@ -1113,6 +1392,148 @@ internal sealed class TypeChecker
         return new HirTry(operand, ok, expr.Span);
     }
 
+    /// <summary><c>Pair&lt;i32&gt;</c> for a user generic struct or enum (§20.2): resolve the arguments, instantiate.</summary>
+    private NovaType ResolveGenericItemType(GenericType syntax)
+    {
+        var item = _items[syntax.Name.Parts[0].Name];
+        var parameters = item is StructEntry s ? s.Decl.TypeParameters : ((EnumEntry)item).Decl.TypeParameters;
+        var text = Name(syntax.Name.Parts[0].Name);
+        if (parameters.Length != syntax.Arguments.Length)
+        {
+            Error(DiagnosticCodes.UnknownType, syntax.Span, parameters.IsEmpty
+                ? $"'{text}' is not generic; write '{text}' without type arguments"
+                : $"'{text}' takes {parameters.Length} type argument(s), but {syntax.Arguments.Length} were given");
+            return _types.Error;
+        }
+        var arguments = ImmutableArray.CreateBuilder<NovaType>(parameters.Length);
+        foreach (var argument in syntax.Arguments)
+        {
+            var type = ResolveType(argument, allowVoid: false);
+            if (type.IsBottom)
+            {
+                return _types.Error;
+            }
+            if (TypeTable.IsScoped(type))
+            {
+                Error(DiagnosticCodes.ReferenceNotAllowed, argument.Span,
+                    "a type argument of a user type cannot be scoped in v0 (references in aggregates are OD-3)");
+                return _types.Error;
+            }
+            arguments.Add(type);
+        }
+        return item is StructEntry structEntry
+            ? Used(InstantiateStruct(structEntry, arguments.MoveToImmutable())).Type
+            : Used(InstantiateEnum((EnumEntry)item, arguments.MoveToImmutable())).Type;
+    }
+
+    /// <summary>
+    /// Matches a declared type that mentions <paramref name="parameters"/> against an actual type, recording
+    /// what each parameter must be (§20.2). Mismatches are not reported here: the real check follows.
+    /// </summary>
+    private static void Unify(NovaType declared, NovaType actual, IReadOnlySet<NovaType> parameters, Dictionary<NovaType, NovaType> found)
+    {
+        if (actual.IsBottom)
+        {
+            return;
+        }
+        if (parameters.Contains(declared))
+        {
+            found.TryAdd(declared, actual);
+            return;
+        }
+        if (declared.IsReference)
+        {
+            // An argument for a `borrow T` parameter is borrowed implicitly.
+            Unify(declared.Pointee!, actual.IsReference ? actual.Pointee! : actual, parameters, found);
+            return;
+        }
+        if (actual.IsBox && !declared.IsBox)
+        {
+            Unify(declared, actual.Pointee!, parameters, found); // a box converts to its contents (§18.2)
+            return;
+        }
+        if (declared.Kind != actual.Kind)
+        {
+            return;
+        }
+        switch (declared.Kind)
+        {
+            case TypeKind.Struct when declared.Struct!.Syntax == actual.Struct!.Syntax:
+                foreach (var (d, a) in declared.Struct.TypeArguments.Zip(actual.Struct.TypeArguments))
+                {
+                    Unify(d, a, parameters, found);
+                }
+                break;
+            case TypeKind.Enum when declared.Enum!.ResultTypes is var (ok, err) && actual.Enum!.ResultTypes is var (actualOk, actualErr):
+                Unify(ok, actualOk, parameters, found);
+                Unify(err, actualErr, parameters, found);
+                break;
+            case TypeKind.Enum when declared.Enum!.Syntax is not null && declared.Enum.Syntax == actual.Enum!.Syntax:
+                foreach (var (d, a) in declared.Enum.TypeArguments.Zip(actual.Enum.TypeArguments))
+                {
+                    Unify(d, a, parameters, found);
+                }
+                break;
+            case TypeKind.Array or TypeKind.Box:
+                Unify(declared.Element ?? declared.Pointee!, actual.Element ?? actual.Pointee!, parameters, found);
+                break;
+        }
+    }
+
+    /// <summary>Runs <paramref name="trial"/> without reporting its diagnostics (for inferring type arguments).</summary>
+    private T Quietly<T>(Func<T> trial)
+    {
+        var saved = _diagnostics;
+        _diagnostics = new DiagnosticBag();
+        try
+        {
+            return trial();
+        }
+        finally
+        {
+            _diagnostics = saved;
+        }
+    }
+
+    /// <summary>
+    /// Type arguments for <paramref name="parameters"/>: from the explicit list, else from the expected
+    /// instance, else inferred from <paramref name="pairs"/> (declared type, expression). Default after N0265.
+    /// </summary>
+    private ImmutableArray<NovaType> TypeArgumentsFor(string what, ImmutableArray<NovaType> parameters,
+        ImmutableArray<TypeSyntax> explicitArguments, ImmutableArray<NovaType>? expectedArguments,
+        IEnumerable<(NovaType Declared, Expr Value)> pairs, TextSpan span)
+    {
+        if (!explicitArguments.IsEmpty)
+        {
+            if (explicitArguments.Length != parameters.Length)
+            {
+                Error(DiagnosticCodes.ArgumentCount, span, $"'{what}' takes {parameters.Length} type argument(s), but {explicitArguments.Length} were given");
+                return default;
+            }
+            var resolved = explicitArguments.Select(a => ResolveType(a, allowVoid: false)).ToImmutableArray();
+            return resolved.Any(t => t.IsBottom) ? default : resolved;
+        }
+        if (expectedArguments is { } fromExpected)
+        {
+            return fromExpected;
+        }
+        var parameterSet = parameters.ToHashSet();
+        var found = new Dictionary<NovaType, NovaType>();
+        foreach (var (declared, value) in pairs)
+        {
+            var actual = Quietly(() => Synth(value is MutArgExpr m ? m.Operand : value, null));
+            Unify(declared, actual.Type, parameterSet, found);
+        }
+        var missing = parameters.Where(p => !found.ContainsKey(p)).ToList();
+        if (missing.Count > 0)
+        {
+            Error(DiagnosticCodes.CannotInferTypeArguments, span,
+                $"cannot infer {string.Join(", ", missing.Select(p => $"'{p}'"))} for '{what}' here; write the type arguments: '{what}<…>'");
+            return default;
+        }
+        return [.. parameters.Select(p => found[p])];
+    }
+
     /// <summary>Lengths fit in 48 bits, like every size in memory-model.md §7.</summary>
     private const long MaxArrayLength = (1L << 48) - 1;
 
@@ -1167,6 +1588,12 @@ internal sealed class TypeChecker
 
     private void CheckMain()
     {
+        if (_items.GetValueOrDefault(_symbols.Intern("main")) is GenericFunctionEntry genericMain)
+        {
+            _source = genericMain.Source;
+            Error(DiagnosticCodes.InvalidMain, genericMain.Decl.Name.Span, "'main' cannot be generic");
+            return;
+        }
         if (_items.GetValueOrDefault(_symbols.Intern("main")) is not HirFunction main)
         {
             return;
@@ -1307,6 +1734,7 @@ internal sealed class TypeChecker
     {
         _source = function.Source;
         _function = function;
+        _typeEnvironment = function.Environment;
         _loopDepth = 0;
         _scopes = [[]];
         foreach (var parameter in function.Parameters)
@@ -1336,6 +1764,7 @@ internal sealed class TypeChecker
 
         FlowAnalysis.Analyze(function, _symbols, _types, _diagnostics);
         _function = null;
+        _typeEnvironment = new Dictionary<Symbol, NovaType>();
     }
 
     private HirBlock CheckBlock(BlockStmt block)
@@ -1570,7 +1999,7 @@ internal sealed class TypeChecker
             }
             variant = resultVariant;
         }
-        else if (parts.Length != 2 || parts[0].Name != _symbols.Intern(type.Name))
+        else if (parts.Length != 2 || parts[0].Name != type.Enum.Syntax!.Name.Name)
         {
             Error(DiagnosticCodes.TypeMismatch, pattern.Path.Span, $"expected a variant of '{type}', written '{type}.Variant'");
             return null;
@@ -2115,7 +2544,7 @@ internal sealed class TypeChecker
                 Error(DiagnosticCodes.ThisOutsideMethod, expr.Span, "'this' can only be used inside a method");
                 return ErrorResult(expr.Span);
             case StructLiteralExpr literal:
-                return SynthStructLiteral(literal);
+                return SynthStructLiteral(literal, expected);
             case BorrowExpr { Operand: SliceExpr slice } borrow:
                 return SynthSlice(slice, borrow.IsMutable, borrow.Span);
             case BorrowExpr borrow:
@@ -2219,7 +2648,7 @@ internal sealed class TypeChecker
                 when Lookup(regionName.Name.Name) is Builtin.FixedBufferAllocator or Builtin.Scratch:
                 return CheckRegionConstructor(regionCall, regionMember, (Builtin)Lookup(regionName.Name.Name)!);
             case CallExpr call:
-                return SynthCall(call);
+                return SynthCall(call, expected);
             case TryExpr tryExpr:
                 return CheckTry(tryExpr);
             case UnwrapExpr unwrap:
@@ -2230,7 +2659,7 @@ internal sealed class TypeChecker
                     : new HirUnwrap(operand, operand.Type.Enum!.ResultTypes!.Value.Ok, unwrap.Span);
             }
             case MemberExpr member:
-                return SynthMember(member);
+                return SynthMember(member, expected);
             case ErrorExpr:
                 return ErrorResult(expr.Span);
             default:
@@ -2287,12 +2716,12 @@ internal sealed class TypeChecker
         return new HirSlice(isMutable, place, low, high, _types.SliceOf(target.Type.Element!, isMutable), span);
     }
 
-    private HirExpr SynthMember(MemberExpr member)
+    private HirExpr SynthMember(MemberExpr member, NovaType? expected = null)
     {
         // `Shape.Empty`: a variant without payload.
-        if (member.Target is NameExpr { TypeArguments.IsEmpty: true } enumName && Lookup(enumName.Name.Name) is EnumEntry entry)
+        if (member.Target is NameExpr enumName && Lookup(enumName.Name.Name) is EnumEntry entry)
         {
-            return CheckEnumValue(entry, member, [], member.Span);
+            return CheckEnumValue(entry, member, [], member.Span, expected, enumName.TypeArguments);
         }
         // `Console.writeLine` or `Point.origin` without a call.
         if (member.Target is NameExpr { TypeArguments.IsEmpty: true } target && Lookup(target.Name.Name) is Builtin or StructEntry)
@@ -2325,7 +2754,7 @@ internal sealed class TypeChecker
             : ErrorResult(member.Span);
     }
 
-    private HirExpr SynthStructLiteral(StructLiteralExpr literal)
+    private HirExpr SynthStructLiteral(StructLiteralExpr literal, NovaType? expected = null)
     {
         var typeName = Name(literal.TypeName.Name);
         if (_items.GetValueOrDefault(literal.TypeName.Name) is not StructEntry entry)
@@ -2339,6 +2768,29 @@ internal sealed class TypeChecker
             return ErrorResult(literal.Span);
         }
         Used(entry);
+        if (!entry.Decl.TypeParameters.IsEmpty)
+        {
+            // `Pair { first: 1, … }` infers T from the fields; `Pair<u8> { … }` gives it (§20.2).
+            var template = entry.Type.Struct!;
+            var found = TypeArgumentsFor(typeName, template.TypeArguments, literal.TypeArguments,
+                expected?.Struct is { } expectedStruct && expectedStruct.Syntax == entry.Decl ? expectedStruct.TypeArguments : null,
+                literal.Fields.Select(f => (template.FindField(f.Name.Name)?.Type, f.Value)).Where(p => p.Item1 is not null)
+                    .Select(p => (p.Item1!, p.Value)),
+                literal.Span);
+            if (found.IsDefault)
+            {
+                foreach (var init in literal.Fields)
+                {
+                    Synth(init.Value, null);
+                }
+                return ErrorResult(literal.Span);
+            }
+            entry = InstantiateStruct(entry, found);
+        }
+        else if (!literal.TypeArguments.IsEmpty)
+        {
+            Error(DiagnosticCodes.UnknownType, literal.TypeName.Span, $"'{typeName}' is not generic; write it without type arguments");
+        }
 
         var type = entry.Type;
         var definition = type.Struct!;
@@ -2397,7 +2849,7 @@ internal sealed class TypeChecker
         var symbol = name.Name.Name;
         if (!name.TypeArguments.IsEmpty)
         {
-            Error(DiagnosticCodes.Unsupported, name.Span, "generic arguments are only supported in calls to truncate<T>(...)");
+            Error(DiagnosticCodes.Unsupported, name.Span, "type arguments go on a call ('f<T>(…)'), a type or a static function ('S<T>.f(…)')");
             return ErrorResult(name.Span);
         }
 
@@ -2412,7 +2864,7 @@ internal sealed class TypeChecker
                     HirBoolConst b => new HirBoolConst(b.Value, constant.Hir.Type, name.Span),
                     _ => ErrorResult(name.Span),
                 };
-            case HirFunction:
+            case HirFunction or GenericFunctionEntry:
                 Error(DiagnosticCodes.NotCallable, name.Span,
                     $"function '{Name(symbol)}' cannot be used as a value; call it with '(...)'");
                 return ErrorResult(name.Span);
@@ -2611,7 +3063,7 @@ internal sealed class TypeChecker
 
     // ---- Calls ----
 
-    private HirExpr SynthCall(CallExpr call)
+    private HirExpr SynthCall(CallExpr call, NovaType? expected = null)
     {
         switch (call.Callee)
         {
@@ -2620,6 +3072,8 @@ internal sealed class TypeChecker
                 {
                     case HirFunction function when name.TypeArguments.IsEmpty:
                         return CheckUserCall(call, function);
+                    case GenericFunctionEntry generic:
+                        return CheckGenericCall(call, name, generic);
                     case Builtin.Truncate:
                         return CheckTruncate(call, name);
                     case null:
@@ -2634,12 +3088,19 @@ internal sealed class TypeChecker
             case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
                 when Lookup(target.Name.Name) is Builtin builtin and (Builtin.Console or Builtin.Process):
                 return CheckBuiltinMemberCall(call, builtin, target, member);
-            case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
+            case MemberExpr { Target: NameExpr target } member
                 when Lookup(target.Name.Name) is StructEntry entry:
-                return CheckStaticCall(call, entry, member);
-            case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
+            {
+                if (StaticOwner(entry, target) is not { } owner)
+                {
+                    CheckArgumentsLoosely(call);
+                    return ErrorResult(call.Span);
+                }
+                return CheckStaticCall(call, owner, member);
+            }
+            case MemberExpr { Target: NameExpr target } member
                 when Lookup(target.Name.Name) is EnumEntry enumEntry:
-                return CheckEnumValue(enumEntry, member, call.Arguments, call.Span);
+                return CheckEnumValue(enumEntry, member, call.Arguments, call.Span, expected, target.TypeArguments);
             case MemberExpr member:
                 return CheckMethodCall(call, member);
         }
@@ -2688,9 +3149,33 @@ internal sealed class TypeChecker
     }
 
     /// <summary><c>E.V</c> or <c>E.V(payload…)</c> (type-system.md §15.1).</summary>
-    private HirExpr CheckEnumValue(EnumEntry entry, MemberExpr member, ImmutableArray<Expr> arguments, TextSpan span)
+    private HirExpr CheckEnumValue(EnumEntry entry, MemberExpr member, ImmutableArray<Expr> arguments, TextSpan span,
+        NovaType? expected = null, ImmutableArray<TypeSyntax> typeArguments = default)
     {
         Used(entry);
+        if (!entry.Decl.TypeParameters.IsEmpty)
+        {
+            // `Maybe.Just(7)`, `Maybe<u8>.Nothing`, or a variant of the expected instance (§20.2).
+            var templateVariant = entry.Type.Enum!.FindVariant(member.Member.Name);
+            var pairs = templateVariant is null ? [] : templateVariant.Payload.Zip(arguments).Select(p => (p.First.Type, p.Second));
+            var found = TypeArgumentsFor(Name(entry.Decl.Name.Name), entry.Type.Enum.TypeArguments,
+                typeArguments.IsDefault ? [] : typeArguments,
+                expected?.Enum is { } expectedEnum && expectedEnum.Syntax == entry.Decl ? expectedEnum.TypeArguments : null,
+                pairs, span);
+            if (found.IsDefault)
+            {
+                foreach (var argument in arguments)
+                {
+                    Synth(argument, null);
+                }
+                return ErrorResult(span);
+            }
+            entry = InstantiateEnum(entry, found);
+        }
+        else if (!typeArguments.IsDefaultOrEmpty)
+        {
+            Error(DiagnosticCodes.UnknownType, member.Target.Span, $"'{entry.Type}' is not generic; write it without type arguments");
+        }
         if (entry.Type.Enum!.FindVariant(member.Member.Name) is not { } variant)
         {
             Error(DiagnosticCodes.UndefinedName, member.Member.Span, $"'{entry.Type}' has no variant named '{Name(member.Member.Name)}'");
@@ -2716,6 +3201,46 @@ internal sealed class TypeChecker
             payload.Add(CheckExpr(arguments[i], variant.Payload[i].Type));
         }
         return new HirEnumValue(variant, payload.MoveToImmutable(), entry.Type, span);
+    }
+
+    /// <summary>The struct whose static function <c>S.f(…)</c> or <c>S&lt;T&gt;.f(…)</c> names (§20.2); null after an error.</summary>
+    private StructEntry? StaticOwner(StructEntry entry, NameExpr target)
+    {
+        if (entry.Decl.TypeParameters.IsEmpty)
+        {
+            if (!target.TypeArguments.IsEmpty)
+            {
+                Error(DiagnosticCodes.UnknownType, target.Span, $"'{entry.Type}' is not generic; write it without type arguments");
+                return null;
+            }
+            return entry;
+        }
+        if (target.TypeArguments.IsEmpty)
+        {
+            Error(DiagnosticCodes.CannotInferTypeArguments, target.Span,
+                $"'{Name(entry.Decl.Name.Name)}' is generic: write its type arguments, e.g. '{Name(entry.Decl.Name.Name)}<i32>.{"…"}'");
+            return null;
+        }
+        var type = ResolveGenericItemType(new GenericType(new QualifiedName([target.Name], target.Name.Span), target.TypeArguments, target.Span));
+        return type.IsBottom ? null : StructEntryFor(entry, type);
+    }
+
+    /// <summary>The entry of an instantiation (or of the template itself) of <paramref name="template"/>.</summary>
+    private static StructEntry StructEntryFor(StructEntry template, NovaType type) =>
+        template.Type == type ? template : template.Instances[TypeKey(type.Struct!.TypeArguments)];
+
+    /// <summary><c>f(args)</c> or <c>f&lt;T&gt;(args)</c> for a generic function (§20.2): infer, instantiate, check.</summary>
+    private HirExpr CheckGenericCall(CallExpr call, NameExpr name, GenericFunctionEntry entry)
+    {
+        var parameters = entry.Generic.Parameters;
+        var found = TypeArgumentsFor(Name(entry.Decl.Name.Name), entry.Parameters, name.TypeArguments, null,
+            call.Arguments.Zip(parameters).Select(p => (p.Second.Type, p.First)), call.Span);
+        if (found.IsDefault || InstantiateFunction(entry, found, call.Span) is not { } instance)
+        {
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        return CheckUserCall(call, instance);
     }
 
     /// <summary><c>S.f(args)</c>: a static function of struct S (type-system.md §12).</summary>

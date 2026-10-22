@@ -1,0 +1,41 @@
+// Generic recursive types through Box, generic methods on instances, and nested instantiation.
+enum List<T> { Nil, Cons(T, Box<List<T>>) }
+
+struct Stack<T> {
+    items: List<T>;
+    size: u32;
+    fn empty() -> Stack<T> => Stack { items: List.Nil, size: 0u32 };
+    fn push(this, v: T) -> Result<Stack<T>, AllocError> {
+        let rest = Box.create(this.items)?;          // moves out of the owned `this`
+        return Ok(Stack { items: List.Cons(v, rest), size: this.size + 1u32 });
+    }
+}
+
+fn length<T>(l: borrow List<T>) -> u32 {
+    match (l) {
+        List.Nil => { return 0u32; }
+        List.Cons(x, rest) => { return 1u32 + length(rest); }
+    }
+}
+
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+
+fn main() -> i32 {
+    var numbers = Stack<i32>.empty();
+    for (i in 0..5) { numbers = numbers.push(i)!; }
+    Console.writeLine(numbers.size);
+    Console.writeLine(length(borrow numbers.items));
+
+    var resources = Stack<Res>.empty();
+    resources = resources.push(Res { id: 1 })!;
+    resources = resources.push(Res { id: 2 })!;
+    var nested = Stack<Stack<u8>>.empty();
+    nested = nested.push(Stack<u8>.empty())!;
+    Console.writeLine(nested.size);
+    return 0;
+}
+// expect-stdout: 5
+// expect-stdout: 5
+// expect-stdout: 1
+// expect-stdout: drop 2
+// expect-stdout: drop 1

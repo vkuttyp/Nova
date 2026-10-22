@@ -1,0 +1,14 @@
+struct Pair<T> { first: T; second: T; }
+enum Maybe<T> { Nothing, Just(T) }
+fn id<T>(x: T) -> T => x;
+fn get<T>(m: Maybe<T>, d: T) -> T {
+    match (m) {
+        Maybe.Just(v) => { return v; }
+        Maybe.Nothing => { return d; }
+    }
+}
+fn main() -> i32 {
+    let p = id(Pair { first: 3, second: 4 });
+    let q = id(Pair { first: 1u8, second: 2u8 });
+    return get(Maybe.Just(p.second), 0) + (q.first as i32);
+}

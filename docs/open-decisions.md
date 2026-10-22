@@ -20,6 +20,7 @@ Original status: Milestone 0 (master prompt §23.K). Each item lists the propose
 | **OD-7** | Copyability of structs | **Implicitly Copy** iff all fields Copy and no `drop`; `@noncopy` to opt out | Explicit `copy struct` opt-in (Rust-like) | none (both sound) | — | M2 |
 | OD-8 | Arena with destructors | v0: arena contents must have no `drop` (R2); later a drop list | Allow drops now | resource leaks if done wrong | — | M4 |
 | OD-9 | Closures | None in v0. Non-capturing `fn` pointers only. Scoped capturing closures in M6+ | — | closures carry borrows | — | M6 |
+| OD-23 | **Floating-point types** (`f32`/`f64`): arithmetic semantics, formatting for `Console`, casts, and the kernel-profile ban | Deferred by ADR 0005. Schedule as a separate increment (after M6) | Add in M6 | float formatting cost | Ex2/Ex13 run with integers until then | post-M6 |
 | OD-10 | Dynamic dispatch (`dyn Interface`) | Future. Static generics only in v0 | vtables now | — | code size | M6 |
 | **OD-11** | Package / manifest format | `nova.toml` with name, version, profile, dependencies (path-only in v0) | — | — | — | **M1** (minimal) |
 | OD-12 | Growable scratch arrays (Goose "one growable on top") | Not in v0 | adopt | complex shrink rules | faster temporaries | M5 |

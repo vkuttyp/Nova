@@ -65,15 +65,17 @@ public sealed class Compilation
         {
             // Ownership analyses run on NIR (lifetimes.md), after type checking succeeded.
             nir = NirBuilder.Build(hir, types);
-            foreach (var function in nir.Functions)
+            // Generic code is checked once, in its generic version; instantiations repeat it (type-system.md §20.3).
+            foreach (var function in nir.Functions.Where(f => !f.Source.IsInstantiation))
             {
                 MoveChecker.Check(function, symbols, diagnostics);
                 BorrowChecker.Check(function, symbols, diagnostics);
             }
             if (!diagnostics.HasErrors)
             {
-                // Destruction is inserted only into programs that passed every check (type-system.md §14.5).
-                foreach (var function in nir.Functions)
+                // Destruction is inserted only into programs that passed every check (type-system.md §14.5),
+                // and only into code that is compiled: not into generic versions.
+                foreach (var function in nir.Functions.Where(f => !f.Source.IsGeneric))
                 {
                     DropElaborator.Elaborate(function, types);
                 }

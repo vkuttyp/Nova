@@ -1,0 +1,37 @@
+// Generic declarations and their uses (type-system.md §20).
+struct Pair<T> { first: T; second: T; }
+enum Maybe<T> { Nothing, Just(T) }
+struct Plain { x: i32; }
+
+fn add<T>(a: T, b: T) -> T => a + b; // error[N0207]
+fn field<T>(a: borrow T) -> i32 => a.x; // error[N0234]
+fn literal<T>() -> T => 5; // error[N0205]
+fn compare<T>(a: T, b: T) -> bool => a == b; // error[N0207]
+fn method<T>(a: T) { a.run(); } // error[N0234]
+fn duplicate<T, T>(a: T) { } // error[N0201]
+fn shadows<i32>(a: i32) { } // error[N0201]
+fn shadowsItem<Plain>(a: Plain) { } // error[N0201]
+fn main<T>() { } // error[N0219]
+
+struct Methods<T> {
+    v: T;
+    fn generic<U>(this, u: U) { } // error[N0216]
+}
+
+fn uses(p: Pair<i32>) {
+    let a: Pair = p; // error[N0204]
+    let b: Pair<i32, i32> = p; // error[N0204]
+    let c: Plain<i32> = Plain { x: 1 }; // error[N0204]
+    let d = Maybe.Nothing; // error[N0265]
+    let e = make(); // error[N0265]
+    let f = make<i32, u8>(); // error[N0209]
+    let g = Pair { first: 1, second: true }; // error[N0205]
+    let h: Maybe<u8> = Maybe.Just(true); // error[N0205]
+    let i = Pair<u8> { first: 300, second: 1u8 }; // error[N0206]
+    let j = Plain<u8> { x: 1 }; // error[N0204]
+    let k = id; // error[N0210]
+}
+
+fn make<T>() -> Maybe<T> => Maybe.Nothing;
+fn id<T>(x: T) -> T => x;
+fn deep<T>(x: Maybe<T>) { deep(Maybe.Just(x)); } // error[N0266]

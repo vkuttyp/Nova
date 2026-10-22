@@ -1,0 +1,13 @@
+struct Pair<T> { first: T; second: T; }
+enum Either<L, R> { Left(L), Right(R) }
+fn id<T>(x: T) -> T => x;
+fn bounded<T: Show + Eq, U>(x: T, y: U) { }
+fn uses() {
+    let a = id<i32>(1);
+    let b = Pair<u8> { first: 1u8, second: 2u8 };
+    let c = Pair { first: 1, second: 2 };
+    let d = Either<i32, bool>.Left(1);
+    let e: Pair<Pair<i32>> = make<Pair<i32>>();
+    let f = Pair<i32>.zero();
+    if (a < b) { }
+}

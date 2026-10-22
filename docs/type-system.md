@@ -834,3 +834,77 @@ fn simulate() -> Result<i32, AllocError> {
   - `T` must not be scoped (E3; N0264).
 - Destroying the pool while a `PoolBox` from it is live is rejected (B2), so every slot is free
   when the pool is destroyed.
+
+## 20. Generics (M6a)
+
+```nova
+struct Pair<T> {
+    first: T;
+    second: T;
+    fn swap(this) -> Pair<T> => Pair { first: this.second, second: this.first };
+}
+
+enum Maybe<T> { Nothing, Just(T) }
+
+fn largest<T>(p: borrow Pair<T>, pick: bool) -> borrow T {
+    if (pick) { return borrow p.first; }
+    return borrow p.second;
+}
+
+fn main() {
+    let p = Pair { first: 1, second: 2 };        // Pair<i32>, inferred from the fields
+    let q = p.swap();
+    let m: Maybe<u8> = Maybe.Just(7u8);
+    let r = largest(p, true);                    // T = i32, inferred from the argument
+    let s = largest<i32>(q, false);              // explicit type argument
+}
+```
+
+### 20.1 Declarations
+```text
+TypeParams = '<' Identifier (',' Identifier)* '>'
+FunctionDecl = 'fn' Identifier TypeParams? '(' … ')' …
+StructDecl   = 'struct' Identifier TypeParams? '{' … '}'
+EnumDecl     = 'enum' Identifier TypeParams? '{' … '}'
+```
+- A top-level function, struct or enum may declare **type parameters**. Inside the declaration,
+  each parameter is a type. Methods of a generic struct see the struct's parameters; methods
+  cannot declare parameters of their own in v0.
+- Names must be distinct, and must not shadow items or built-in types (N0201).
+
+### 20.2 Using generic items
+- **Types:** `Pair<i32>`, `Maybe<Pair<u8>>`. A generic struct or enum must always be given all its
+  type arguments in a type (N0204).
+- **Calls:** `largest<i32>(p, true)` gives the arguments explicitly. `largest(p, true)` infers
+  them from the argument types: each parameter type is matched against its argument's type. An
+  integer literal argument is `i32` unless the parameter type fixes it. A parameter that the
+  arguments do not determine is N0265 ("write the type arguments").
+- **Values:** `Pair { first: 1, second: 2 }` infers `T` from the field values, or takes it from the
+  expected type. `Pair<u8> { … }` gives it. Likewise `Maybe.Just(7)` infers from the payload, and
+  `Maybe.Nothing` needs an expected type or explicit arguments: `Maybe<u8>.Nothing`.
+- **Static functions:** `Pair<i32>.make(…)`.
+
+### 20.3 Checking generic code once
+- A generic declaration is checked **once, for all type arguments**. Each type parameter is an
+  opaque type, about which only what holds for every type is known:
+  - it is a **move type** that **may need drop**. A value of it can be moved, borrowed,
+    passed, returned, stored in fields of the declaring type, and matched as a payload;
+  - nothing else is allowed: no operators, no fields, no methods, no literals, no
+    `==` (N0207, N0234, N0205). Interfaces (§21) add operations through bounds.
+- Move checking, borrow checking and reachability run on the generic code too. A body that
+  would be wrong for some type argument is rejected at the definition, **whether or not it is ever
+  instantiated** (for example, using a `T` twice is N0250).
+- Generic declarations that are never used produce no C code.
+
+### 20.4 Instantiation (monomorphisation)
+- Every distinct use (`largest<i32>`, `Pair<Res>`) is an **instantiation**: a copy of the
+  declaration with the type arguments substituted. It is checked again and compiled to C.
+- An instantiated struct or enum is an ordinary type for every other rule. It is Copy iff its
+  substituted fields or payloads are, and needs drop iff one of them does. `Pair<i32>` is Copy;
+  `Pair<Res>` is a move type.
+- The layout is that of the substituted declaration. Recursion is checked per instantiation
+  (N0227).
+- Instantiation is depth-limited: a chain of more than 64 nested instantiations (polymorphic
+  recursion such as `f<T>` calling `f<Box<T>>`) is N0266.
+
+Diagnostics: N0265 (type arguments that cannot be inferred), N0266 (instantiation too deep).

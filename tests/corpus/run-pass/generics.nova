@@ -1,0 +1,51 @@
+// Generic structs, enums and functions, monomorphised (type-system.md §20).
+struct Pair<T> {
+    first: T;
+    second: T;
+    fn swap(this) -> Pair<T> => Pair { first: this.second, second: this.first };
+}
+
+enum Maybe<T> { Nothing, Just(T) }
+
+fn largest<T>(p: borrow Pair<T>, pick: bool) -> borrow T {
+    if (pick) { return borrow p.first; }
+    return borrow p.second;
+}
+
+fn wrap<T>(v: T) -> Maybe<T> => Maybe.Just(v);
+
+fn count<T>(m: borrow Maybe<T>) -> i32 {
+    match (m) {
+        Maybe.Nothing => { return 0; }
+        Maybe.Just(x) => { return 1; }
+    }
+}
+
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+
+fn main() {
+    let p = Pair { first: 1, second: 2 };
+    let q = p.swap();
+    let m: Maybe<u8> = Maybe.Just(7u8);
+    let r = largest(p, true);
+    let s = largest<i32>(q, false);
+    Console.writeLine(r);
+    Console.writeLine(s);
+    Console.writeLine(count(m));
+    let none: Maybe<u8> = Maybe.Nothing;
+    Console.writeLine(count(none));
+    let pr = Pair { first: Res { id: 1 }, second: Res { id: 2 } };
+    let sw = pr.swap();
+    let w = wrap(Res { id: 3 });
+    Console.writeLine(count(w));
+    Console.writeLine(largest(sw, true).id);
+}
+// expect-stdout: 1
+// expect-stdout: 1
+// expect-stdout: 1
+// expect-stdout: 0
+// expect-stdout: 1
+// expect-stdout: 2
+// expect-stdout: drop 3
+// expect-stdout: drop 2
+// expect-stdout: drop 1

@@ -46,7 +46,14 @@ public sealed record FunctionDecl(
     TypeSyntax? ReturnType,
     BlockStmt? Body,
     Expr? ExpressionBody,
-    TextSpan Span) : Item(Visibility, Name, Span);
+    TextSpan Span) : Item(Visibility, Name, Span)
+{
+    /// <summary><c>fn f&lt;T, U&gt;</c> (type-system.md §20); empty for a non-generic function.</summary>
+    public ImmutableArray<TypeParameter> TypeParameters { get; init; } = [];
+}
+
+/// <summary>A type parameter <c>T</c>, with the interface bounds of <c>T: I + J</c> (§21; empty without).</summary>
+public sealed record TypeParameter(Identifier Name, ImmutableArray<TypeSyntax> Bounds, TextSpan Span) : SyntaxNode(Span);
 
 public enum ReceiverKind
 {
@@ -67,6 +74,9 @@ public sealed record StructDecl(
 {
     /// <summary>The struct's <c>drop { ... }</c> block, if any (type-system.md §14.2).</summary>
     public DropBlock? Drop { get; init; }
+
+    /// <summary><c>struct S&lt;T&gt;</c> (type-system.md §20); empty for a non-generic struct.</summary>
+    public ImmutableArray<TypeParameter> TypeParameters { get; init; } = [];
 }
 
 public sealed record DropBlock(BlockStmt Body, TextSpan Span) : SyntaxNode(Span);
@@ -75,7 +85,11 @@ public sealed record EnumDecl(
     Visibility Visibility,
     Identifier Name,
     ImmutableArray<VariantDecl> Variants,
-    TextSpan Span) : Item(Visibility, Name, Span);
+    TextSpan Span) : Item(Visibility, Name, Span)
+{
+    /// <summary><c>enum E&lt;T&gt;</c> (type-system.md §20); empty for a non-generic enum.</summary>
+    public ImmutableArray<TypeParameter> TypeParameters { get; init; } = [];
+}
 
 public sealed record VariantDecl(Identifier Name, ImmutableArray<TypeSyntax> Payload, TextSpan Span) : SyntaxNode(Span);
 
@@ -260,7 +274,11 @@ public sealed record MoveExpr(Expr Operand, TextSpan Span) : Expr(Span);
 public sealed record MutArgExpr(Expr Operand, TextSpan Span) : Expr(Span);
 
 /// <summary><c>S { f: e, ... }</c>; initialisers in source order.</summary>
-public sealed record StructLiteralExpr(Identifier TypeName, ImmutableArray<FieldInit> Fields, TextSpan Span) : Expr(Span);
+public sealed record StructLiteralExpr(Identifier TypeName, ImmutableArray<FieldInit> Fields, TextSpan Span) : Expr(Span)
+{
+    /// <summary><c>Pair&lt;u8&gt; { … }</c>: explicit type arguments (§20.2); empty when inferred.</summary>
+    public ImmutableArray<TypeSyntax> TypeArguments { get; init; } = [];
+}
 
 /// <summary><c>[a, b, c]</c> (type-system.md §16.2).</summary>
 public sealed record ArrayLiteralExpr(ImmutableArray<Expr> Elements, TextSpan Span) : Expr(Span);

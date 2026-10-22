@@ -1,0 +1,13 @@
+struct Pair<T> { first: T; second: T; fn swap(this) -> Pair<T> => Pair { first: this.second, second: this.first }; }
+enum Maybe<T> { Nothing, Just(T) }
+fn id<T>(x: T) -> T => x;
+fn firstOf<T>(p: borrow Pair<T>) -> borrow T => borrow p.first;
+fn unused<T>(x: T) -> Maybe<T> => Maybe.Just(x);
+
+fn main() {
+    let p = Pair { first: 1, second: 2 };
+    let q = id(p).swap();
+    let r = firstOf(q);
+    let m: Maybe<u8> = Maybe<u8>.Nothing;
+    let n = id<Maybe<u8>>(m);
+}

@@ -1,0 +1,56 @@
+(program
+  (fn id ((x#0: T)) -> T
+    (block
+      (return x#0)
+    )
+  )
+  (fn firstOf ((p#0: borrow Pair<T>)) -> borrow T
+    (block
+      (return (borrow (*p#0).first))
+    )
+  )
+  (fn unused ((x#0: T)) -> Maybe<T>
+    (block
+      (return (Maybe<T>.Just x#0))
+    )
+  )
+  (fn main () -> void
+    (block
+      (let p#0: Pair<i32> = (new Pair<i32> (first 1:i32) (second 2:i32)))
+      (let q#1: Pair<i32> = (call Pair<i32>.swap (call id p#0):Pair<i32>):Pair<i32>)
+      (let r#2: borrow i32 = (call firstOf (borrow q#1)):borrow i32)
+      (let m#3: Maybe<u8> = (Maybe<u8>.Nothing))
+      (let n#4: Maybe<u8> = (call id m#3):Maybe<u8>)
+    )
+  )
+  (fn Pair<T>.swap ((this#0: Pair<T>)) -> Pair<T>
+    (block
+      (return (new Pair<T> (first (. this#0 second):T) (second (. this#0 first):T)))
+    )
+  )
+  (fn Pair<T>.swap ((this#0: Pair<T>)) -> Pair<T>
+    (block
+      (return (new Pair<T> (first (. this#0 second):T) (second (. this#0 first):T)))
+    )
+  )
+  (fn Pair<i32>.swap ((this#0: Pair<i32>)) -> Pair<i32>
+    (block
+      (return (new Pair<i32> (first (. this#0 second):i32) (second (. this#0 first):i32)))
+    )
+  )
+  (fn id ((x#0: Pair<i32>)) -> Pair<i32>
+    (block
+      (return x#0)
+    )
+  )
+  (fn firstOf ((p#0: borrow Pair<i32>)) -> borrow i32
+    (block
+      (return (borrow (*p#0).first))
+    )
+  )
+  (fn id ((x#0: Maybe<u8>)) -> Maybe<u8>
+    (block
+      (return x#0)
+    )
+  )
+)

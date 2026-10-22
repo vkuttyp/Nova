@@ -148,6 +148,11 @@ Lowering rules (HIR → NIR, `NirBuilder`):
     arm and consumes the temporary as a whole. Other arms leave the value in the temporary, which
     is destroyed at the end of the statement.
 
+- **Generic code (M6a).** NIR is built for generic versions too (type parameters are move types
+  that may need drop), so the move and borrow checkers run on them. Instantiations skip those
+  checks, which would only repeat the generic version's diagnostics. Drop elaboration and C
+  emission skip generic versions.
+
 Printed by `novac build --dump-nir`.
 
 ## 4. LIR — deferred
