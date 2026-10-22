@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-linux:
+    # Linux x86-64 with real GCC and clang: the run corpus and the runtime agreement harness
+    # build every program with clang and GCC (O0/O2/portable-overflow) and clang ASan+UBSan.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Toolchain versions
+        run: |
+          dotnet --version
+          clang --version | head -1
+          gcc --version | head -1
+      - name: Build
+        run: dotnet build Nova.slnx -c Release
+      - name: Test
+        run: dotnet test Nova.slnx -c Release --no-build --logger "console;verbosity=normal"

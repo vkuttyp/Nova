@@ -1,0 +1,21 @@
+// Milestone C1: the first Nova program to run inside CosmoOS.
+fn gcd(a: u64, b: u64) -> u64 {
+    var x = a;
+    var y = b;
+    while (y != 0) {
+        let t = x % y;
+        x = y;
+        y = t;
+    }
+    return x;
+}
+
+fn main() -> i32 {
+    Console.writeLine("Hello from Nova on CosmoOS");
+    Console.write("gcd(1071, 462) = ");
+    Console.writeLine(gcd(1071, 462));
+    Console.write("i64 min = ");
+    Console.writeLine(-9223372036854775808i64);
+    Console.writeLine("NOVATEST: PASS");
+    return 0;
+}

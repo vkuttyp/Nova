@@ -1,0 +1,6 @@
+// Milestone C1: a Nova panic must report its location and abort under CosmoOS's libc.
+fn main() {
+    let big: u8 = 250;
+    Console.writeLine("NOVAPANIC: before");
+    Console.writeLine(big + 10);
+}
