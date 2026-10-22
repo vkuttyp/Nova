@@ -158,7 +158,7 @@ public sealed class CEmitter
         foreach (var local in function.Locals.Skip(function.ParameterCount))
         {
             // Zero-initialised: Nova's definite assignment already forbids reading it first.
-            var zero = local.Type.Kind switch { TypeKind.Bool => "false", TypeKind.Struct => "{0}", _ => "0" };
+            var zero = local.Type.Kind switch { TypeKind.Bool => "false", TypeKind.Struct => "{0}", TypeKind.Reference => "NULL", _ => "0" };
             Line($"    NV_UNUSED {CType(local.Type)} {LocalName(local)} = {zero};");
         }
 
@@ -194,6 +194,8 @@ public sealed class CEmitter
             case NirAssign assign:
                 Line($"    {Place(assign.Target)} = {Rvalue(assign.Value)};");
                 break;
+            case NirStorageDead:
+                break; // storage is the C local's; nothing to emit (drops arrive in M2c)
             case NirEval { Value: NirBuiltin builtin }:
                 EmitBuiltin(builtin);
                 break;
@@ -260,6 +262,7 @@ public sealed class CEmitter
         NirTruncate truncate => Truncate(truncate),
         NirCall call => $"{FunctionName(call.Callee)}({string.Join(", ", call.Arguments.Select(Operand))})",
         NirAggregate aggregate => Aggregate(aggregate),
+        NirRef reference => $"&{Place(reference.Place)}",
         _ => throw new InvalidOperationException($"cannot emit rvalue {rvalue}"),
     };
 
@@ -344,8 +347,15 @@ public sealed class CEmitter
         return $"NV_LOC(nv_file_{_fileIds[source]}, {position.Line}u, {position.Column}u)";
     }
 
-    private string Place(NirPlace place) =>
-        LocalName(place.Local) + string.Concat(place.Path.Select(f => "." + FieldName(f)));
+    private string Place(NirPlace place)
+    {
+        var text = LocalName(place.Local);
+        foreach (var projection in place.Projections)
+        {
+            text = projection.IsDeref ? $"(*{text})" : $"{text}.{FieldName(projection.Field!)}";
+        }
+        return text;
+    }
 
     private string Aggregate(NirAggregate aggregate)
     {
@@ -369,6 +379,7 @@ public sealed class CEmitter
         TypeKind.Void => "void",
         TypeKind.Integer => $"{(type.IsSigned ? "int" : "uint")}{type.Bits}_t",
         TypeKind.Struct => $"nvT_{type.Name}",
+        TypeKind.Reference => type.IsMutableReference ? $"{CTypeName(type.Pointee!)} *" : $"const {CTypeName(type.Pointee!)} *",
         _ => throw new InvalidOperationException($"type '{type}' has no C representation"),
     };
 

@@ -1,0 +1,14 @@
+struct HasRef { r: borrow i64; } // error[N0246]
+const C: borrow i64 = 1; // error[N0246]
+fn nested(r: borrow borrow i64) { } // error[N0246]
+fn sourcesInParam(r: borrow(x) i64) { } // error[N0246]
+fn noRefParams() -> borrow i64 { return 0; } // error[N0245] // error[N0205]
+fn twoRefs(a: borrow i64, b: borrow i64) -> borrow i64 => a; // error[N0245]
+fn unknownSource(a: borrow i64) -> borrow(z) i64 => a; // error[N0245]
+fn valueSource(a: borrow i64, n: i64) -> borrow(a, n) i64 => a; // error[N0245]
+fn mutFromShared(a: borrow i64) -> borrow mut i64 => a; // error[N0245] // error[N0205]
+fn locals(v: borrow i64) {
+    var r = borrow v; // error[N0246]
+    let x: i64 = 1;
+    var rr = borrow x; // error[N0246]
+}

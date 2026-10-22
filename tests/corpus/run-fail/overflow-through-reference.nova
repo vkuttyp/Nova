@@ -1,0 +1,11 @@
+fn add(target: borrow mut u8, v: u8) {
+    target += v; // expect-panic: integer overflow
+}
+
+fn main() {
+    var x: u8 = 200;
+    add(mut x, 50);
+    Console.writeLine(x);
+    add(mut x, 10);
+}
+// expect-stdout: 250

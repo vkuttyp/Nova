@@ -58,7 +58,7 @@ public static class CBackend
             return null;
         }
 
-        nir = NirBuilder.Build(compilation.Hir, compilation.Types);
+        nir = compilation.Nir ?? throw new InvalidOperationException("the compilation has no NIR");
         var mainSource = CEmitter.Emit(nir, compilation.Symbols, compilation.Types, compilation.Units.Select(u => u.Source));
         return new CProgram([new(CProgram.MainFileName, mainSource), .. HostedRuntime]);
     }

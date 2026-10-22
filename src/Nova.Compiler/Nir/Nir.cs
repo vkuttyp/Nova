@@ -78,17 +78,37 @@ public sealed class NirBlock
 
 public abstract record NirOperand(NovaType Type);
 
-/// <summary>A local or a field path rooted at one: <c>_3</c>, <c>_3.a.b</c>.</summary>
-public sealed record NirPlace(NirLocal Local, ImmutableArray<StructField> Path)
+/// <summary>A local followed by projections: <c>_3</c>, <c>_3.a.b</c>, <c>(*_2).f</c>.</summary>
+public sealed record NirPlace(NirLocal Local, ImmutableArray<Projection> Projections)
 {
     public NirPlace(NirLocal local)
         : this(local, [])
     {
     }
 
-    public NovaType Type => Path.IsEmpty ? Local.Type : Path[^1].Type;
+    public NovaType Type
+    {
+        get
+        {
+            var type = Local.Type;
+            foreach (var projection in Projections)
+            {
+                type = projection.IsDeref ? type.Pointee! : projection.Field!.Type;
+            }
+            return type;
+        }
+    }
 
-    public NirPlace Field(StructField field) => new(Local, Path.Add(field));
+    public bool IsLocal => Projections.IsEmpty;
+
+    public NirPlace Field(StructField field) => new(Local, Projections.Add(new Projection(field)));
+
+    public NirPlace Deref() => new(Local, Projections.Add(Projection.Deref));
+
+    public bool Equals(NirPlace? other) =>
+        other is not null && other.Local == Local && Projections.SequenceEqual(other.Projections);
+
+    public override int GetHashCode() => HashCode.Combine(Local, Projections.Length);
 }
 
 /// <summary>Reads (copies) the value in a place.</summary>
@@ -121,6 +141,9 @@ public sealed record NirCast(NirOperand Operand, NovaType Type) : NirRvalue(Type
 
 public sealed record NirTruncate(NirOperand Operand, NovaType Type) : NirRvalue(Type);
 
+/// <summary><c>&amp;place</c>: creates a loan of <see cref="Place"/> (lifetimes.md §2).</summary>
+public sealed record NirRef(bool IsMutable, NirPlace Place, NovaType Type) : NirRvalue(Type);
+
 /// <summary>A struct value built from its field values, given in declaration order.</summary>
 public sealed record NirAggregate(ImmutableArray<NirOperand> Fields, NovaType Type) : NirRvalue(Type);
 
@@ -130,14 +153,24 @@ public sealed record NirBuiltin(BuiltinFunction Function, ImmutableArray<NirOper
 
 // ---- Statements and terminators ----
 
-public abstract record NirStatement;
+/// <summary>A statement. <see cref="Span"/> is the source construct it came from (for diagnostics).</summary>
+public abstract record NirStatement
+{
+    public TextSpan Span { get; init; }
+}
+
+/// <summary>The local's storage ends: scope exit, or the end of the statement for a temporary.</summary>
+public sealed record NirStorageDead(NirLocal Local) : NirStatement;
 
 public sealed record NirAssign(NirPlace Target, NirRvalue Value) : NirStatement;
 
 /// <summary>Evaluates an rvalue for its effect (a call whose result is unused).</summary>
 public sealed record NirEval(NirRvalue Value) : NirStatement;
 
-public abstract record NirTerminator;
+public abstract record NirTerminator
+{
+    public TextSpan Span { get; init; }
+}
 
 public sealed record NirGoto(NirBlock Target) : NirTerminator;
 

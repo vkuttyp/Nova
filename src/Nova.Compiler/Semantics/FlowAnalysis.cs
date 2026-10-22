@@ -78,11 +78,11 @@ internal sealed class FlowAnalysis
                 {
                     var target = assign.Target;
                     // `x += 1` reads x; `p.f = e` needs p fully assigned (no partial initialisation in M2a).
-                    if (assign.Op is not null || !target.Path.IsEmpty)
+                    if (assign.Op is not null || !target.IsLocal)
                     {
                         Read(target.Root, assign.Span, state);
                     }
-                    if (target.Path.IsEmpty)
+                    if (target.IsLocal)
                     {
                         state.Set(target.Root.Id, true);
                     }
@@ -181,6 +181,15 @@ internal sealed class FlowAnalysis
                 return Expr(cast.Operand, state);
             case HirFieldAccess field:
                 return Expr(field.Target, state);
+            case HirBorrow borrow:
+                Read(borrow.Place.Root, borrow.Span, state); // borrowing reads the place's storage
+                return state;
+            case HirBorrowTemp temp:
+                return Expr(temp.Value, state);
+            case HirReborrow reborrow:
+                return Expr(reborrow.Reference, state);
+            case HirDeref deref:
+                return Expr(deref.Reference, state);
             case HirStructLiteral literal:
                 return Arguments(literal.Fields.Select(f => f.Value), state, literal.Type);
             case HirTruncate truncate:

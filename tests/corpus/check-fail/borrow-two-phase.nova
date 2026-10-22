@@ -1,0 +1,16 @@
+// B5: the receiver's mutable loan starts after the arguments; it still conflicts with loans they hold.
+struct C {
+    n: i64;
+    fn add(borrow mut this, v: borrow mut i64) { this.n += v; }
+    fn addValue(borrow mut this, v: i64) { this.n += v; }
+}
+fn argumentHoldsFieldBorrow() {
+    var c = C { n: 1 };
+    c.add(mut c.n); // error[N0241]
+}
+fn argumentHoldsWholeBorrow() {
+    var c = C { n: 1 };
+    let r = borrow c;
+    c.addValue(1); // error[N0241]
+    Console.writeLine(r.n);
+}

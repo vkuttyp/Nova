@@ -9,7 +9,7 @@ writes its spec section first, then the code and tests.
 | # | Content | Spec sections | Status |
 |---|---|---|---|
 | **2a** | **Structs as plain-data value types**: declarations, struct literals, field read and write, nested structs, methods with a by-value `this`, static functions (`Point.origin()`), target layout with C static asserts | grammar §2, type-system §12 | **done 2026-10-22** |
-| 2b | **References**: `borrow T`, `borrow mut T`, borrow expressions, implicit call-site borrows and `mut x`, `borrow this` / `borrow mut this` receivers, auto-deref of field access. NIR places and loans. **NLL borrow checker** (B1–B5), return elision (E1–E2), no scoped fields (E3) | lifetimes.md, type-system §13 | planned |
+| 2b | **References**: `borrow T`, `borrow mut T`, borrow expressions, implicit call-site borrows and `mut x`, `borrow this` / `borrow mut this` receivers, auto-deref of field access. NIR places and loans. **NLL borrow checker** (B1–B5), return elision (E1–E2), no scoped fields (E3) | lifetimes.md, type-system §13 | **done 2026-10-22** |
 | 2c | **Move types and destruction**: `drop { }` blocks, implicit `Copy` (OD-7) versus move types, moves and `move x`, partial moves, init/move analysis on NIR (O2–O5, replacing the HIR flow analysis), drop elaboration with drop flags (O4), `using` (R3), `defer` | ownership.md §2–3, type-system §14 | planned |
 | 2d | **Enums and arrays**: `enum` with payloads, exhaustive `match`, fixed arrays `[T; N]`, `Slice<T>` / `SliceMut<T>` from arrays, bounds checks, `for x in slice` | grammar, type-system §15 | planned |
 
@@ -47,3 +47,25 @@ Not in 2a:
 - generic structs;
 - `borrow this` (2b);
 - `drop` (2c).
+
+## Invariant coverage (criterion 1), as of 2b
+
+Must-fail tests are in `tests/corpus/check-fail/`. Near-misses (programs that must be accepted)
+are in `tests/corpus/check-pass/borrows-accepted.nova`.
+
+| Invariant | Must-fail tests | Near-miss passes |
+|---|---|---|
+| B1 XOR aliasing | borrow-conflicts: `twoMutableBorrows`, `sharedThenMutable`, `mutableThenShared`; borrow-two-phase: 2 | `disjointFields`, `manySharedBorrows` |
+| B2 loan validity | borrow-conflicts: `writeWhileShared`, `compoundWriteWhileShared`, `readWhileMut`, `passWhileMut`, `wholeWhileFieldBorrowed`, `fieldWhileWholeBorrowed`; borrow-temporaries: 2 | `mutableThenSharedAfterUse`, `temporaryUsedWithinStatement` |
+| B3 liveness (NLL) | borrow-conflicts: `inLoop` (loan live across iterations), `writeWhileShared` | `borrowEndsBeforeWrite`, `borrowInLoopBody` |
+| B4 reborrow | borrow-reborrow: 3 | `reborrowEndsThenOriginalUsable` |
+| B5 two-phase | borrow-two-phase: 2 | `twoPhaseMethodCall` |
+| E1 no return of local data | borrow-returns: 3 | `returnsFieldOfParameter` |
+| E2 return sources | borrow-returns: 2; reference-types: 5 | `returnsListedParameter` |
+| E3 no scoped fields | reference-types: struct field, constant | n/a (a type rule) |
+| O1–O5 | in 2c | in 2c |
+
+Still to do for criterion 1:
+- O1–O5 (2c);
+- the mutation suite (criterion 3);
+- raising the count to ≥ 120 by 2d.

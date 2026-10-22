@@ -1,0 +1,41 @@
+struct Point { x: i32; y: i32; }
+struct Rect {
+    min: Point;
+    max: Point;
+    fn area(borrow this) -> i32 => (this.max.x - this.min.x) * (this.max.y - this.min.y);
+    fn grow(borrow mut this, by: i32) {
+        this.max.x += by;
+        this.max.y += by;
+    }
+    fn corner(borrow mut this) -> borrow mut Point => borrow mut this.max;
+}
+
+fn swap(a: borrow mut i32, b: borrow mut i32) {
+    let t = a + 0;
+    a = b;
+    b = t;
+}
+
+fn sumAll(r: borrow Rect) -> i32 => r.min.x + r.min.y + r.max.x + r.max.y;
+
+fn main() {
+    var r = Rect { min: Point { x: 0, y: 0 }, max: Point { x: 2, y: 3 } };
+    Console.writeLine(r.area());
+    r.grow(2);
+    Console.writeLine(r.area());
+    let c = r.corner();
+    c.x = 10;
+    Console.writeLine(r.area());
+    swap(mut r.min.x, mut r.min.y);
+    r.min.y = 1;
+    swap(mut r.min.x, mut r.min.y);
+    Console.writeLine(r.min.x);
+    Console.writeLine(r.min.y);
+    Console.writeLine(sumAll(r));
+}
+// expect-stdout: 6
+// expect-stdout: 20
+// expect-stdout: 50
+// expect-stdout: 1
+// expect-stdout: 0
+// expect-stdout: 16

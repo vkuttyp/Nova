@@ -28,6 +28,8 @@ public enum TypeKind
     Error,
     /// <summary>A user-defined struct (type-system.md §12); see <see cref="NovaType.Struct"/>.</summary>
     Struct,
+    /// <summary><c>borrow T</c> / <c>borrow mut T</c> (type-system.md §13); see <see cref="NovaType.Pointee"/>.</summary>
+    Reference,
 }
 
 public sealed class StructField
@@ -51,6 +53,16 @@ public sealed class StructField
 
     /// <summary>Byte offset in the target layout (set by <see cref="TypeTable.LayoutOf"/>).</summary>
     public int Offset { get; internal set; }
+}
+
+/// <summary>One step of a place: a struct field, or <c>Deref</c> (through a reference) when <see cref="Field"/> is null.</summary>
+public readonly record struct Projection(StructField? Field)
+{
+    public static Projection Deref => default;
+
+    public bool IsDeref => Field is null;
+
+    public override string ToString() => IsDeref ? "*" : $"field {Field!.Index}";
 }
 
 /// <summary>The members of a struct type. Filled in by the type checker after all items are declared.</summary>
@@ -94,6 +106,13 @@ public sealed class NovaType
     internal NovaType(string name, StructDefinition definition)
         : this(TypeKind.Struct, name) => Struct = definition;
 
+    internal NovaType(NovaType pointee, bool isMutable)
+        : this(TypeKind.Reference, (isMutable ? "borrow mut " : "borrow ") + pointee.Name)
+    {
+        Pointee = pointee;
+        IsMutableReference = isMutable;
+    }
+
     internal NovaType(TypeKind kind, string name, int bits = 0, bool isSigned = false)
     {
         Kind = kind;
@@ -111,6 +130,14 @@ public sealed class NovaType
 
     /// <summary>The definition of a struct type; null for every other kind.</summary>
     public StructDefinition? Struct { get; }
+
+    /// <summary>The referent type of a reference; null for every other kind.</summary>
+    public NovaType? Pointee { get; }
+
+    /// <summary>True for <c>borrow mut T</c>.</summary>
+    public bool IsMutableReference { get; }
+
+    public bool IsReference => Kind == TypeKind.Reference;
 
     public string Name { get; }
 
@@ -188,6 +215,20 @@ public sealed class TypeTable
     public static NovaType CreateStruct(string name, StructDecl syntax, SourceText source) =>
         new(name, new StructDefinition(syntax, source));
 
+    private readonly Dictionary<(NovaType, bool), NovaType> _references = [];
+
+    /// <summary>The unique reference type to <paramref name="pointee"/> (types are compared by reference).</summary>
+    public NovaType ReferenceTo(NovaType pointee, bool isMutable)
+    {
+        ArgumentNullException.ThrowIfNull(pointee);
+        if (!_references.TryGetValue((pointee, isMutable), out var reference))
+        {
+            reference = new NovaType(pointee, isMutable);
+            _references.Add((pointee, isMutable), reference);
+        }
+        return reference;
+    }
+
     /// <summary>
     /// Size and alignment for the target, by C's rules (type-system.md §12). Struct field offsets are
     /// stored on the fields. An empty struct is given one byte, because the C backend emits a placeholder
@@ -202,6 +243,8 @@ public sealed class TypeTable
                 return (type.Bits / 8, type.Bits / 8);
             case TypeKind.Bool:
                 return (1, 1);
+            case TypeKind.Reference:
+                return (8, 8); // LP64 targets only in M2 (TargetInfo.PointerBits is asserted in the generated C)
             case TypeKind.Struct:
             {
                 var definition = type.Struct!;

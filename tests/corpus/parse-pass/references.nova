@@ -1,0 +1,17 @@
+struct Counter {
+    count: u32;
+    fn get(borrow this) -> u32 => this.count;
+    fn bump(borrow mut this, by: u32) { this.count += by; }
+    fn slot(borrow mut this) -> borrow mut u32 => borrow mut this.count;
+}
+
+fn pick(a: borrow i64, b: borrow mut i64) -> borrow(a, b) i64 => a;
+fn same(v: borrow(this) i64) { }
+
+fn use(c: borrow mut Counter) {
+    var x: i64 = 1;
+    let r = borrow x;
+    let m = borrow mut x;
+    reset(mut x, mut c.count, borrow -x);
+    c.bump(r + 1);
+}

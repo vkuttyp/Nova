@@ -55,8 +55,15 @@ public sealed class HirPrinter
 
     private string Local(HirLocal local) => $"{_symbols.GetName(local.Name)}#{local.Id}";
 
-    private string Place(HirPlace place) =>
-        Local(place.Root) + string.Concat(place.Path.Select(f => "." + _symbols.GetName(f.Name)));
+    private string Place(HirPlace place)
+    {
+        var text = Local(place.Root);
+        foreach (var projection in place.Projections)
+        {
+            text = projection.IsDeref ? $"(*{text})" : $"{text}.{_symbols.GetName(projection.Field!.Name)}";
+        }
+        return text;
+    }
 
     private void Nested(string head, params HirStmt?[] children)
     {
@@ -141,6 +148,10 @@ public sealed class HirPrinter
         HirStructLiteral s => s.Fields.IsEmpty
             ? $"(new {s.Type})"
             : $"(new {s.Type} {string.Join(" ", s.Fields.Select(f => $"({_symbols.GetName(f.Field.Name)} {Expr(f.Value)})"))})",
+        HirBorrow b => $"({(b.IsMutable ? "borrow-mut" : "borrow")} {Place(b.Place)})",
+        HirBorrowTemp b => $"({(b.IsMutable ? "borrow-mut-temp" : "borrow-temp")} {Expr(b.Value)})",
+        HirReborrow r => $"({(r.IsMutable ? "reborrow-mut" : "reborrow")} {Expr(r.Reference)})",
+        HirDeref d => $"(deref {Expr(d.Reference)}):{d.Type}",
         HirError => "<error>",
         _ => throw new InvalidOperationException($"unknown HIR expression {expr.GetType().Name}"),
     };

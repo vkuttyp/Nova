@@ -48,8 +48,15 @@ public sealed record FunctionDecl(
     Expr? ExpressionBody,
     TextSpan Span) : Item(Visibility, Name, Span);
 
-/// <summary>The <c>this</c> receiver of a method. M2a: by value only.</summary>
-public sealed record Receiver(TextSpan Span) : SyntaxNode(Span);
+public enum ReceiverKind
+{
+    Value,
+    Borrow,
+    BorrowMut,
+}
+
+/// <summary>The <c>this</c> receiver of a method: <c>this</c>, <c>borrow this</c> or <c>borrow mut this</c>.</summary>
+public sealed record Receiver(ReceiverKind Kind, TextSpan Span) : SyntaxNode(Span);
 
 public sealed record StructDecl(
     Visibility Visibility,
@@ -76,6 +83,15 @@ public abstract record TypeSyntax(TextSpan Span) : SyntaxNode(Span);
 public sealed record NamedType(QualifiedName Name, TextSpan Span) : TypeSyntax(Span);
 
 public sealed record MissingType(TextSpan Span) : TypeSyntax(Span);
+
+/// <summary>
+/// <c>borrow T</c>, <c>borrow mut T</c>; <see cref="Sources"/> is the <c>(a, b)</c> list allowed in
+/// return types (lifetimes.md §7), default when absent.
+/// </summary>
+public sealed record ReferenceType(bool IsMutable, ImmutableArray<Identifier> Sources, TypeSyntax Pointee, TextSpan Span) : TypeSyntax(Span)
+{
+    public bool HasSources { get; init; }
+}
 
 // ---- Statements ----
 
@@ -182,6 +198,12 @@ public sealed record MemberExpr(Expr Target, Identifier Member, TextSpan Span) :
 public sealed record ErrorExpr(TextSpan Span) : Expr(Span);
 
 public sealed record ThisExpr(TextSpan Span) : Expr(Span);
+
+/// <summary><c>borrow e</c> or <c>borrow mut e</c>.</summary>
+public sealed record BorrowExpr(bool IsMutable, Expr Operand, TextSpan Span) : Expr(Span);
+
+/// <summary><c>mut e</c>: only as a call argument for a <c>borrow mut</c> parameter.</summary>
+public sealed record MutArgExpr(Expr Operand, TextSpan Span) : Expr(Span);
 
 /// <summary><c>S { f: e, ... }</c>; initialisers in source order.</summary>
 public sealed record StructLiteralExpr(Identifier TypeName, ImmutableArray<FieldInit> Fields, TextSpan Span) : Expr(Span);

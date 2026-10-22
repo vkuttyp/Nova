@@ -1,0 +1,69 @@
+// B1 and B2: conflicting accesses while a loan is live (lifetimes.md §4-5).
+struct P { a: i64; b: i64; }
+fn writeWhileShared() {
+    var x: i64 = 1;
+    let r = borrow x;
+    x = 2; // error[N0240]
+    Console.writeLine(r);
+}
+fn compoundWriteWhileShared() {
+    var x: i64 = 1;
+    let r = borrow x;
+    x += 2; // error[N0240]
+    Console.writeLine(r);
+}
+fn readWhileMut() {
+    var x: i64 = 1;
+    let r = borrow mut x;
+    Console.writeLine(x); // error[N0242]
+    r = 3;
+}
+fn twoMutableBorrows() {
+    var x: i64 = 1;
+    let a = borrow mut x;
+    let b = borrow mut x; // error[N0241]
+    a = 2;
+    b = 3;
+}
+fn sharedThenMutable() {
+    var x: i64 = 1;
+    let a = borrow x;
+    let b = borrow mut x; // error[N0241]
+    b = 2;
+    Console.writeLine(a);
+}
+fn mutableThenShared() {
+    var x: i64 = 1;
+    let a = borrow mut x;
+    let b = borrow x; // error[N0241]
+    a = 2;
+    Console.writeLine(b);
+}
+fn wholeWhileFieldBorrowed() {
+    var p = P { a: 1, b: 2 };
+    let ra = borrow p.a;
+    p = P { a: 5, b: 6 }; // error[N0240]
+    Console.writeLine(ra);
+}
+fn fieldWhileWholeBorrowed() {
+    var p = P { a: 1, b: 2 };
+    let all = borrow mut p;
+    p.b = 3; // error[N0240]
+    all.a = 4;
+}
+fn passWhileMut() {
+    var x: i64 = 1;
+    let m = borrow mut x;
+    Console.writeLine(x + 1); // error[N0242]
+    m = 2;
+}
+fn inLoop() {
+    var x: i64 = 0;
+    let r = borrow x;
+    var i = 0;
+    while (i < 3) {
+        x += 1; // error[N0240]
+        Console.writeLine(r);
+        i += 1;
+    }
+}

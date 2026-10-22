@@ -89,7 +89,12 @@ public sealed class AstPrinter
         var parts = fn.Parameters.Select(p => $"({Name(p.Name)} {Type(p.Type)})");
         if (fn.Receiver is not null)
         {
-            parts = parts.Prepend("this");
+            parts = parts.Prepend(fn.Receiver.Kind switch
+            {
+                ReceiverKind.Borrow => "(borrow this)",
+                ReceiverKind.BorrowMut => "(borrow mut this)",
+                _ => "this",
+            });
         }
         var parameters = string.Join(" ", parts);
         var returns = fn.ReturnType is null ? "" : $" (returns {Type(fn.ReturnType)})";
@@ -208,6 +213,8 @@ public sealed class AstPrinter
         MemberExpr m => $"(. {Expr(m.Target)} {_symbols.GetName(m.Member.Name)})",
         ErrorExpr => "<error>",
         ThisExpr => "this",
+        BorrowExpr b => $"({(b.IsMutable ? "borrow-mut" : "borrow")} {Expr(b.Operand)})",
+        MutArgExpr m => $"(mut-arg {Expr(m.Operand)})",
         StructLiteralExpr s => s.Fields.IsEmpty
             ? $"(new {Name(s.TypeName)})"
             : $"(new {Name(s.TypeName)} {string.Join(" ", s.Fields.Select(f => $"({Name(f.Name)} {Expr(f.Value)})"))})",
@@ -218,6 +225,7 @@ public sealed class AstPrinter
     {
         NamedType n => Name(n.Name),
         MissingType => "<missing-type>",
+        ReferenceType r => $"({(r.IsMutable ? "borrow-mut" : "borrow")}{(r.HasSources ? "(" + string.Join(" ", r.Sources.Select(Name)) + ")" : "")} {Type(r.Pointee)})",
         _ => throw new InvalidOperationException($"unknown type syntax {type.GetType().Name}"),
     };
 

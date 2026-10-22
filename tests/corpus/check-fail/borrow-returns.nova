@@ -1,0 +1,16 @@
+// E1 and E2: returned references (lifetimes.md §7).
+struct P { a: i64; fn local(borrow this) -> borrow i64 { let copy = this.a; return borrow copy; } } // error[N0244]
+fn returnsLocal(p: borrow i64) -> borrow i64 {
+    let x: i64 = 1;
+    return borrow x; // error[N0244]
+}
+fn returnsTemporary(p: borrow i64) -> borrow i64 {
+    return same(5); // error[N0244]
+}
+fn same(v: borrow i64) -> borrow i64 => v;
+fn returnsUnlisted(a: borrow i64, b: borrow i64) -> borrow(a) i64 {
+    return b; // error[N0245]
+}
+fn returnsUnlistedThroughCall(a: borrow i64, b: borrow i64) -> borrow(a) i64 {
+    return same(b); // error[N0245]
+}

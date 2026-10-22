@@ -1,0 +1,26 @@
+fn addTo(total: borrow mut u64, value: u64) { total += value; }
+fn fib(n: u32, a: borrow mut u64, b: borrow mut u64) {
+    var i: u32 = 0;
+    while (i < n) {
+        let next = a + b;
+        a = b;
+        b = next;
+        i += 1;
+    }
+}
+
+fn main() {
+    var total: u64 = 0;
+    var i: u64 = 1;
+    while (i <= 100) {
+        addTo(mut total, i);
+        i += 1;
+    }
+    Console.writeLine(total);
+    var a: u64 = 0;
+    var b: u64 = 1;
+    fib(90, mut a, mut b);
+    Console.writeLine(a);
+}
+// expect-stdout: 5050
+// expect-stdout: 2880067194370816120

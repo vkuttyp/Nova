@@ -1,0 +1,27 @@
+struct Counter {
+    count: u32;
+    fn get(borrow this) -> u32 => this.count;
+    fn bump(borrow mut this, by: u32) { this.count += by; }
+    fn slot(borrow mut this) -> borrow mut u32 => borrow mut this.count;
+}
+
+fn twice(v: borrow i64) -> i64 => v * 2;
+fn reset(v: borrow mut i64) { v = 0; }
+fn larger(a: borrow i64, b: borrow i64) -> borrow(a, b) i64 {
+    if (a > b) { return a; }
+    return b;
+}
+fn make() -> Counter => Counter { count: 7 };
+
+fn demo() -> u32 {
+    var x: i64 = 21;
+    let doubled = twice(x) + twice(5);
+    let r = borrow x;
+    let sum = r + doubled;
+    reset(mut x);
+    var c = Counter { count: 1 };
+    c.bump(c.get());
+    let slot = c.slot();
+    slot += 100;
+    return c.count + make().get() + truncate<u32>(sum);
+}

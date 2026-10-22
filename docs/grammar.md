@@ -90,7 +90,7 @@ Visibility = 'public' | 'internal' | 'private'
 
 FunctionDecl = 'fn' Identifier '(' ParamList? ')' ('->' Type)? FunctionBody
 ParamList    = (Receiver | Param) (',' Param)* ','?
-Receiver     = 'this'                     (* M2a: by value. M2b adds 'borrow' 'mut'? 'this' *)
+Receiver     = ('borrow' 'mut'?)? 'this'   (* M2a: by value; M2b: reference receivers *)
 Param        = Identifier ':' Type
 
 StructDecl   = 'struct' Identifier '{' Member* '}'          (* M2a *)
@@ -100,7 +100,9 @@ FunctionBody = Block | '=>' Expr ';'
 
 ConstDecl = 'const' Identifier ':' Type '=' Expr ';'
 
-Type = QualifiedName          (* M1: named types only *)
+Type = QualifiedName
+     | 'borrow' 'mut'? Sources? Type          (* M2b references; Sources only in return types *)
+Sources = '(' Identifier (',' Identifier)* ')'
 
 Block = '{' Statement* '}'
 Statement = Block
@@ -143,7 +145,7 @@ comparisons, which are **non-associative**: `a < b < c` is error N0103.
 | 8 | `+ -` | |
 | 9 | `* / %` | |
 | 10 | `as` | `Expr 'as' Type`, left-assoc (`x as u32 as u64`) |
-| 11 | unary `- !` | prefix, right-assoc (`- -x`) |
+| 11 | unary `- !`, `borrow`, `borrow mut` | prefix, right-assoc (`- -x`) |
 | 12 | postfix: call `(...)`, member `.name` | |
 
 The ordering puts bitwise operators **above** comparisons (as in Rust and Swift), so
@@ -157,7 +159,8 @@ FieldInits = FieldInit (',' FieldInit)* ','?
 FieldInit  = Identifier ':' Expr
 GenericArgs = '<' Type (',' Type)* '>'      (* only when followed by '(' — see below *)
 Postfix = Primary ( '(' ArgList? ')' | '.' Identifier )*
-ArgList = Expr (',' Expr)* ','?
+ArgList = Arg (',' Arg)* ','?
+Arg     = 'mut' Expr | Expr                (* `mut x` for a `borrow mut` parameter, M2b *)
 ```
 
 **Generic arguments in expressions** (needed for `truncate<i64>(x)`): after an

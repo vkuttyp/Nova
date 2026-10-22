@@ -1,0 +1,32 @@
+struct P {
+    a: i64;
+    fn grow(borrow mut this) { this.a += 1; }
+    fn read(borrow this) -> i64 => this.a;
+}
+fn take(v: borrow mut i64) { }
+fn look(v: borrow i64) { }
+fn val(v: i64) { }
+fn five() -> i64 => 5;
+fn f(param: i64, shared: borrow P, unique: borrow mut P) {
+    let fixed: i64 = 1;
+    var free: i64 = 2;
+    let a = borrow 5; // error[N0247]
+    let b = borrow five(); // error[N0247]
+    let c = borrow mut fixed; // error[N0248]
+    let d = borrow mut param; // error[N0248]
+    let e = borrow mut shared.a; // error[N0248]
+    take(mut fixed); // error[N0248]
+    take(free); // error[N0249]
+    look(mut free); // error[N0249]
+    val(mut free); // error[N0249]
+    take(mut five()); // error[N0247]
+    let p = P { a: 1 };
+    p.grow(); // error[N0248]
+    shared.grow(); // error[N0248]
+    unique.grow();
+    let g = borrow shared; // error[N0246]
+    shared.a = 3; // error[N0211]
+    unique.a = 3;
+    take(shared.a); // error[N0249]
+    take(borrow free); // error[N0205]
+}

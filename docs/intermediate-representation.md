@@ -28,15 +28,17 @@ function  = locals: [local]          -- _0.._(n-1) are the parameters, in order
             blocks: [block]          -- bb0 is the entry block
 local     = id, type, name?          -- name is null for compiler temporaries
 block     = id, statements: [stmt], terminator
-place     = local ('.' field)*              -- M2a: field projections of struct values
+place     = local projection*                  -- projection = '.' field | Deref (M2a, M2b)
 stmt      = Assign(place, rvalue)
           | Eval(rvalue)             -- for calls whose result is unused (void)
+          | StorageDead(local)       -- scope end; temporaries at the end of their statement (M2b)
 rvalue    = Use(operand)
           | Binary(op, operand, operand, span)     -- op semantics: type-system.md §6 (may panic)
           | Unary(op, operand, span)
           | Cast(operand, type)                    -- lossless `as`
           | Truncate(operand, type)
           | Aggregate(struct, [operand])           -- field values in declaration order (M2a)
+          | Ref(Shared | Mut, place)               -- creates a loan (M2b; lifetimes.md)
           | Call(function, [operand])
           | Builtin(kind, [operand])               -- Console.write/writeLine
 operand   = Place(place) | Const(value, type) | String(text)
@@ -64,6 +66,17 @@ Lowering rules (HIR → NIR, `NirBuilder`):
 - Statements after a `return`, `break`, `continue`, `Process.exit` or never-typed call are
   unreachable and are not lowered. Blocks with no predecessors are not emitted.
 - Constants are already folded in HIR. NIR performs no optimisation in M1.
+
+- References (M2b):
+  - an explicit or implicit borrow becomes `t = Ref(k, place)`;
+  - auto-deref reads `(*r)`;
+  - a use of a `borrow mut` variable becomes `Ref(Mut, (*r))` (reborrow);
+  - a call-site borrow of a value spills it into a temporary, which gets `StorageDead` at the end of
+    the statement;
+  - for a `borrow mut this` receiver, the receiver's `Ref` is emitted after the other arguments (B5);
+  - every statement carries a source span for borrow diagnostics.
+- The **borrow checker** (`Analysis/BorrowChecker.cs`, `lifetimes.md`) runs on NIR inside
+  `Compilation.Create`, so `novac check` reports borrow errors too.
 
 Printed by `novac build --dump-nir`.
 

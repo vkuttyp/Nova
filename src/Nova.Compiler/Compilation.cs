@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
+using Nova.Compiler.Analysis;
 using Nova.Compiler.Diagnostics;
 using Nova.Compiler.Hir;
+using Nova.Compiler.Nir;
 using Nova.Compiler.Semantics;
 using Nova.Compiler.Syntax;
 
@@ -18,8 +20,10 @@ public sealed class Compilation
         SymbolTable symbols,
         TypeTable types,
         DiagnosticBag diagnostics,
-        HirProgram? hir)
+        HirProgram? hir,
+        NirProgram? nir)
     {
+        Nir = nir;
         Units = units;
         Symbols = symbols;
         Types = types;
@@ -38,6 +42,9 @@ public sealed class Compilation
     /// <summary>The checked program, or null when parsing failed. May still contain errors: check <see cref="Diagnostics"/>.</summary>
     public HirProgram? Hir { get; }
 
+    /// <summary>The NIR of a program that type-checked; borrow-checked. Null if earlier phases failed.</summary>
+    public NirProgram? Nir { get; }
+
     public static Compilation Create(IEnumerable<SourceText> sources, TargetInfo target)
     {
         ArgumentNullException.ThrowIfNull(sources);
@@ -49,10 +56,20 @@ public sealed class Compilation
         var units = sources.Select(source => Parser.ParseText(source, symbols, diagnostics)).ToImmutableArray();
 
         HirProgram? hir = null;
+        NirProgram? nir = null;
         if (!diagnostics.HasErrors)
         {
             hir = new TypeChecker(units, symbols, types, diagnostics).Check();
         }
-        return new Compilation(units, symbols, types, diagnostics, hir);
+        if (hir is not null && !diagnostics.HasErrors)
+        {
+            // Ownership analyses run on NIR (lifetimes.md), after type checking succeeded.
+            nir = NirBuilder.Build(hir, types);
+            foreach (var function in nir.Functions)
+            {
+                BorrowChecker.Check(function, symbols, diagnostics);
+            }
+        }
+        return new Compilation(units, symbols, types, diagnostics, hir, nir);
     }
 }

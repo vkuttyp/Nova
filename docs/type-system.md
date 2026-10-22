@@ -191,3 +191,72 @@ struct Point {
   `memory-model.md` §2). The compiler computes size, alignment and field offsets from `TargetInfo`.
   The generated C checks them with `_Static_assert` (`c-backend.md` §2), so a disagreement with the
   real C compiler fails the build instead of miscompiling.
+
+## 13. References (M2b)
+
+The algorithm that enforces these rules is in `lifetimes.md`.
+
+### 13.1 Types
+- `borrow T` (shared) and `borrow mut T` (exclusive), where `T` is any non-reference, non-`void`
+  type. `borrow borrow T` is rejected (N0246). At runtime a reference is a non-null pointer.
+- **Where references may appear (v0):**
+  - parameter types;
+  - `let` locals with an initialiser;
+  - return types (with a source list, §13.5).
+
+  They may **not** appear in struct fields (E3), constants, or `var` locals (N0246). Struct
+  fields of reference type need lifetime parameters (OD-3).
+- `borrow T` is Copy. A `borrow mut T` value is never copied: every use reborrows it (§13.3).
+
+### 13.2 Creating references
+- `borrow p` / `borrow mut p`, where `p` is a **place**: a local, `this`, a field path, or a path
+  through a reference such as `r.f` (`(*r).f`). Borrowing anything else is N0247; bind the value
+  to a local first.
+- `borrow mut p` requires `p` to be mutable: rooted at a `var` local, or reached through a
+  `borrow mut` reference (N0248). A `let` binding, a parameter, a by-value `this`, and anything
+  reached through a shared reference are immutable.
+- **Call sites.**
+  - A `borrow T` parameter accepts a place or value of type `T`, borrowed implicitly. A value
+    becomes a temporary that lives until the end of the statement.
+  - A `borrow T` parameter also accepts `borrow T` or `borrow mut T`; the latter is coerced by a
+    shared reborrow.
+  - A `borrow mut T` parameter accepts `mut p`, where `p` is a mutable place of type `T`, or a
+    `borrow mut T` value (reborrowed).
+
+  The `mut` marker is required for a plain place and is rejected where the parameter is not
+  `borrow mut` (N0249). It makes mutation visible at the call site, as C#'s `ref` does.
+- **Receivers.** `fn m(borrow this)` and `fn m(borrow mut this)` declare reference receivers;
+  `this` then has type `borrow S` / `borrow mut S`. In `e.m(…)` the receiver is borrowed
+  implicitly, with no marker. For `borrow mut this`, `e` must be a mutable place or a
+  `borrow mut S` value (N0248).
+
+### 13.3 Using references
+- **Auto-deref.** Where a value of type `T` is needed (an operand, a by-value argument, an
+  initialiser of type `T`, a return of type `T`, `Console.write`), a `borrow T` or
+  `borrow mut T` operand is read through: `*r`. Field access `r.f` and method calls
+  `r.m()` also look through references.
+- **Writes through references.** `r = v`, `r op= v` and `r.f = v` write to the referent. This
+  requires `borrow mut` (N0211: "cannot assign through a shared reference"). A reference local
+  itself can never be re-pointed.
+- **Reborrow of `borrow mut`.** Using a `borrow mut T` value as a call argument, an initialiser
+  or a return value creates a new mutable loan of `*r`. The original reference is unusable while
+  the new one is live, and usable again afterwards (B4).
+- References support no operators of their own: `==` compares the referents (via auto-deref).
+
+### 13.4 Borrow rules (summary of `lifetimes.md`)
+While a loan is live (the reference, or something derived from it, is used later), the borrowed
+place may not be:
+- written, mutably borrowed, or go out of scope, if the loan is shared;
+- accessed at all, if the loan is `borrow mut`.
+
+Diagnostics: N0240 (write), N0241 (conflicting borrow), N0242 (read while mutably borrowed),
+N0243 (out of scope or temporary dropped while borrowed).
+
+### 13.5 Returning references
+- A function returning `borrow T` / `borrow mut T` with exactly one reference parameter (counting
+  a reference receiver) returns something derived from that parameter.
+- Otherwise the return type names the sources: `fn longer(a: borrow T, b: borrow T) ->
+  borrow(a, b) T`. Missing, unknown or non-reference sources are N0245, and so is a
+  `borrow mut` result naming a shared parameter.
+- The body may only return references derived from the named parameters (N0245). A reference to
+  a local or temporary of the function is N0244.

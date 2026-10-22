@@ -1,0 +1,13 @@
+// lifetimes.md §6: a temporary dies at the end of its statement.
+struct P { a: i64; fn first(borrow this) -> borrow i64 => borrow this.a; }
+fn same(v: borrow i64) -> borrow i64 => v;
+fn make() -> P => P { a: 1 };
+fn five() -> i64 => 5;
+fn temporaryArgument() {
+    let r = same(five()); // error[N0243]
+    Console.writeLine(r);
+}
+fn temporaryReceiver() {
+    let r = make().first(); // error[N0243]
+    Console.writeLine(r);
+}

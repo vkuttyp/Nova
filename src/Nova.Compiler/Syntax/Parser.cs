@@ -237,9 +237,18 @@ public sealed class Parser
         Expect(TokenKind.OpenParen);
         Receiver? receiver = null;
         var moreParameters = true;
-        if (At(TokenKind.ThisKeyword))
+        var receiverStart = Current.Span.Start;
+        if (At(TokenKind.ThisKeyword)
+            || (At(TokenKind.BorrowKeyword) && (Peek(1).Kind == TokenKind.ThisKeyword
+                || (Peek(1).Kind == TokenKind.MutKeyword && Peek(2).Kind == TokenKind.ThisKeyword))))
         {
-            receiver = new Receiver(Advance().Span);
+            var kind = ReceiverKind.Value;
+            if (Eat(TokenKind.BorrowKeyword))
+            {
+                kind = Eat(TokenKind.MutKeyword) ? ReceiverKind.BorrowMut : ReceiverKind.Borrow;
+            }
+            Expect(TokenKind.ThisKeyword);
+            receiver = new Receiver(kind, SpanFrom(receiverStart));
             moreParameters = Eat(TokenKind.Comma);
         }
         var parameters = ImmutableArray.CreateBuilder<Parameter>();
@@ -420,6 +429,30 @@ public sealed class Parser
 
     private TypeSyntax ParseType()
     {
+        if (At(TokenKind.BorrowKeyword))
+        {
+            var start = Advance().Span.Start;
+            var isMutable = Eat(TokenKind.MutKeyword);
+            var sources = ImmutableArray<Identifier>.Empty;
+            var hasSources = false;
+            if (Eat(TokenKind.OpenParen))
+            {
+                hasSources = true;
+                var builder = ImmutableArray.CreateBuilder<Identifier>();
+                do
+                {
+                    // `this` may be named as a source too.
+                    builder.Add(At(TokenKind.ThisKeyword)
+                        ? new Identifier(_symbols.Intern("this"), Advance().Span)
+                        : ParseIdentifier());
+                }
+                while (Eat(TokenKind.Comma));
+                Expect(TokenKind.CloseParen);
+                sources = builder.ToImmutable();
+            }
+            var pointee = ParseType();
+            return new ReferenceType(isMutable, sources, pointee, SpanFrom(start)) { HasSources = hasSources };
+        }
         if (At(TokenKind.Identifier))
         {
             var name = ParseQualifiedName();
@@ -725,6 +758,13 @@ public sealed class Parser
     private Expr ParseUnary()
     {
         var start = Current.Span.Start;
+        if (At(TokenKind.BorrowKeyword))
+        {
+            Advance();
+            var isMutable = Eat(TokenKind.MutKeyword);
+            var operand = ParseUnary();
+            return new BorrowExpr(isMutable, operand, SpanFrom(start));
+        }
         if (At(TokenKind.Minus) || At(TokenKind.Bang))
         {
             var op = Advance().Kind == TokenKind.Minus ? UnaryOp.Negate : UnaryOp.Not;
@@ -746,7 +786,10 @@ public sealed class Parser
                 var arguments = ImmutableArray.CreateBuilder<Expr>();
                 while (!At(TokenKind.CloseParen) && !At(TokenKind.EndOfFile))
                 {
-                    arguments.Add(ParseExpr());
+                    var argumentStart = Current.Span.Start;
+                    arguments.Add(Eat(TokenKind.MutKeyword)
+                        ? new MutArgExpr(ParseExpr(), SpanFrom(argumentStart))
+                        : ParseExpr());
                     if (!Eat(TokenKind.Comma))
                     {
                         break;

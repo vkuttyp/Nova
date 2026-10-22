@@ -96,6 +96,24 @@ Semantic checks run only when every file parsed without errors.
 | N0233 | Method called as a static function, or a static function called on a value | `Point.sum()`, `p.origin()` |
 | N0234 | Field access, method call or literal on something that is not a struct | `n.x` with `n: i32` |
 
+### References and borrows (N0240–N0249; `lifetimes.md`)
+
+N0240–N0245 come from the NIR borrow checker. It runs only on programs that type-check, and its
+errors carry notes ("borrowed here", "the borrow is used later here").
+
+| Code | Meaning | Example |
+|---|---|---|
+| N0240 | Assignment to a place while it is borrowed (shared or mutable) | `let r = borrow x; x = 2; use(r)` |
+| N0241 | Borrow conflicting with a live borrow | two live `borrow mut x`, or `borrow mut x` while `borrow x` is live |
+| N0242 | Read of a place while it is mutably borrowed | `let m = borrow mut x; print(x); m = 1;` |
+| N0243 | A place or temporary goes out of scope while borrowed | `let r = same(five()); use(r)` |
+| N0244 | Returning a reference to a local or temporary (E1) | `return borrow x;` with `x` local |
+| N0245 | Return-source errors (E2): missing or invalid `borrow(...)` list, or a result derived from an unlisted parameter | `fn f(a: borrow T, b: borrow T) -> borrow T` |
+| N0246 | Reference in a disallowed position: struct field, constant, `var` local, reference to reference, source list outside a return type | `struct S { r: borrow i64; }` |
+| N0247 | `borrow` of something that is not a place | `borrow 5`, `take(mut five())` |
+| N0248 | `borrow mut` (or a `borrow mut this` call) on an immutable place | `borrow mut param`, `shared.grow()` |
+| N0249 | `mut` argument marker missing or misplaced | `take(x)` for `borrow mut`, `look(mut x)` for `borrow` |
+
 ### Build (N0300–N0399)
 
 | Code | Meaning | Example |

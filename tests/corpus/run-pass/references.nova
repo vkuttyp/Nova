@@ -1,0 +1,42 @@
+struct Counter {
+    count: u32;
+    fn get(borrow this) -> u32 => this.count;
+    fn bump(borrow mut this, by: u32) { this.count += by; }
+    fn slot(borrow mut this) -> borrow mut u32 => borrow mut this.count;
+}
+
+fn twice(v: borrow i64) -> i64 => v * 2;
+fn reset(v: borrow mut i64) { v = 0; }
+fn larger(a: borrow i64, b: borrow i64) -> borrow(a, b) i64 {
+    if (a > b) { return a; }
+    return b;
+}
+fn make() -> Counter => Counter { count: 7 };
+
+fn main() {
+    var x: i64 = 21;
+    Console.writeLine(twice(x));
+    Console.writeLine(twice(5));
+    let r = borrow x;
+    Console.writeLine(r + 1);
+    reset(mut x);
+    Console.writeLine(x);
+    var c = Counter { count: 1 };
+    c.bump(c.get());
+    c.bump(10);
+    Console.writeLine(c.get());
+    let slot = c.slot();
+    slot += 100;
+    Console.writeLine(c.count);
+    Console.writeLine(make().get());
+    var y: i64 = 3;
+    Console.writeLine(larger(x, y));
+}
+// expect-stdout: 42
+// expect-stdout: 10
+// expect-stdout: 22
+// expect-stdout: 0
+// expect-stdout: 12
+// expect-stdout: 112
+// expect-stdout: 7
+// expect-stdout: 3

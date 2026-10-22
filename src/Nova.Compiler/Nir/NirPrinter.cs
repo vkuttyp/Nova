@@ -38,8 +38,15 @@ public static class NirPrinter
     private static string Local(NirLocal local, SymbolTable symbols) =>
         local.Name is { } name ? $"_{local.Id}({symbols.GetName(name)})" : $"_{local.Id}";
 
-    private static string Place(NirPlace place, SymbolTable symbols) =>
-        Local(place.Local, symbols) + string.Concat(place.Path.Select(f => "." + symbols.GetName(f.Name)));
+    private static string Place(NirPlace place, SymbolTable symbols)
+    {
+        var text = Local(place.Local, symbols);
+        foreach (var projection in place.Projections)
+        {
+            text = projection.IsDeref ? $"(*{text})" : $"{text}.{symbols.GetName(projection.Field!.Name)}";
+        }
+        return text;
+    }
 
     private static string Operand(NirOperand operand, SymbolTable symbols) => operand switch
     {
@@ -57,6 +64,7 @@ public static class NirPrinter
         NirCast c => $"{Operand(c.Operand, symbols)} as {c.Type}",
         NirTruncate t => $"truncate<{t.Type}>({Operand(t.Operand, symbols)})",
         NirCall c => $"{symbols.GetName(c.Callee.Name)}({string.Join(", ", c.Arguments.Select(a => Operand(a, symbols)))})",
+        NirRef r => $"&{(r.IsMutable ? "mut " : "")}{Place(r.Place, symbols)}",
         NirAggregate a => $"{a.Type} {{ {string.Join(", ", a.Fields.Select(f => Operand(f, symbols)))} }}",
         NirBuiltin b => $"{b.Function}({string.Join(", ", b.Arguments.Select(a => Operand(a, symbols)))})",
         _ => rvalue.ToString(),
@@ -66,6 +74,7 @@ public static class NirPrinter
     {
         NirAssign a => $"{Place(a.Target, symbols)} = {Rvalue(a.Value, symbols)}",
         NirEval e => Rvalue(e.Value, symbols),
+        NirStorageDead d => $"StorageDead({Local(d.Local, symbols)})",
         _ => statement.ToString()!,
     };
 

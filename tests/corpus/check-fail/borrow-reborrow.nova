@@ -1,0 +1,23 @@
+// B4: a reborrow freezes the original reference while it is live.
+fn take(v: borrow mut i64) -> borrow mut i64 => v;
+fn originalWhileReborrowLive() {
+    var x: i64 = 1;
+    let a = borrow mut x;
+    let b = a;
+    a = 5; // error[N0240]
+    b = 6;
+}
+fn readOriginalWhileReborrowLive() {
+    var x: i64 = 1;
+    let a = borrow mut x;
+    let b = take(a);
+    Console.writeLine(a); // error[N0242]
+    b = 2;
+}
+fn sharedCoercionFreezesWrites() {
+    var x: i64 = 1;
+    let a = borrow mut x;
+    let s: borrow i64 = a;
+    a = 3; // error[N0240]
+    Console.writeLine(s);
+}

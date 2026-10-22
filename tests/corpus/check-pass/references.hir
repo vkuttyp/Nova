@@ -1,0 +1,56 @@
+(program
+  (fn twice ((v#0: borrow i64)) -> i64
+    (block
+      (return (* (deref v#0):i64 2:i64):i64)
+    )
+  )
+  (fn reset ((v#0: borrow mut i64)) -> void
+    (block
+      (= (*v#0) 0:i64)
+    )
+  )
+  (fn larger ((a#0: borrow i64) (b#1: borrow i64)) -> borrow i64
+    (block
+      (if (> (deref a#0):i64 (deref b#1):i64):bool
+        (block
+          (return a#0)
+        )
+      )
+      (return b#1)
+    )
+  )
+  (fn make () -> Counter
+    (block
+      (return (new Counter (count 7:u32)))
+    )
+  )
+  (fn demo () -> u32
+    (block
+      (var x#0: i64 = 21:i64)
+      (let doubled#1: i64 = (+ (call twice (borrow x#0)):i64 (call twice (borrow-temp 5:i64)):i64):i64)
+      (let r#2: borrow i64 = (borrow x#0))
+      (let sum#3: i64 = (+ (deref r#2):i64 doubled#1):i64)
+      (expr (call reset (borrow-mut x#0)):void)
+      (var c#4: Counter = (new Counter (count 1:u32)))
+      (expr (call Counter.bump (borrow-mut c#4) (call Counter.get (borrow c#4)):u32):void)
+      (let slot#5: borrow mut u32 = (call Counter.slot (borrow-mut c#4)):borrow mut u32)
+      (+= (*slot#5) 100:u32)
+      (return (+ (+ (. c#4 count):u32 (call Counter.get (borrow-temp (call make):Counter)):u32):u32 (truncate u32 sum#3)):u32)
+    )
+  )
+  (fn Counter.get ((this#0: borrow Counter)) -> u32
+    (block
+      (return (. (deref this#0):Counter count):u32)
+    )
+  )
+  (fn Counter.bump ((this#0: borrow mut Counter) (by#1: u32)) -> void
+    (block
+      (+= (*this#0).count by#1)
+    )
+  )
+  (fn Counter.slot ((this#0: borrow mut Counter)) -> borrow mut u32
+    (block
+      (return (borrow-mut (*this#0).count))
+    )
+  )
+)

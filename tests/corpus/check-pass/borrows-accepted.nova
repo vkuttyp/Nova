@@ -1,0 +1,72 @@
+// Near-misses: programs close to a borrow error that must be accepted (lifetimes.md §5).
+struct P {
+    a: i64;
+    b: i64;
+    fn first(borrow this) -> borrow i64 => borrow this.a;
+    fn len(borrow this) -> i64 => this.a + this.b;
+    fn push(borrow mut this, v: i64) { this.b += v; }
+}
+fn same(v: borrow i64) -> borrow i64 => v;
+fn bump(v: borrow mut i64) { v += 1; }
+
+fn borrowEndsBeforeWrite() -> i64 {
+    var x: i64 = 1;
+    let r = borrow x;
+    Console.writeLine(r);
+    x = 2;
+    return x;
+}
+fn mutableThenSharedAfterUse() -> i64 {
+    var x: i64 = 1;
+    let m = borrow mut x;
+    m = 5;
+    let s = borrow x;
+    return s + 0;
+}
+fn disjointFields() -> i64 {
+    var p = P { a: 1, b: 2 };
+    let ra = borrow mut p.a;
+    let rb = borrow mut p.b;
+    ra = 10;
+    rb = 20;
+    return p.a + p.b;
+}
+fn manySharedBorrows() -> i64 {
+    let x: i64 = 3;
+    let a = borrow x;
+    let b = borrow x;
+    let c = a;
+    return a + b + c + x;
+}
+fn reborrowEndsThenOriginalUsable() -> i64 {
+    var x: i64 = 1;
+    let a = borrow mut x;
+    bump(a);
+    bump(a);
+    a += 1;
+    return x;
+}
+fn twoPhaseMethodCall() -> i64 {
+    var p = P { a: 1, b: 2 };
+    p.push(p.len());
+    return p.b;
+}
+fn temporaryUsedWithinStatement() -> i64 {
+    Console.writeLine(same(5));
+    return P { a: 1, b: 2 }.first() + 0;
+}
+fn borrowInLoopBody() -> i64 {
+    var x: i64 = 0;
+    var i: i64 = 0;
+    while (i < 3) {
+        let r = borrow mut x;
+        r += i;
+        i += 1;
+    }
+    return x;
+}
+fn returnsFieldOfParameter(p: borrow P) -> borrow i64 => borrow p.b;
+fn returnsListedParameter(a: borrow i64, b: borrow i64) -> borrow(a, b) i64 {
+    if (a > b) { return a; }
+    return same(b);
+}

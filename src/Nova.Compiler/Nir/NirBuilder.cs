@@ -17,12 +17,17 @@ public sealed class NirBuilder
     private readonly List<NirLocal> _locals = [];
     private readonly List<NirBlock> _blocks = [];
     private readonly Stack<LoopTargets> _loops = new();
+    private readonly List<List<NirLocal>> _scopes = [];
+    private List<NirLocal>? _statementTemps;
     private NirBlock? _current;
+    private TextSpan _span;
 
-    private sealed class LoopTargets(NirBlock head, NirBlock exit)
+    private sealed class LoopTargets(NirBlock head, NirBlock exit, int scopeDepth)
     {
         public NirBlock Head { get; } = head;
         public NirBlock Exit { get; } = exit;
+        /// <summary>Number of open scopes at the loop; break/continue end the scopes above it.</summary>
+        public int ScopeDepth { get; } = scopeDepth;
         public bool ExitUsed { get; set; }
     }
 
@@ -94,15 +99,47 @@ public sealed class NirBuilder
     {
         var local = new NirLocal(_locals.Count, type, null);
         _locals.Add(local);
+        _statementTemps?.Add(local);
         return local;
     }
 
-    private void Emit(NirStatement statement) => _current!.Statements.Add(statement);
+    private void Emit(NirStatement statement) => _current!.Statements.Add(statement with { Span = _span });
 
     private void Terminate(NirTerminator terminator)
     {
-        _current!.Terminator = terminator;
+        _current!.Terminator = terminator with { Span = _span };
         _current = null;
+    }
+
+    /// <summary>Ends the storage of the locals in the scopes above <paramref name="depth"/>, innermost first.</summary>
+    private void EmitStorageDead(int depth)
+    {
+        for (var i = _scopes.Count - 1; i >= depth; i--)
+        {
+            for (var j = _scopes[i].Count - 1; j >= 0; j--)
+            {
+                Emit(new NirStorageDead(_scopes[i][j]));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Lowers one statement whose temporaries end with it (lifetimes.md §2): the temporaries get
+    /// StorageDead at the end of the statement if it completes.
+    /// </summary>
+    private void WithStatementTemps(Action lower)
+    {
+        var saved = _statementTemps;
+        _statementTemps = [];
+        lower();
+        if (_current is not null)
+        {
+            for (var i = _statementTemps.Count - 1; i >= 0; i--)
+            {
+                Emit(new NirStorageDead(_statementTemps[i]));
+            }
+        }
+        _statementTemps = saved;
     }
 
     // ---- Statements ----
@@ -114,33 +151,45 @@ public sealed class NirBuilder
             return; // unreachable code is not lowered
         }
 
+        _span = stmt.Span;
         switch (stmt)
         {
             case HirBlock block:
+                _scopes.Add([]);
                 foreach (var s in block.Statements)
                 {
                     LowerStmt(s);
                 }
-                break;
-            case HirLocalDecl decl when decl.Initializer is not null:
-                AssignRvalue(new NirPlace(_locals[decl.Local.Id]), decl.Initializer);
-                break;
-            case HirLocalDecl:
-                break;
-            case HirAssign { Op: null } assign:
-                AssignRvalue(ToPlace(assign.Target), assign.Value);
-                break;
-            case HirAssign assign:
-            {
-                var target = ToPlace(assign.Target);
-                var right = LowerOperand(assign.Value);
-                if (right is not null)
+                if (_current is not null)
                 {
-                    Emit(new NirAssign(target, new NirBinary(assign.Op!.Value, new NirPlaceOperand(target), right,
-                        target.Type, _function.Source, assign.Span)));
+                    _span = new TextSpan(block.Span.End, 0);
+                    EmitStorageDead(_scopes.Count - 1);
+                }
+                _scopes.RemoveAt(_scopes.Count - 1);
+                break;
+            case HirLocalDecl decl:
+                _scopes[^1].Add(_locals[decl.Local.Id]);
+                if (decl.Initializer is not null)
+                {
+                    WithStatementTemps(() => AssignRvalue(new NirPlace(_locals[decl.Local.Id]), decl.Initializer));
                 }
                 break;
-            }
+            case HirAssign { Op: null } assign:
+                WithStatementTemps(() => AssignRvalue(ToPlace(assign.Target), assign.Value));
+                break;
+            case HirAssign assign:
+                WithStatementTemps(() =>
+                {
+                    var target = ToPlace(assign.Target);
+                    var right = LowerOperand(assign.Value);
+                    if (right is not null)
+                    {
+                        _span = assign.Span;
+                        Emit(new NirAssign(target, new NirBinary(assign.Op!.Value, new NirPlaceOperand(target), right,
+                            target.Type, _function.Source, assign.Span)));
+                    }
+                });
+                break;
             case HirIf ifStmt:
                 LowerIf(ifStmt);
                 break;
@@ -174,12 +223,17 @@ public sealed class NirBuilder
             {
                 var loop = _loops.Peek();
                 loop.ExitUsed = true;
+                EmitStorageDead(loop.ScopeDepth);
                 Terminate(new NirGoto(loop.Exit));
                 break;
             }
             case HirContinue:
-                Terminate(new NirGoto(_loops.Peek().Head));
+            {
+                var loop = _loops.Peek();
+                EmitStorageDead(loop.ScopeDepth);
+                Terminate(new NirGoto(loop.Head));
                 break;
+            }
             case HirReturn ret:
             {
                 NirOperand? value = null;
@@ -191,14 +245,16 @@ public sealed class NirBuilder
                 break;
             }
             case HirExprStmt exprStmt:
-            {
-                var rvalue = LowerRvalue(exprStmt.Expression);
-                if (rvalue is not null)
+                WithStatementTemps(() =>
                 {
-                    Emit(new NirEval(rvalue));
-                }
+                    var rvalue = LowerRvalue(exprStmt.Expression);
+                    if (rvalue is not null)
+                    {
+                        _span = exprStmt.Span;
+                        Emit(new NirEval(rvalue));
+                    }
+                });
                 break;
-            }
             default:
                 throw new InvalidOperationException($"cannot lower {stmt.GetType().Name}");
         }
@@ -206,7 +262,7 @@ public sealed class NirBuilder
 
     private LoopTargets LowerLoopBody(HirBlock body, NirBlock head, NirBlock exit, NirBlock bodyStart)
     {
-        var targets = new LoopTargets(head, exit);
+        var targets = new LoopTargets(head, exit, _scopes.Count);
         _loops.Push(targets);
         _current = bodyStart;
         LowerStmt(body);
@@ -251,13 +307,15 @@ public sealed class NirBuilder
         _current = joinReached ? join : null;
     }
 
-    private NirPlace ToPlace(HirPlace place) => new(_locals[place.Root.Id], place.Path);
+    private NirPlace ToPlace(HirPlace place) => new(_locals[place.Root.Id], place.Projections);
 
     private void AssignRvalue(NirPlace target, HirExpr value)
     {
+        var statementSpan = _span;
         var rvalue = LowerRvalue(value);
         if (rvalue is not null)
         {
+            _span = statementSpan;
             Emit(new NirAssign(target, rvalue));
         }
     }
@@ -266,6 +324,20 @@ public sealed class NirBuilder
 
     /// <summary>Lowers to an operand, spilling into a temporary if needed; null if evaluation never completes.</summary>
     private NirOperand? LowerOperand(HirExpr expr)
+    {
+        var saved = _span;
+        _span = expr.Span;
+        try
+        {
+            return LowerOperandCore(expr);
+        }
+        finally
+        {
+            _span = saved;
+        }
+    }
+
+    private NirOperand? LowerOperandCore(HirExpr expr)
     {
         switch (expr)
         {
@@ -286,6 +358,14 @@ public sealed class NirBuilder
                 }
                 return new NirPlaceOperand(target.Place.Field(field.Field));
             }
+            case HirDeref deref:
+            {
+                if (LowerOperand(deref.Reference) is not NirPlaceOperand reference)
+                {
+                    return null;
+                }
+                return new NirPlaceOperand(reference.Place.Deref());
+            }
         }
 
         var rvalue = LowerRvalue(expr);
@@ -300,11 +380,47 @@ public sealed class NirBuilder
 
     private NirRvalue? LowerRvalue(HirExpr expr)
     {
+        var saved = _span;
+        _span = expr.Span;
+        try
+        {
+            return LowerRvalueCore(expr);
+        }
+        finally
+        {
+            _span = saved;
+        }
+    }
+
+    private NirRvalue? LowerRvalueCore(HirExpr expr)
+    {
         switch (expr)
         {
             case HirIntConst or HirBoolConst or HirLocalRef or HirStringConst:
                 return new NirUse(LowerOperand(expr)!);
-            case HirFieldAccess:
+            case HirBorrow borrow:
+                return new NirRef(borrow.IsMutable, ToPlace(borrow.Place), borrow.Type);
+            case HirBorrowTemp temp:
+            {
+                // The value lives in a temporary until the end of the statement (lifetimes.md §6).
+                var value = LowerRvalue(temp.Value);
+                if (value is null)
+                {
+                    return null;
+                }
+                var storage = NewTemp(temp.Value.Type);
+                Emit(new NirAssign(new NirPlace(storage), value));
+                return new NirRef(temp.IsMutable, new NirPlace(storage), temp.Type);
+            }
+            case HirReborrow reborrow:
+            {
+                if (LowerOperand(reborrow.Reference) is not NirPlaceOperand reference)
+                {
+                    return null;
+                }
+                return new NirRef(reborrow.IsMutable, reference.Place.Deref(), reborrow.Type);
+            }
+            case HirFieldAccess or HirDeref:
             {
                 var operand = LowerOperand(expr);
                 return operand is null ? null : new NirUse(operand);
@@ -347,6 +463,18 @@ public sealed class NirBuilder
             {
                 var operand = LowerOperand(truncate.Operand);
                 return operand is null ? null : new NirTruncate(operand, truncate.Type);
+            }
+            case HirCall call when call.Callee.ReceiverKind == ReceiverKind.BorrowMut
+                                   && call.Arguments[0] is HirBorrow or HirReborrow { Reference: HirLocalRef }:
+            {
+                // B5 (lifetimes.md §5): the receiver's mutable loan starts after the arguments are evaluated.
+                var arguments = LowerOperands(call.Arguments[1..]);
+                if (arguments.IsDefault)
+                {
+                    return null;
+                }
+                var receiver = LowerOperand(call.Arguments[0]);
+                return receiver is null ? null : new NirCall(call.Callee, [receiver, .. arguments], call.Type);
             }
             case HirCall call:
             {
@@ -406,6 +534,9 @@ public sealed class NirBuilder
         HirCast c => ContainsCall(c.Operand),
         HirTruncate t => ContainsCall(t.Operand),
         HirFieldAccess f => ContainsCall(f.Target),
+        HirDeref d => ContainsCall(d.Reference),
+        HirReborrow r => ContainsCall(r.Reference),
+        HirBorrowTemp t => ContainsCall(t.Value),
         HirStructLiteral s => s.Fields.Any(f => ContainsCall(f.Value)),
         _ => false,
     };

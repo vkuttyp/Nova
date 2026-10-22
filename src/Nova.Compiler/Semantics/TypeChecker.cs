@@ -151,6 +151,11 @@ internal sealed class TypeChecker
                     Error(DiagnosticCodes.Unsupported, c.Type.Span, "constants of struct type are not supported yet");
                     type = _types.Error;
                 }
+                else if (type.IsReference)
+                {
+                    Error(DiagnosticCodes.ReferenceNotAllowed, c.Type.Span, "constants cannot be references");
+                    type = _types.Error;
+                }
                 var entry = new ConstEntry(c, _source, new HirConst(name, type, _source, c.Span));
                 _items.Add(name, entry);
                 _constants.Add(entry);
@@ -162,12 +167,18 @@ internal sealed class TypeChecker
     /// <summary>Creates the HIR function for a top-level function or a struct member, resolving its signature.</summary>
     private HirFunction DeclareFunction(FunctionDecl fn, NovaType? owner)
     {
-        var returnType = fn.ReturnType is null ? _types.Void : ResolveType(fn.ReturnType, allowVoid: true);
+        var returnType = fn.ReturnType is null ? _types.Void : ResolveType(fn.ReturnType, allowVoid: true, allowSources: true);
         var hir = new HirFunction(_functions.Count, fn.Name.Name, returnType, _source, fn, owner);
         if (owner is not null && fn.Receiver is not null)
         {
-            // `this` is an immutable by-value binding of the struct type (type-system.md §12).
-            hir.AddLocal(_thisSymbol, owner, isMutable: false, isParameter: true, fn.Receiver.Span);
+            // `this` is an immutable binding: the struct by value, or a reference to it (type-system.md §12, §13.2).
+            var thisType = fn.Receiver.Kind switch
+            {
+                ReceiverKind.Borrow => _types.ReferenceTo(owner, isMutable: false),
+                ReceiverKind.BorrowMut => _types.ReferenceTo(owner, isMutable: true),
+                _ => owner,
+            };
+            hir.AddLocal(_thisSymbol, thisType, isMutable: false, isParameter: true, fn.Receiver.Span);
         }
         var seen = new HashSet<Symbol>();
         foreach (var parameter in fn.Parameters)
@@ -181,8 +192,57 @@ internal sealed class TypeChecker
             hir.AddLocal(parameter.Name.Name, type, isMutable: false, isParameter: true, parameter.Name.Span);
         }
         hir.Parameters = [.. hir.Locals];
+        if (returnType.IsReference)
+        {
+            hir.ReturnSources = ResolveReturnSources(fn, hir);
+        }
         _functions.Add(hir);
         return hir;
+    }
+
+    /// <summary>The parameters a returned reference may be derived from (type-system.md §13.5, lifetimes.md §7).</summary>
+    private ImmutableArray<int> ResolveReturnSources(FunctionDecl fn, HirFunction hir)
+    {
+        var syntax = (ReferenceType)fn.ReturnType!;
+        var referenceParameters = hir.Parameters.Where(p => p.Type.IsReference).ToList();
+        if (!syntax.HasSources)
+        {
+            if (referenceParameters.Count == 1)
+            {
+                var only = referenceParameters[0];
+                if (hir.ReturnType.IsMutableReference && !only.Type.IsMutableReference)
+                {
+                    Error(DiagnosticCodes.ReturnSourceMismatch, syntax.Span,
+                        $"a 'borrow mut' result cannot be derived from the shared reference parameter '{Name(only.Name)}'");
+                }
+                return [only.Id];
+            }
+            Error(DiagnosticCodes.ReturnSourceMismatch, syntax.Span, referenceParameters.Count == 0
+                ? "a function without reference parameters cannot return a reference: there is nothing it could borrow from"
+                : "this function has several reference parameters: name the ones the result is borrowed from, e.g. 'borrow(a, b) T'");
+            return [];
+        }
+
+        var sources = ImmutableArray.CreateBuilder<int>();
+        foreach (var source in syntax.Sources)
+        {
+            var parameter = hir.Parameters.FirstOrDefault(p => p.Name == source.Name);
+            if (parameter is null || !parameter.Type.IsReference)
+            {
+                Error(DiagnosticCodes.ReturnSourceMismatch, source.Span, parameter is null
+                    ? $"'{Name(source.Name)}' is not a parameter of '{Name(fn.Name.Name)}'"
+                    : $"'{Name(source.Name)}' is not a reference parameter, so the result cannot borrow from it");
+                continue;
+            }
+            if (hir.ReturnType.IsMutableReference && !parameter.Type.IsMutableReference)
+            {
+                Error(DiagnosticCodes.ReturnSourceMismatch, source.Span,
+                    $"a 'borrow mut' result cannot be derived from the shared reference parameter '{Name(source.Name)}'");
+                continue;
+            }
+            sources.Add(parameter.Id);
+        }
+        return sources.ToImmutable();
     }
 
     private void DeclareStruct(StructDecl decl)
@@ -212,6 +272,12 @@ internal sealed class TypeChecker
         foreach (var field in entry.Decl.Fields)
         {
             var type = ResolveType(field.Type, allowVoid: false);
+            if (type.IsReference)
+            {
+                Error(DiagnosticCodes.ReferenceNotAllowed, field.Type.Span,
+                    "struct fields cannot be references in v0 (they would need lifetime parameters)");
+                type = _types.Error;
+            }
             if (!memberNames.Add(field.Name.Name))
             {
                 Error(DiagnosticCodes.DuplicateMember, field.Name.Span,
@@ -274,8 +340,23 @@ internal sealed class TypeChecker
         }
     }
 
-    private NovaType ResolveType(TypeSyntax syntax, bool allowVoid)
+    private NovaType ResolveType(TypeSyntax syntax, bool allowVoid, bool allowSources = false)
     {
+        if (syntax is ReferenceType reference)
+        {
+            if (reference.HasSources && !allowSources)
+            {
+                Error(DiagnosticCodes.ReferenceNotAllowed, reference.Span,
+                    "a source list 'borrow(...)' is only allowed in a function's return type");
+            }
+            var pointee = ResolveType(reference.Pointee, allowVoid: false);
+            if (pointee.IsReference)
+            {
+                Error(DiagnosticCodes.ReferenceNotAllowed, reference.Span, "references to references are not supported");
+                return _types.Error;
+            }
+            return pointee.IsBottom ? _types.Error : _types.ReferenceTo(pointee, reference.IsMutable);
+        }
         if (syntax is not NamedType named)
         {
             return _types.Error;
@@ -564,6 +645,8 @@ internal sealed class TypeChecker
             initializer = CheckExpr(decl.Initializer, declared);
             if (declared is null)
             {
+                // A copy of a `borrow mut` variable is a reborrow (type-system.md §13.3).
+                initializer = Coerce(initializer, initializer.Type, decl.Initializer.Span);
                 type = initializer.Type;
                 if (type.Kind == TypeKind.Void)
                 {
@@ -575,6 +658,13 @@ internal sealed class TypeChecker
                     type = _types.Error;
                 }
             }
+        }
+
+        if (type.IsReference && decl.IsMutable)
+        {
+            Error(DiagnosticCodes.ReferenceNotAllowed, decl.Name.Span,
+                "a reference variable must be declared with 'let': references cannot be re-pointed (assigning to one writes through it)");
+            type = _types.Error;
         }
 
         if (LookupLocal(decl.Name.Name) is not null)
@@ -629,72 +719,218 @@ internal sealed class TypeChecker
         return new HirAssign(target, op, value, assign.Span);
     }
 
-    /// <summary>Resolves an assignment target to a place: a local or a field path rooted at one (type-system.md §12).</summary>
+    /// <summary>
+    /// Resolves an assignment target to a place (type-system.md §12, §13.3). Assigning to a reference
+    /// writes through it: the place gets a final Deref.
+    /// </summary>
     private HirPlace? ResolveAssignmentTarget(Expr target)
     {
-        var fieldNames = new List<Identifier>();
-        var root = target;
-        while (root is MemberExpr member)
+        if (target is NameExpr name && Lookup(name.Name.Name) is not HirLocal)
         {
-            fieldNames.Insert(0, member.Member);
-            root = member.Target;
+            if (Lookup(name.Name.Name) is null)
+            {
+                Error(DiagnosticCodes.UndefinedName, name.Span, $"cannot find '{Name(name.Name.Name)}' in this scope");
+            }
+            else
+            {
+                Error(DiagnosticCodes.AssignToImmutable, target.Span, $"cannot assign to '{Name(name.Name.Name)}': it is not a variable");
+            }
+            return null;
         }
-
-        HirLocal local;
-        string rootName;
-        switch (root)
+        if (target is not (NameExpr or MemberExpr or ThisExpr or ParenExpr))
         {
-            case ThisExpr thisExpr:
-                if (LookupLocal(_thisSymbol) is not { } receiver)
-                {
-                    Error(DiagnosticCodes.ThisOutsideMethod, thisExpr.Span, "'this' can only be used inside a method");
-                    return null;
-                }
-                local = receiver;
-                rootName = "this";
-                break;
-            case NameExpr name:
-                rootName = Name(name.Name.Name);
-                switch (Lookup(name.Name.Name))
-                {
-                    case HirLocal found:
-                        local = found;
-                        break;
-                    case null:
-                        Error(DiagnosticCodes.UndefinedName, name.Span, $"cannot find '{rootName}' in this scope");
-                        return null;
-                    default:
-                        Error(DiagnosticCodes.AssignToImmutable, target.Span, $"cannot assign to '{rootName}': it is not a variable");
-                        return null;
-                }
-                break;
-            default:
-                Error(DiagnosticCodes.Unsupported, target.Span, "only variables and their fields can be assigned");
-                return null;
-        }
-
-        if (!local.IsMutable)
-        {
-            var what = fieldNames.Count == 0 ? $"'{rootName}'" : $"a field of '{rootName}'";
-            var why = local.Name == _thisSymbol ? "'this' is immutable in a by-value method"
-                : local.IsParameter ? "parameters are immutable"
-                : $"'{rootName}' was declared with 'let'; use 'var' for a mutable variable";
-            Error(DiagnosticCodes.AssignToImmutable, target.Span, $"cannot assign to {what}: {why}");
+            Error(DiagnosticCodes.Unsupported, target.Span, "only variables, their fields, and places reached through references can be assigned");
             return null;
         }
 
-        var type = local.Type;
-        var path = ImmutableArray.CreateBuilder<StructField>(fieldNames.Count);
-        foreach (var fieldName in fieldNames)
+        var value = Synth(target, null);
+        if (value.Type.IsBottom)
         {
-            if (ResolveField(type, fieldName) is not { } field)
-            {
-                return null;
-            }
-            path.Add(field);
-            type = field.Type;
+            return null;
         }
-        return new HirPlace(local, path.MoveToImmutable(), type);
+        if (ToPlace(value) is not { } place)
+        {
+            Error(DiagnosticCodes.Unsupported, target.Span, "only variables, their fields, and places reached through references can be assigned");
+            return null;
+        }
+        if (place.Type.IsReference)
+        {
+            place = Project(place, Projection.Deref);
+        }
+        if (MutabilityError(place) is { } reason)
+        {
+            Error(DiagnosticCodes.AssignToImmutable, target.Span, $"cannot assign to {DescribePlace(place)}: {reason}");
+            return null;
+        }
+        return place;
+    }
+
+    /// <summary>The place an expression denotes, if it is one: a local, `this`, fields, and derefs (type-system.md §13.2).</summary>
+    private static HirPlace? ToPlace(HirExpr expr) => expr switch
+    {
+        HirLocalRef local => new HirPlace(local.Local, [], local.Type),
+        HirFieldAccess field when ToPlace(field.Target) is { } target => Project(target, new Projection(field.Field)),
+        HirDeref deref when ToPlace(deref.Reference) is { } target => Project(target, Projection.Deref),
+        _ => null,
+    };
+
+    private static HirPlace Project(HirPlace place, Projection projection) => new(
+        place.Root,
+        place.Projections.Add(projection),
+        projection.IsDeref ? place.Type.Pointee! : projection.Field!.Type);
+
+    /// <summary>Null if the place may be written or mutably borrowed; otherwise the reason it may not.</summary>
+    private string? MutabilityError(HirPlace place)
+    {
+        var mutable = place.Root.IsMutable;
+        var type = place.Root.Type;
+        var throughShared = false;
+        foreach (var projection in place.Projections)
+        {
+            if (projection.IsDeref)
+            {
+                mutable = type.IsMutableReference;
+                throughShared = !mutable;
+                type = type.Pointee!;
+            }
+            else
+            {
+                type = projection.Field!.Type;
+            }
+        }
+        if (mutable)
+        {
+            return null;
+        }
+        var root = Name(place.Root.Name);
+        return throughShared ? "it is behind a shared reference ('borrow'); a 'borrow mut' reference is needed to modify it"
+            : place.Root.Name == _thisSymbol ? "'this' is immutable in a by-value method; use 'borrow mut this'"
+            : place.Root.IsParameter ? "parameters are immutable"
+            : $"'{root}' was declared with 'let'; use 'var' for a mutable variable";
+    }
+
+    private string DescribePlace(HirPlace place)
+    {
+        var text = Name(place.Root.Name);
+        var hasField = false;
+        foreach (var projection in place.Projections.Where(p => !p.IsDeref))
+        {
+            text += "." + Name(projection.Field!.Name);
+            hasField = true;
+        }
+        return hasField ? $"'{text}'" : place.Projections.IsEmpty ? $"'{text}'" : $"the value '{text}' refers to";
+    }
+
+    /// <summary>Reads through references until the value is not a reference (auto-deref, type-system.md §13.3).</summary>
+    private static HirExpr AutoDeref(HirExpr expr)
+    {
+        while (expr.Type.IsReference)
+        {
+            expr = new HirDeref(expr, expr.Span);
+        }
+        return expr;
+    }
+
+    /// <summary>A `borrow p` / `borrow mut p` of the place a checked expression denotes (N0247, N0248).</summary>
+    private HirExpr BorrowPlace(HirExpr value, bool isMutable, TextSpan span)
+    {
+        if (ToPlace(value) is not { } place)
+        {
+            Error(DiagnosticCodes.BorrowOfNonPlace, span,
+                "only a variable, a field, or a place reached through a reference can be borrowed; bind the value to a local first");
+            return ErrorResult(span);
+        }
+        if (isMutable && MutabilityError(place) is { } reason)
+        {
+            Error(DiagnosticCodes.BorrowMutOfImmutable, span, $"cannot borrow {DescribePlace(place)} as mutable: {reason}");
+            return ErrorResult(span);
+        }
+        return new HirBorrow(isMutable, place, _types.ReferenceTo(place.Type, isMutable), span);
+    }
+
+    /// <summary>
+    /// Converts a checked expression to an expected type: auto-deref to the pointee, reborrowing each
+    /// use of a `borrow mut` variable, and `borrow mut T` to `borrow T` (type-system.md §13.3).
+    /// </summary>
+    private HirExpr Coerce(HirExpr hir, NovaType? expected, TextSpan span)
+    {
+        if (expected is null || expected.Kind == TypeKind.Error || hir.Type.IsBottom)
+        {
+            return hir;
+        }
+        if (ReferenceEquals(hir.Type, expected))
+        {
+            return expected.IsMutableReference && hir is HirLocalRef ? new HirReborrow(true, hir, expected, span) : hir;
+        }
+        if (expected.IsReference && hir.Type.IsMutableReference && !expected.IsMutableReference
+            && ReferenceEquals(hir.Type.Pointee, expected.Pointee))
+        {
+            return new HirReborrow(false, hir, expected, span);
+        }
+        if (!expected.IsReference && hir.Type.IsReference && ReferenceEquals(hir.Type.Pointee, expected))
+        {
+            return new HirDeref(hir, span);
+        }
+        Error(DiagnosticCodes.TypeMismatch, span, $"expected '{expected}', found '{hir.Type}'");
+        return ErrorResult(span);
+    }
+
+    /// <summary>An argument for a parameter of type <paramref name="parameterType"/> (type-system.md §13.2, call sites).</summary>
+    private HirExpr CheckArgument(Expr argument, NovaType? parameterType)
+    {
+        if (parameterType is null)
+        {
+            Synth(argument is MutArgExpr extra ? extra.Operand : argument, null);
+            return ErrorResult(argument.Span);
+        }
+
+        if (argument is MutArgExpr mutArgument)
+        {
+            if (!parameterType.IsMutableReference)
+            {
+                Error(DiagnosticCodes.MutArgumentMismatch, mutArgument.Span,
+                    "'mut' is only for arguments passed to a 'borrow mut' parameter");
+                Synth(mutArgument.Operand, null);
+                return ErrorResult(argument.Span);
+            }
+            var target = Synth(mutArgument.Operand, IntegerHint(parameterType.Pointee));
+            if (target.Type.IsBottom || target.Type.IsReference)
+            {
+                return Coerce(target, parameterType, argument.Span);
+            }
+            if (!ReferenceEquals(target.Type, parameterType.Pointee))
+            {
+                Error(DiagnosticCodes.TypeMismatch, mutArgument.Operand.Span, $"expected '{parameterType.Pointee}', found '{target.Type}'");
+                return ErrorResult(argument.Span);
+            }
+            return BorrowPlace(target, isMutable: true, argument.Span);
+        }
+
+        if (!parameterType.IsReference)
+        {
+            return CheckExpr(argument, parameterType);
+        }
+
+        var value = Synth(argument, IntegerHint(parameterType.Pointee));
+        if (value.Type.IsBottom || value.Type.IsReference)
+        {
+            return Coerce(value, parameterType, argument.Span);
+        }
+        if (!ReferenceEquals(value.Type, parameterType.Pointee))
+        {
+            Error(DiagnosticCodes.TypeMismatch, argument.Span, $"expected '{parameterType}', found '{value.Type}'");
+            return ErrorResult(argument.Span);
+        }
+        if (parameterType.IsMutableReference)
+        {
+            Error(DiagnosticCodes.MutArgumentMismatch, argument.Span,
+                "this parameter is 'borrow mut': write 'mut' before the argument to let the call modify it");
+            return ErrorResult(argument.Span);
+        }
+        // Implicit shared borrow: of the place itself, or of a temporary holding the value (lifetimes.md §6).
+        return ToPlace(value) is { } place
+            ? new HirBorrow(false, place, parameterType, argument.Span)
+            : new HirBorrowTemp(false, value, parameterType, argument.Span);
     }
 
     /// <summary>The field <paramref name="name"/> of a value of <paramref name="type"/>, or null after reporting N0230/N0234.</summary>
@@ -776,16 +1012,8 @@ internal sealed class TypeChecker
     // ---- Expressions ----
 
     /// <summary>Checks <paramref name="expr"/> against an optional expected type (type-system.md §5).</summary>
-    private HirExpr CheckExpr(Expr expr, NovaType? expected)
-    {
-        var hir = Synth(expr, expected);
-        if (expected is null || expected.Kind == TypeKind.Error || hir.Type.IsBottom || ReferenceEquals(hir.Type, expected))
-        {
-            return hir;
-        }
-        Error(DiagnosticCodes.TypeMismatch, expr.Span, $"expected '{expected}', found '{hir.Type}'");
-        return ErrorResult(expr.Span);
-    }
+    private HirExpr CheckExpr(Expr expr, NovaType? expected) =>
+        Coerce(Synth(expr, expected?.Pointee ?? expected), expected, expr.Span);
 
     private static NovaType? IntegerHint(NovaType? expected) => expected is { IsInteger: true } ? expected : null;
 
@@ -818,6 +1046,25 @@ internal sealed class TypeChecker
                 return ErrorResult(expr.Span);
             case StructLiteralExpr literal:
                 return SynthStructLiteral(literal);
+            case BorrowExpr borrow:
+            {
+                var operand = Synth(borrow.Operand, null);
+                if (operand.Type.IsBottom)
+                {
+                    return operand;
+                }
+                if (operand.Type.IsReference)
+                {
+                    Error(DiagnosticCodes.ReferenceNotAllowed, borrow.Span,
+                        "this is already a reference; use it directly (references to references are not supported)");
+                    return ErrorResult(borrow.Span);
+                }
+                return BorrowPlace(operand, borrow.IsMutable, borrow.Span);
+            }
+            case MutArgExpr mutArgument:
+                Error(DiagnosticCodes.MutArgumentMismatch, mutArgument.Span,
+                    "'mut' marks an argument for a 'borrow mut' parameter; it is not an expression");
+                return ErrorResult(expr.Span);
             case NameExpr name:
                 return SynthName(name);
             case UnaryExpr unary:
@@ -846,7 +1093,7 @@ internal sealed class TypeChecker
                 $"'{Name(target.Name.Name)}.{Name(member.Member.Name)}' is not a value; call it with '(...)'");
             return ErrorResult(member.Span);
         }
-        var value = Synth(member.Target, null);
+        var value = AutoDeref(Synth(member.Target, null));
         return ResolveField(value.Type, member.Member) is { } field
             ? new HirFieldAccess(value, field, member.Span)
             : ErrorResult(member.Span);
@@ -968,7 +1215,7 @@ internal sealed class TypeChecker
             return CheckIntLiteral(literal, negative: true, expected, unary.Span);
         }
 
-        var value = Synth(unary.Operand, IntegerHint(expected));
+        var value = AutoDeref(Synth(unary.Operand, IntegerHint(expected)));
         if (value.Type.IsBottom)
         {
             return value;
@@ -1017,7 +1264,7 @@ internal sealed class TypeChecker
 
         if (IsShift(op))
         {
-            var left = Synth(binary.Left, IntegerHint(expected));
+            var left = AutoDeref(Synth(binary.Left, IntegerHint(expected)));
             var amount = CheckShiftAmount(binary.Right);
             if (left.Type.IsBottom || amount.Type.IsBottom)
             {
@@ -1037,18 +1284,18 @@ internal sealed class TypeChecker
         }
         else if (!IsFlexible(binary.Left) && IsFlexible(binary.Right))
         {
-            leftHir = Synth(binary.Left, null);
+            leftHir = AutoDeref(Synth(binary.Left, null));
             rightHir = CheckExpr(binary.Right, IntegerHint(leftHir.Type));
         }
         else if (IsFlexible(binary.Left) && !IsFlexible(binary.Right))
         {
-            rightHir = Synth(binary.Right, null);
+            rightHir = AutoDeref(Synth(binary.Right, null));
             leftHir = CheckExpr(binary.Left, IntegerHint(rightHir.Type));
         }
         else
         {
-            leftHir = Synth(binary.Left, null);
-            rightHir = Synth(binary.Right, null);
+            leftHir = AutoDeref(Synth(binary.Left, null));
+            rightHir = AutoDeref(Synth(binary.Right, null));
         }
 
         if (leftHir.Type.IsBottom || rightHir.Type.IsBottom)
@@ -1076,7 +1323,7 @@ internal sealed class TypeChecker
         {
             return CheckExpr(amount, _types.U32);
         }
-        var hir = Synth(amount, null);
+        var hir = AutoDeref(Synth(amount, null));
         if (!hir.Type.IsBottom && !hir.Type.IsInteger)
         {
             Error(DiagnosticCodes.InvalidOperandTypes, amount.Span, $"a shift amount must be an integer, found '{hir.Type}'");
@@ -1120,7 +1367,7 @@ internal sealed class TypeChecker
             return CheckExpr(cast.Operand, target) with { Span = cast.Span };
         }
 
-        var operand = Synth(cast.Operand, null);
+        var operand = AutoDeref(Synth(cast.Operand, null));
         if (operand.Type.IsBottom)
         {
             return operand;
@@ -1203,7 +1450,7 @@ internal sealed class TypeChecker
         }
         for (var i = 0; i < call.Arguments.Length; i++)
         {
-            arguments.Add(CheckExpr(call.Arguments[i], i < parameters.Length ? parameters[i].Type : null));
+            arguments.Add(CheckArgument(call.Arguments[i], i < parameters.Length ? parameters[i].Type : null));
         }
         return call.Arguments.Length == parameters.Length
             ? new HirCall(function, arguments.ToImmutable(), function.ReturnType, call.Span)
@@ -1240,10 +1487,11 @@ internal sealed class TypeChecker
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
         }
-        if (receiver.Type.Struct is not { } definition)
+        var structType = receiver.Type.Pointee ?? receiver.Type;
+        if (structType.Struct is not { } definition)
         {
             Error(DiagnosticCodes.NotAStruct, member.Member.Span,
-                $"type '{receiver.Type}' has no methods; '{Name(member.Member.Name)}' cannot be called on it");
+                $"type '{structType}' has no methods; '{Name(member.Member.Name)}' cannot be called on it");
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
         }
@@ -1258,11 +1506,39 @@ internal sealed class TypeChecker
         if (!function.IsMethod)
         {
             Error(DiagnosticCodes.MethodCallKind, member.Member.Span,
-                $"'{receiver.Type}.{Name(function.Name)}' is a static function; call it as {receiver.Type}.{Name(function.Name)}(...)");
+                $"'{structType}.{Name(function.Name)}' is a static function; call it as {structType}.{Name(function.Name)}(...)");
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
         }
-        return CheckUserCall(call, function, receiver);
+
+        // The receiver is passed as `this` by value, by shared borrow, or by mutable borrow (type-system.md §13.2).
+        var receiverArgument = function.ReceiverKind switch
+        {
+            ReceiverKind.Value => AutoDeref(receiver),
+            ReceiverKind.Borrow => receiver.Type.IsReference
+                ? Coerce(receiver, _types.ReferenceTo(structType, isMutable: false), member.Target.Span)
+                : ToPlace(receiver) is { } place
+                    ? new HirBorrow(false, place, _types.ReferenceTo(structType, isMutable: false), member.Target.Span)
+                    : new HirBorrowTemp(false, receiver, _types.ReferenceTo(structType, isMutable: false), member.Target.Span),
+            _ => receiver.Type.IsMutableReference
+                ? Coerce(receiver, receiver.Type, member.Target.Span)
+                : receiver.Type.IsReference
+                    ? BorrowMutThroughShared(member)
+                    : BorrowPlace(receiver, isMutable: true, member.Target.Span),
+        };
+        if (receiverArgument.Type.IsBottom)
+        {
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        return CheckUserCall(call, function, receiverArgument);
+    }
+
+    private HirError BorrowMutThroughShared(MemberExpr member)
+    {
+        Error(DiagnosticCodes.BorrowMutOfImmutable, member.Target.Span,
+            $"'{Name(member.Member.Name)}' takes 'borrow mut this', but this value is behind a shared reference");
+        return ErrorResult(member.Target.Span);
     }
 
     private HirExpr CheckTruncate(CallExpr call, NameExpr name)
@@ -1286,7 +1562,7 @@ internal sealed class TypeChecker
             return ErrorResult(call.Span);
         }
 
-        var operand = Synth(call.Arguments[0], null);
+        var operand = AutoDeref(Synth(call.Arguments[0], null));
         if (!operand.Type.IsBottom && !operand.Type.IsInteger)
         {
             Error(DiagnosticCodes.InvalidOperandTypes, call.Arguments[0].Span, $"truncate requires an integer value, found '{operand.Type}'");
@@ -1336,7 +1612,7 @@ internal sealed class TypeChecker
                 arguments.Add(new HirStringConst(text.Value, _types.StringLiteral, text.Span));
                 continue;
             }
-            var value = Synth(argument, null);
+            var value = AutoDeref(Synth(argument, null));
             if (!value.Type.IsBottom && !value.Type.IsInteger && value.Type.Kind != TypeKind.Bool)
             {
                 Error(DiagnosticCodes.InvalidOperandTypes, argument.Span,

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text;
 using Nova.Compiler.Syntax;
 
@@ -69,12 +70,29 @@ public static class DiagnosticCodes
     public const string MethodCallKind = "N0233";
     public const string NotAStruct = "N0234";
 
+    // References and borrows (lifetimes.md): N0240-N0249
+    public const string WriteWhileBorrowed = "N0240";
+    public const string ConflictingBorrow = "N0241";
+    public const string ReadWhileMutablyBorrowed = "N0242";
+    public const string DeadWhileBorrowed = "N0243";
+    public const string ReturnsLocalReference = "N0244";
+    public const string ReturnSourceMismatch = "N0245";
+    public const string ReferenceNotAllowed = "N0246";
+    public const string BorrowOfNonPlace = "N0247";
+    public const string BorrowMutOfImmutable = "N0248";
+    public const string MutArgumentMismatch = "N0249";
+
     // Build: N0300-N0399
     public const string MissingMain = "N0300";
 }
 
+/// <summary>A secondary location attached to a diagnostic ("borrowed here").</summary>
+public sealed record DiagnosticNote(TextSpan Span, string Message);
+
 public sealed record Diagnostic(string Code, Severity Severity, string Message, SourceText Source, TextSpan Span)
 {
+    public ImmutableArray<DiagnosticNote> Notes { get; init; } = [];
+
     public LinePosition Position => Source.GetLinePosition(Span.Start);
 
     public override string ToString() =>
@@ -92,6 +110,9 @@ public sealed class DiagnosticBag
 
     public void Error(string code, SourceText source, TextSpan span, string message) =>
         _items.Add(new Diagnostic(code, Severity.Error, message, source, span));
+
+    public void Error(string code, SourceText source, TextSpan span, string message, ImmutableArray<DiagnosticNote> notes) =>
+        _items.Add(new Diagnostic(code, Severity.Error, message, source, span) { Notes = notes });
 
     public void AddRange(IEnumerable<Diagnostic> diagnostics) => _items.AddRange(diagnostics);
 }
@@ -114,6 +135,11 @@ public static class DiagnosticRenderer
         // Underline the span, clipped to the first line it touches; at least one caret.
         var underline = Math.Max(1, Math.Min(diagnostic.Span.Length, lineText.Length - position.Column + 1));
         sb.Append(' ', gutter.Length).Append(" | ").Append(' ', position.Column - 1).Append('^', underline).Append('\n');
+        foreach (var note in diagnostic.Notes)
+        {
+            sb.Append(' ', gutter.Length).Append(" = note: ").Append(note.Message)
+              .Append(" (").Append(diagnostic.Source.GetLinePosition(note.Span.Start).ToString()).Append(")\n");
+        }
         return sb.ToString();
     }
 }

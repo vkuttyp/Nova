@@ -1,0 +1,14 @@
+struct Counter {
+    count: u32;
+    fn bump(borrow mut this, by: u32) { this.count += by; }
+    fn get(borrow this) -> u32 => this.count;
+}
+fn reset(v: borrow mut i64) { v = 0; }
+fn twice(v: borrow i64) -> i64 => v * 2;
+fn main() -> i32 {
+    var x: i64 = 3;
+    reset(mut x);
+    var c = Counter { count: 1 };
+    c.bump(c.get());
+    return truncate<i32>(twice(x) + twice(4));
+}

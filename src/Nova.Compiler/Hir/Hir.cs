@@ -94,6 +94,14 @@ public sealed class HirFunction
     /// <summary>True for a method: its first parameter is the <c>this</c> receiver (type-system.md §12).</summary>
     public bool IsMethod => Syntax.Receiver is not null && Owner is not null;
 
+    public ReceiverKind ReceiverKind => IsMethod ? Syntax.Receiver!.Kind : ReceiverKind.Value;
+
+    /// <summary>
+    /// For a function returning a reference: indices into <see cref="Parameters"/> of the reference
+    /// parameters the result may be derived from (lifetimes.md §7). Empty otherwise.
+    /// </summary>
+    public ImmutableArray<int> ReturnSources { get; internal set; } = [];
+
     public int Id { get; }
 
     public Symbol Name { get; }
@@ -127,8 +135,11 @@ public sealed record HirBlock(ImmutableArray<HirStmt> Statements, TextSpan Span)
 
 public sealed record HirLocalDecl(HirLocal Local, HirExpr? Initializer, TextSpan Span) : HirStmt(Span);
 
-/// <summary>A local or a field path rooted at a local: <c>p</c>, <c>p.a.b</c>.</summary>
-public sealed record HirPlace(HirLocal Root, ImmutableArray<StructField> Path, NovaType Type);
+/// <summary>A local followed by field and deref projections: <c>p</c>, <c>p.a.b</c>, <c>(*r).f</c>.</summary>
+public sealed record HirPlace(HirLocal Root, ImmutableArray<Projection> Projections, NovaType Type)
+{
+    public bool IsLocal => Projections.IsEmpty;
+}
 
 /// <summary>Assignment to a place. <see cref="Op"/> is null for plain '=', else the compound operator.</summary>
 public sealed record HirAssign(HirPlace Target, BinaryOp? Op, HirExpr Value, TextSpan Span) : HirStmt(Span);
@@ -189,6 +200,18 @@ public sealed record HirFieldAccess(HirExpr Target, StructField Field, TextSpan 
 
 /// <summary>A struct literal. <see cref="Fields"/> is in source order, which is also evaluation order.</summary>
 public sealed record HirStructLiteral(ImmutableArray<(StructField Field, HirExpr Value)> Fields, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary><c>borrow p</c> / <c>borrow mut p</c> of a place (type-system.md §13.2).</summary>
+public sealed record HirBorrow(bool IsMutable, HirPlace Place, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary>An implicit call-site borrow of a value: the value lives in a temporary until the end of the statement.</summary>
+public sealed record HirBorrowTemp(bool IsMutable, HirExpr Value, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary>A new reference to the referent of <see cref="Reference"/>: a reborrow, or a mut-to-shared coercion.</summary>
+public sealed record HirReborrow(bool IsMutable, HirExpr Reference, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary>Reads the value a reference points to (auto-deref, type-system.md §13.3).</summary>
+public sealed record HirDeref(HirExpr Reference, TextSpan Span) : HirExpr(Reference.Type.Pointee!, Span);
 
 /// <summary>Stands in for an expression that produced a diagnostic.</summary>
 public sealed record HirError(NovaType Type, TextSpan Span) : HirExpr(Type, Span);

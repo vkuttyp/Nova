@@ -1,7 +1,9 @@
 # Ownership, Borrowing and Lifetimes — Formal Safety Design (v0)
 
 Status: Milestone 0 proposal. This document is normative for Milestone 2, unless
-an item is marked *future*. Related: `memory-model.md`, `language-spec.md`,
+an item is marked *future*. **B1–B5 and E1–E3 are implemented as specified in `lifetimes.md` (M2b),**
+which records the v0 simplifications: immutable, once-initialised reference bindings; and B5
+implemented as "the receiver's loan starts after the arguments". Related: `memory-model.md`, `language-spec.md`,
 `intermediate-representation.md`, `unsafe.md` (to be written in M8).
 
 ## 0. Scope of the guarantee

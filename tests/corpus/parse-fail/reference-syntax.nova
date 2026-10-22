@@ -1,0 +1,7 @@
+fn f() {
+    let x: i64 = 1;
+    let y = mut x; // error[N0102]
+    let z: borrow = 1; // error[N0105]
+    let w = borrow; // error[N0102]
+}
+fn g(borrow mut that) { } // error[N0100]
