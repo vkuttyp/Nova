@@ -1,0 +1,36 @@
+fn sum(xs: Slice<i32>) -> i32 {
+    var total = 0;
+    for (x in xs) { total += x; }
+    return total;
+}
+
+fn main() {
+    var a = [1, 2, 3, 4];
+    // The shared slice is dead before the write.
+    let s = a[..];
+    let t = sum(s);
+    a[0] = t;
+
+    // Disjoint in fact, but not by the v0 rules: so done one after the other.
+    {
+        let x = borrow mut a[..2];
+        x[0] = 1;
+    }
+    let y = borrow mut a[2..];
+    y[0] = 2;
+
+    // Reading through two shared slices at once.
+    let p = a[..2];
+    let q = a[1..];
+    let u = p[0] + q[0];
+
+    // A reborrowed SliceMut, then the original again.
+    let m = borrow mut a[..];
+    let m2 = m[1..];
+    let w = m2[0];
+    m[0] = w;
+
+    // Writing the array while iterating over a copy.
+    let copy = a;
+    for (x in copy) { a[0] = x; }
+}

@@ -1,0 +1,10 @@
+fn get(xs: Slice<i32>, i: usize) -> i32 {
+    return xs[i]; // expect-panic: index out of bounds
+}
+
+fn main() {
+    let a = [1, 2, 3, 4];
+    Console.writeLine(get(a[1..3], 1usize));
+    Console.writeLine(get(a[1..3], 2usize));
+}
+// expect-stdout: 3

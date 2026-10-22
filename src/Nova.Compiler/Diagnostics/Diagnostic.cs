@@ -94,6 +94,7 @@ public static class DiagnosticCodes
     public const string NonExhaustiveMatch = "N0256";
     public const string UnreachableArm = "N0257";
     public const string NonCopyBinding = "N0258";
+    public const string InvalidArray = "N0259";
 
     // Build: N0300-N0399
     public const string MissingMain = "N0300";

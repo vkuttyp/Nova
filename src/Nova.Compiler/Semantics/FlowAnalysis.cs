@@ -54,6 +54,13 @@ internal sealed class FlowAnalysis
                 return true; // the condition can be false
             case HirLoop loop:
                 return RunLoop(loop.Body); // only a break leaves a `loop`
+            case HirFor forStmt:
+                if (Diverges(forStmt.Start) || (forStmt.End is not null && Diverges(forStmt.End)))
+                {
+                    return false;
+                }
+                RunLoop(forStmt.Body);
+                return true; // the sequence or range can be empty
             case HirBreak:
                 if (_loopExits.Count > 0)
                 {
@@ -114,6 +121,11 @@ internal sealed class FlowAnalysis
         HirDeref deref => Diverges(deref.Reference),
         HirReborrow reborrow => Diverges(reborrow.Reference),
         HirBorrowTemp temp => Diverges(temp.Value),
+        HirArrayLiteral array => array.Elements.Any(Diverges),
+        HirArrayRepeat repeat => Diverges(repeat.Value),
+        HirIndex index => Diverges(index.Target) || Diverges(index.Index),
+        HirSlice slice => (slice.Low is not null && Diverges(slice.Low)) || (slice.High is not null && Diverges(slice.High)),
+        HirSliceLength length => Diverges(length.Slice),
         _ => false,
     };
 }

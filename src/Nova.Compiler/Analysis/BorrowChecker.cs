@@ -94,16 +94,18 @@ internal sealed class BorrowChecker
                 var target = assign.Target.Local;
                 switch (assign.Value)
                 {
-                    case NirRef reference:
+                    case NirRef or NirSlice:
                     {
-                        var loan = new Loan(_loans.Count, reference.IsMutable, reference.Place, block, i, assign.Span, -1);
+                        // A slice is a loan of the whole array or slice it views (type-system.md §16.3).
+                        var (isMutable, place) = assign.Value is NirRef r ? (r.IsMutable, r.Place) : (((NirSlice)assign.Value).IsMutable, ((NirSlice)assign.Value).Base);
+                        var loan = new Loan(_loans.Count, isMutable, place, block, i, assign.Span, -1);
                         _loans.Add(loan);
                         _loanAt[(block, i)] = loan;
                         LoansOf(target).Add(loan.Id);
                         // A reborrow through q keeps q's loans alive while the new reference lives.
-                        if (reference.Place.Projections.Any(p => p.IsDeref))
+                        if (place.Projections.Any(p => p.IsDeref))
                         {
-                            edges.Add((reference.Place.Local, target));
+                            edges.Add((place.Local, target));
                         }
                         break;
                     }
@@ -153,6 +155,11 @@ internal sealed class BorrowChecker
         NirCall c => c.Arguments.SelectMany(OperandAccesses),
         NirBuiltin b => b.Arguments.SelectMany(OperandAccesses),
         NirRef r => [(r.IsMutable ? AccessKind.BorrowMut : AccessKind.BorrowShared, r.Place)],
+        NirSlice s => OperandAccesses(s.Low).Concat(OperandAccesses(s.High))
+            .Append((s.IsMutable ? AccessKind.BorrowMut : AccessKind.BorrowShared, s.Base)),
+        NirLength l => [(AccessKind.Read, l.Slice)],
+        NirArray a => a.Elements.SelectMany(OperandAccesses),
+        NirArrayRepeat a => OperandAccesses(a.Value),
         NirDiscriminant d => [(AccessKind.Read, d.Place)],
         NirEnumAggregate e => e.Payload.SelectMany(OperandAccesses),
         _ => [],
@@ -162,6 +169,8 @@ internal sealed class BorrowChecker
     {
         NirAssign a => RvalueAccesses(a.Value).Append((AccessKind.Write, a.Target)),
         NirEval e => RvalueAccesses(e.Value),
+        NirBoundsCheck c => OperandAccesses(c.Index).Concat(OperandAccesses(c.Length)),
+        NirRangeCheck c => OperandAccesses(c.Low).Concat(OperandAccesses(c.High)).Concat(OperandAccesses(c.Length)),
         NirStorageDead d => [(AccessKind.Dead, new NirPlace(d.Local))],
         NirDrop d => [(AccessKind.Dead, d.Place)],
         _ => [],
@@ -282,11 +291,15 @@ internal sealed class BorrowChecker
                     : TerminatorAccesses(block.Terminator!).ToList();
                 var span = i < block.Statements.Count ? block.Statements[i].Span : block.Terminator!.Span;
                 var created = _loanAt.GetValueOrDefault((block, i));
-                var liveLoans = live[i].SelectMany(LoansOf).Distinct().Select(id => _loans[id])
-                    .Where(l => l.Place is not null && l != created).ToList();
-                foreach (var (kind, place) in accesses)
+                var liveLoans = LiveLoans(live[i], created);
+                // An assignment writes its target after the value is computed: loans only used by the
+                // value (`a[0] = sum(a[..])`) have ended by then, so the write is judged after the statement.
+                var write = i < block.Statements.Count && block.Statements[i] is NirAssign ? accesses[^1] : default;
+                var liveAfterLoans = write.Place is null ? liveLoans : LiveLoans(live[i + 1], created);
+                foreach (var access in accesses)
                 {
-                    foreach (var loan in liveLoans)
+                    var (kind, place) = access;
+                    foreach (var loan in access == write ? liveAfterLoans : liveLoans)
                     {
                         // A reference going out of scope does not end what it refers to.
                         var throughReference = kind == AccessKind.Dead
@@ -301,12 +314,20 @@ internal sealed class BorrowChecker
         }
     }
 
+    private List<Loan> LiveLoans(HashSet<NirLocal> live, Loan? created) =>
+        [.. live.SelectMany(LoansOf).Distinct().Select(id => _loans[id]).Where(l => l.Place is not null && l != created)];
+
     private string Describe(NirPlace place)
     {
         var text = place.Local.Name is { } name ? _symbols.GetName(name) : "a temporary";
         foreach (var projection in place.Projections)
         {
-            text = projection.IsDeref ? text : $"{text}.{_symbols.GetName(projection.Field!.Name)}";
+            text = projection.Kind switch
+            {
+                ProjectionKind.Field => $"{text}.{_symbols.GetName(projection.Field!.Name)}",
+                ProjectionKind.Index => $"{text}[_]",
+                _ => text,
+            };
         }
         return text;
     }

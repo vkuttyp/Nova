@@ -54,6 +54,7 @@ diagnostics, so any cascade fails the test.
 | N0105 | Expected a type | `fn f(x: ) {}` |
 | N0106 | Namespace declaration not first in the file | `fn a() {}` then `namespace X;` |
 | N0107 | Expected a field or `fn` inside a struct body | `struct A { 42; }` |
+| N0108 | Expected a `match` pattern (`_`, a literal, or `E.V(…)`) | `match (n) { + => { } }` |
 
 ### Names, types and flow (N0200–N0299)
 
@@ -126,6 +127,16 @@ programs that type-check. A move while borrowed is reported by the borrow checke
 | N0252 | Move of a field out of a value whose type has a `drop` block | `consume(o.res)` with `struct Owner { res: Res; drop {} }` |
 | N0253 | Move out of a `using` binding | `using u = make(); consume(u);` |
 | N0254 | `return`, `break`, `continue` or `defer` inside a deferred statement | `defer return 1;` |
+| N0256 | `match` that does not cover every value (add the missing variants or `_`) | `match (s) { Shape.Empty => { } }` |
+| N0257 | Unreachable `match` arm: a duplicate pattern, or any arm after `_` | `1 => { } 1 => { }` |
+| N0258 | A payload binding of a non-Copy type when matching a value (match a reference instead) | `match (h) { Holder.One(r) => { } }` with `r: Res` |
+| N0259 | Invalid array (`type-system.md` §16): a length that is not an integer literal from 1 to 2^48 − 1, an element type that is not Copy, or an array larger than 2^31 − 1 bytes | `[Res; 2]`, `[i32; 0]` |
+
+Arrays and slices otherwise reuse codes: indexing or slicing a non-array, a non-`usize` index,
+or a bad `for` sequence or range is N0205; writing an element of a `let` array or through a
+`Slice` is N0211; a slice in a field, a `var` local or an array element is N0246;
+`borrow mut a[..]` of an immutable array is N0248; slicing a non-place is N0247. Slices are
+references, so the borrow checker reports their conflicts as N0240–N0245.
 
 ### Build (N0300–N0399)
 

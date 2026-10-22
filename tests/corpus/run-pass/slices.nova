@@ -1,0 +1,60 @@
+fn sum(xs: Slice<i32>) -> i32 {
+    var total = 0;
+    for (x in xs) { total += x; }
+    return total;
+}
+
+fn fill(xs: SliceMut<i32>, v: i32) {
+    for (i in 0..xs.length) { xs[i] = v; }
+}
+
+fn largest(xs: Slice<i32>) -> usize {
+    var best = 0usize;
+    for (i in 1..xs.length) {
+        if (xs[i] > xs[best]) { best = i; }
+    }
+    return best;
+}
+
+fn tail(xs: Slice<i32>) -> Slice<i32> {
+    return xs[1..];
+}
+
+fn halve(xs: SliceMut<i32>) {
+    let n = xs.length / 2;
+    fill(mut xs[..n], 0);
+    fill(mut xs[n..], 1);
+}
+
+fn main() {
+    var a = [5, 1, 9, 3, 7, 2];
+    Console.writeLine(sum(a[..]));
+    Console.writeLine(sum(a[2..4]));
+    Console.writeLine(largest(a[..]));
+    let t = tail(tail(a[..]));
+    Console.writeLine(t.length);
+    Console.writeLine(t[0]);
+    Console.writeLine(sum(a[3..3]));
+
+    fill(mut a[4..], 0);
+    Console.writeLine(sum(a[..]));
+
+    let m = borrow mut a[..];
+    m[0] = 40;
+    halve(m);
+    for (x in a) { Console.write(x); }
+    Console.writeLine("");
+
+    let empty = a[6..];
+    for (x in empty) { Console.writeLine("never"); }
+    Console.writeLine(empty.length);
+}
+// expect-stdout: 27
+// expect-stdout: 12
+// expect-stdout: 2
+// expect-stdout: 4
+// expect-stdout: 9
+// expect-stdout: 0
+// expect-stdout: 18
+// expect-stdout: 000111
+// expect-stdout: 0

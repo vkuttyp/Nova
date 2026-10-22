@@ -1,0 +1,9 @@
+fn pick(a: Slice<i32>, b: Slice<i32>) -> Slice<i32> { // error[N0245]
+    return a;
+}
+fn none() -> Slice<i32> { // error[N0245]
+    return none();
+}
+fn widen(a: Slice<i32>) -> SliceMut<i32> { // error[N0245]
+    return a; // error[N0205]
+}

@@ -188,12 +188,22 @@ public sealed class NirBuilder
                 }
                 break;
             case HirAssign { Op: null } assign:
-                WithStatementTemps(() => AssignRvalue(ToPlace(assign.Target), assign.Value));
+                WithStatementTemps(() =>
+                {
+                    // The target's indexes are evaluated (and checked) before the value.
+                    if (LowerPlace(assign.Target) is { } target)
+                    {
+                        AssignRvalue(target, assign.Value);
+                    }
+                });
                 break;
             case HirAssign assign:
                 WithStatementTemps(() =>
                 {
-                    var target = ToPlace(assign.Target);
+                    if (LowerPlace(assign.Target) is not { } target)
+                    {
+                        return;
+                    }
                     var right = LowerOperand(assign.Value);
                     if (right is not null)
                     {
@@ -223,6 +233,9 @@ public sealed class NirBuilder
                 _current = exit;
                 break;
             }
+            case HirFor forStmt:
+                LowerFor(forStmt);
+                break;
             case HirLoop loop:
             {
                 var head = NewBlock();
@@ -383,6 +396,165 @@ public sealed class NirBuilder
         _current = joinReached ? join : null;
     }
 
+    /// <summary>
+    /// A `for` loop (type-system.md §16.4). The bounds, or the sequence and its length, are evaluated
+    /// once into locals that live until the loop exits; a counter runs from the start up to the end.
+    /// Each iteration binds the variable in its own scope; `continue` goes to the counter's increment.
+    /// </summary>
+    private void LowerFor(HirFor forStmt)
+    {
+        var span = forStmt.Span;
+        var savedTemps = _statementTemps;
+        var headerTemps = new List<NirLocal>();
+        _statementTemps = headerTemps;
+        var headerScope = _scopes.Count;
+        _scopes.Add([]);
+
+        NirPlace? sequence = null;
+        NirLocal counter;
+        NirOperand end;
+        if (forStmt.End is not null)
+        {
+            var bounds = LowerOperands([forStmt.Start, forStmt.End]);
+            if (!bounds.IsDefault)
+            {
+                counter = NewTemp(forStmt.Start.Type);
+                Emit(new NirAssign(new NirPlace(counter), new NirUse(bounds[0])));
+                var endLocal = NewTemp(forStmt.Start.Type);
+                Emit(new NirAssign(new NirPlace(endLocal), new NirUse(bounds[1])));
+                end = new NirPlaceOperand(endLocal);
+            }
+            else
+            {
+                (counter, end) = (null!, null!);
+            }
+        }
+        else
+        {
+            sequence = LowerPlace(forStmt.Start);
+            counter = null!;
+            end = null!;
+            if (sequence is not null)
+            {
+                counter = NewTemp(_types.USize);
+                Emit(new NirAssign(new NirPlace(counter), new NirUse(new NirConst(0, _types.USize))));
+                end = Length(sequence);
+            }
+        }
+        var condition = _current is null ? null : NewTemp(_types.Bool);
+        _statementTemps = savedTemps;
+        _scopes[headerScope].AddRange(headerTemps);
+        if (condition is null)
+        {
+            _scopes.RemoveAt(headerScope); // the header never completes
+            return;
+        }
+
+        var head = NewBlock();
+        Terminate(new NirGoto(head));
+        _current = head;
+        _span = span;
+        var counterOperand = new NirPlaceOperand(counter);
+        Emit(new NirAssign(new NirPlace(condition), new NirBinary(BinaryOp.Less, counterOperand, end, _types.Bool, _function.Source, span)));
+        var body = NewBlock();
+        var step = NewBlock();
+        var exit = NewBlock();
+        Terminate(new NirBranch(new NirPlaceOperand(condition), body, exit));
+
+        _loops.Push(new LoopTargets(step, exit, _scopes.Count));
+        _current = body;
+        var variable = _locals[forStmt.Variable.Id];
+        _scopes.Add([variable]);
+        Emit(new NirAssign(new NirPlace(variable), new NirUse(sequence is null
+            ? counterOperand
+            : Read(sequence.Project(Projection.At(counterOperand))))));
+        LowerStmt(forStmt.Body);
+        if (_current is not null)
+        {
+            EmitStorageDead(_scopes.Count - 1);
+            Terminate(new NirGoto(step));
+        }
+        _scopes.RemoveAt(_scopes.Count - 1);
+        _loops.Pop();
+
+        // counter < end, so the increment cannot overflow.
+        _current = step;
+        _span = span;
+        Emit(new NirAssign(new NirPlace(counter), new NirBinary(BinaryOp.Add, counterOperand,
+            new NirConst(1, counter.Type), counter.Type, _function.Source, span)));
+        Terminate(new NirGoto(head));
+
+        _current = exit;
+        _span = new TextSpan(span.End, 0);
+        EmitStorageDead(headerScope);
+        _scopes.RemoveAt(headerScope);
+    }
+
+    /// <summary>The length of an array (a constant) or of a deref'd slice <c>s.*</c> (read from <c>s</c>).</summary>
+    private NirOperand Length(NirPlace array)
+    {
+        var type = array.Type;
+        if (!type.IsUnsized)
+        {
+            return new NirConst(type.ArrayLength, _types.USize);
+        }
+        var slice = new NirPlace(array.Local, array.Projections.RemoveAt(array.Projections.Length - 1));
+        var length = NewTemp(_types.USize);
+        Emit(new NirAssign(new NirPlace(length), new NirLength(slice, _types.USize)));
+        return new NirPlaceOperand(length);
+    }
+
+    /// <summary>
+    /// Element <paramref name="index"/> of an array or deref'd slice place: the index is evaluated
+    /// into a temporary (or kept as a constant) and checked against the length (type-system.md §16.3).
+    /// </summary>
+    private NirPlace? IndexPlace(NirPlace array, HirExpr index)
+    {
+        var saved = _span;
+        var operand = LowerOperand(index);
+        if (operand is null)
+        {
+            return null;
+        }
+        if (operand is NirPlaceOperand)
+        {
+            var temp = NewTemp(_types.USize);
+            Emit(new NirAssign(new NirPlace(temp), new NirUse(operand)));
+            operand = new NirPlaceOperand(temp);
+        }
+        _span = index.Span;
+        var length = Length(array);
+        // A constant index below a constant length needs no check.
+        if (!(operand is NirConst constant && length is NirConst bound && constant.Value < bound.Value))
+        {
+            Emit(new NirBoundsCheck(operand, length));
+        }
+        _span = saved;
+        return array.Project(Projection.At(operand));
+    }
+
+    /// <summary>A HIR place: its projections, with each index evaluated and checked in order.</summary>
+    private NirPlace? LowerPlace(HirPlace place)
+    {
+        var result = new NirPlace(_locals[place.Root.Id]);
+        foreach (var projection in place.Projections)
+        {
+            if (projection.Kind != ProjectionKind.Index)
+            {
+                result = result.Project(projection);
+            }
+            else if (IndexPlace(result, (HirExpr)projection.Index!) is { } element)
+            {
+                result = element;
+            }
+            else
+            {
+                return null;
+            }
+        }
+        return result;
+    }
+
     /// <summary>The place an expression denotes, without moving it; other values are spilled into a temporary.</summary>
     private NirPlace? LowerPlace(HirExpr expr)
     {
@@ -394,6 +566,8 @@ public sealed class NirBuilder
                 return LowerPlace(field.Target)?.Field(field.Field);
             case HirDeref deref:
                 return LowerPlace(deref.Reference)?.Deref();
+            case HirIndex index:
+                return LowerPlace(index.Target) is { } array ? IndexPlace(array, index.Index) : null;
         }
         switch (LowerOperand(expr))
         {
@@ -457,8 +631,6 @@ public sealed class NirBuilder
         _current = joinReached ? join : null;
     }
 
-    private NirPlace ToPlace(HirPlace place) => new(_locals[place.Root.Id], place.Projections);
-
     private void AssignRvalue(NirPlace target, HirExpr value)
     {
         var statementSpan = _span;
@@ -500,7 +672,9 @@ public sealed class NirBuilder
             case HirLocalRef l:
                 return Read(new NirPlace(_locals[l.Local.Id]));
             case HirMove move:
-                return new NirPlaceOperand(ToPlace(move.Place), IsMove: true);
+                return LowerPlace(move.Place) is { } moved ? new NirPlaceOperand(moved, IsMove: true) : null;
+            case HirIndex index:
+                return LowerPlace(index) is { } element ? Read(element) : null;
             case HirFieldAccess field:
             {
                 // A field of a place is itself a place; a field of any other value reads from a temporary.
@@ -554,7 +728,21 @@ public sealed class NirBuilder
             case HirIntConst or HirBoolConst or HirLocalRef or HirStringConst or HirMove:
                 return new NirUse(LowerOperand(expr)!);
             case HirBorrow borrow:
-                return new NirRef(borrow.IsMutable, ToPlace(borrow.Place), borrow.Type);
+                return LowerPlace(borrow.Place) is { } borrowed ? new NirRef(borrow.IsMutable, borrowed, borrow.Type) : null;
+            case HirSlice slice:
+                return LowerSlice(slice);
+            case HirSliceLength length:
+                return LowerPlace(length.Slice) is { } lengthOf ? new NirLength(lengthOf, _types.USize) : null;
+            case HirArrayLiteral array:
+            {
+                var elements = LowerOperands(array.Elements);
+                return elements.IsDefault ? null : new NirArray(elements, array.Type);
+            }
+            case HirArrayRepeat repeat:
+            {
+                var value = LowerOperand(repeat.Value);
+                return value is null ? null : new NirArrayRepeat(value, repeat.Type);
+            }
             case HirBorrowTemp temp:
             {
                 // The value lives in a temporary until the end of the statement (lifetimes.md §6).
@@ -575,7 +763,7 @@ public sealed class NirBuilder
                 }
                 return new NirRef(reborrow.IsMutable, reference.Place.Deref(), reborrow.Type);
             }
-            case HirFieldAccess or HirDeref:
+            case HirFieldAccess or HirDeref or HirIndex:
             {
                 var operand = LowerOperand(expr);
                 return operand is null ? null : new NirUse(operand);
@@ -699,8 +887,40 @@ public sealed class NirBuilder
         HirBorrowTemp t => ContainsCall(t.Value),
         HirStructLiteral s => s.Fields.Any(f => ContainsCall(f.Value)),
         HirEnumValue e => e.Payload.Any(ContainsCall),
+        HirArrayLiteral a => a.Elements.Any(ContainsCall),
+        HirArrayRepeat a => ContainsCall(a.Value),
+        HirIndex i => ContainsCall(i.Target) || ContainsCall(i.Index),
+        HirSlice s => s.Base.Projections.Any(p => p.Index is HirExpr index && ContainsCall(index))
+                      || (s.Low is not null && ContainsCall(s.Low)) || (s.High is not null && ContainsCall(s.High)),
+        HirSliceLength l => ContainsCall(l.Slice),
         _ => false,
     };
+
+    /// <summary>
+    /// <c>a[lo..hi]</c>: the base place, then the bounds left to right, then the range check
+    /// (skipped for <c>a[..]</c>), then the slice, which borrows the whole base.
+    /// </summary>
+    private NirSlice? LowerSlice(HirSlice slice)
+    {
+        if (LowerPlace(slice.Base) is not { } array)
+        {
+            return null;
+        }
+        var bounds = LowerOperands([.. new[] { slice.Low, slice.High }.OfType<HirExpr>()]);
+        if (bounds.IsDefault)
+        {
+            return null;
+        }
+        var length = Length(array);
+        var low = slice.Low is null ? new NirConst(0, _types.USize) : bounds[0];
+        var high = slice.High is null ? length : bounds[^1];
+        var staticallyValid = low is NirConst l && high is NirConst h && length is NirConst n && l.Value <= h.Value && h.Value <= n.Value;
+        if ((slice.Low is not null || slice.High is not null) && !staticallyValid)
+        {
+            Emit(new NirRangeCheck(low, high, length));
+        }
+        return new NirSlice(slice.IsMutable, array, low, high, slice.Type);
+    }
 
     private NirUse? LowerShortCircuit(HirBinary logical)
     {

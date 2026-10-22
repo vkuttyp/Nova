@@ -1,0 +1,37 @@
+fn main() {
+    var total = 0;
+    for (i in 0..5) { total += i; }
+    Console.writeLine(total);
+
+    var count = 0u8;
+    for (i in 250u8..255u8) { count += 1u8; }
+    Console.writeLine(count);
+
+    for (i in -2..1) { Console.write(i); Console.write(" "); }
+    Console.writeLine("");
+
+    for (i in 5..2) { Console.writeLine("never"); }
+
+    var found = -1;
+    for (i in 0..100) {
+        if (i % 2 == 0) { continue; }
+        if (i * i > 50) { found = i; break; }
+    }
+    Console.writeLine(found);
+
+    var n = 3;
+    for (i in 0..n) { n += 1; } // the bounds are evaluated once
+    Console.writeLine(n);
+
+    var pairs = 0;
+    for (i in 0..4) {
+        for (j in i..4) { pairs += 1; }
+    }
+    Console.writeLine(pairs);
+}
+// expect-stdout: 10
+// expect-stdout: 5
+// expect-stdout: -2 -1 0 
+// expect-stdout: 9
+// expect-stdout: 6
+// expect-stdout: 10

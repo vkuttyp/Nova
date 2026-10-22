@@ -27,9 +27,10 @@ remaining work, and they need liveness (§5).
 ## 2. NIR additions
 
 ```text
-projection = Field(f) | Deref
+projection = Field(f) | Deref | Downcast(V) | Index(operand)
 place      = local projection*                 -- (*r).f is  r Deref Field(f)
 rvalue    += Ref(Shared | Mut, place)           -- creates a loan
+           | Slice(Shared | Mut, place, lo, hi) -- M2d: also a loan, of the whole array or slice viewed
 stmt      += StorageDead(local)                 -- the local's storage ends (scope exit, statement end for temps)
 ```
 
@@ -51,6 +52,7 @@ Lowering facts the checker relies on:
 | NIR | Constraint |
 |---|---|
 | `t = Ref(k, p)` | `L ∈ loans(t)`; and if `p` contains `Deref` of a reference local `q`, then `loans(q) ⊆ loans(t)` (a reborrow keeps the original loan alive) |
+| `t = Slice(k, p, lo, hi)` | as `Ref(k, p)`: a slice is a reference to `[T]`, and its loan covers all of `p`, whatever the range |
 | `t = Use(Place(r))` with `r` of reference type | `loans(r) ⊆ loans(t)` |
 | `t = Call(f, args)` where `f` returns a reference | `loans(arg_i) ⊆ loans(t)` for every parameter `i` that `f`'s signature says the result is derived from (§7) |
 | reference **parameter** `p_i` | `Param_i ∈ loans(p_i)`, a placeholder loan for "whatever the caller lent" |
@@ -72,6 +74,9 @@ Each NIR statement and terminator performs **accesses** to places, in evaluation
 
 Two places **overlap** if they have the same root local and one projection list is a prefix of
 the other. `a` overlaps `a.f`, `a.f` does not overlap `a.g`, and `(*r)` overlaps `(*r).f`.
+Two `Index` projections always compare equal (M2d): `a[i]` overlaps `a[j]`, because v0 does no
+index reasoning. Two mutable slices of one array therefore cannot be live at once, even if
+their ranges are disjoint.
 Places with different roots never overlap. That is correct because aliasing between different
 roots only arises through loans, and every loan is checked when it is created.
 
@@ -97,6 +102,12 @@ roots only arises through loans, and every loan is checked when it is created.
 
 This accepts `let r = borrow x; print(r); x = 5;`, because `r` is dead after `print`. It rejects
 `let r = borrow x; x = 5; print(r);`.
+
+**Writes happen after the value (M2d).** In `Assign(p, rvalue)` the rvalue is evaluated first and
+`p` is written last. The **Write** access is therefore checked against the loans live *after*
+the statement; the rvalue's own accesses use the loans live before it. This accepts
+`a[0] = sum(a[..])`: the slice is dead once `sum` has returned, before `a[0]` is written.
+Rust's MIR gets the same result by writing a call's result in a separate step.
 
 **B5, two-phase borrows (as implemented).** For a method call `e.m(args)` whose receiver is
 `borrow mut this` and `e` is a place, the receiver's loan is created **after** `args` are

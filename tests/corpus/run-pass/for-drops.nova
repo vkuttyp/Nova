@@ -1,0 +1,26 @@
+struct Noisy {
+    id: i32;
+    drop { Console.write("drop "); Console.writeLine(this.id); }
+}
+
+fn main() {
+    for (i in 0..3) {
+        let n = Noisy { id: i };
+        if (i == 1) { continue; }
+        if (i == 2) { break; }
+        Console.writeLine("body end");
+    }
+    let a = [1, 2];
+    for (x in a) {
+        let n = Noisy { id: 10 + x };
+        defer Console.writeLine("deferred");
+    }
+}
+// expect-stdout: body end
+// expect-stdout: drop 0
+// expect-stdout: drop 1
+// expect-stdout: drop 2
+// expect-stdout: deferred
+// expect-stdout: drop 11
+// expect-stdout: deferred
+// expect-stdout: drop 12

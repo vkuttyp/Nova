@@ -28,11 +28,13 @@ function  = locals: [local]          -- _0.._(n-1) are the parameters, in order
             blocks: [block]          -- bb0 is the entry block
 local     = id, type, name?          -- name is null for compiler temporaries
 block     = id, statements: [stmt], terminator
-place     = local projection*                  -- projection = '.' field | Deref (M2a, M2b)
+place     = local projection*                  -- projection = '.' field | Deref (M2a, M2b) | Downcast(V) | Index(operand) (M2d)
 stmt      = Assign(place, rvalue)
           | Eval(rvalue)             -- for calls whose result is unused (void)
           | StorageDead(local)       -- scope end; temporaries at the end of their statement (M2b)
           | Drop(place, flag?)       -- inserted by drop elaboration (M2c); guarded by a bool flag local if present
+          | BoundsCheck(index, length)          -- panics unless index < length (M2d)
+          | RangeCheck(low, high, length)       -- panics unless low <= high <= length (M2d)
 rvalue    = Use(operand)
           | Binary(op, operand, operand, span)     -- op semantics: type-system.md §6 (may panic)
           | Unary(op, operand, span)
@@ -40,10 +42,15 @@ rvalue    = Use(operand)
           | Truncate(operand, type)
           | Aggregate(struct, [operand])           -- field values in declaration order (M2a)
           | Ref(Shared | Mut, place)               -- creates a loan (M2b; lifetimes.md)
+          | Discriminant(place) | EnumAggregate(V, [operand])   -- M2d enums
+          | Array([operand]) | ArrayRepeat(operand)             -- M2d array values
+          | Slice(Shared | Mut, place, low, high)  -- a slice of an array or deref'd slice; a loan of the whole place
+          | Length(place)                          -- a slice's length
           | Call(function, [operand])
           | Builtin(kind, [operand])               -- Console.write/writeLine
 operand   = Place(place, move?) | Const(value, type) | String(text)   -- move: non-Copy type or explicit `move` (M2c)
 terminator= Goto(bb) | Branch(operand, then_bb, else_bb) | Return(operand?)
+          | Switch(operand, [(value, bb)], otherwise_bb)    -- match (M2d)
           | Exit(operand)                          -- Process.exit
           | Unreachable                            -- after a call of type never
 ```
@@ -98,6 +105,20 @@ Lowering rules (HIR → NIR, `NirBuilder`):
 
     The C backend emits drop glue `nvD_<len><Name>(T *)`: the `drop` block, then each field that
     needs drop, in declaration order.
+
+- **Arrays, slices and `for` (M2d).**
+  - A slice type is a reference to the unsized `[T]`; `s[i]` is the place `(*s)[i]`.
+  - An index is evaluated into a `usize` temporary (or kept as a constant), then checked with
+    `BoundsCheck` against the array's constant length or the slice's `Length`, then used as an
+    `Index` projection. Element places are never move paths: an element's init state is its
+    array's.
+  - An assignment evaluates its target's indexes (and checks them) before the value.
+  - `a[lo..hi]` evaluates the base place, then the bounds left to right, then `RangeCheck` (none
+    for `a[..]`), then `Slice`.
+  - `for` evaluates its bounds, or its sequence place and length, once into locals that live until
+    the loop exits. A `usize` counter is compared with the end at the head. The body binds the
+    variable in its own scope; `continue` jumps to the counter's increment, and `break` to the
+    exit, which ends the header's locals.
 
 Printed by `novac build --dump-nir`.
 

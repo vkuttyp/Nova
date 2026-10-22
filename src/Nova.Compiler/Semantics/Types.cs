@@ -32,6 +32,11 @@ public enum TypeKind
     Enum,
     /// <summary><c>borrow T</c> / <c>borrow mut T</c> (type-system.md §13); see <see cref="NovaType.Pointee"/>.</summary>
     Reference,
+    /// <summary>
+    /// <c>[T; N]</c>, or the unsized <c>[T]</c> that slices refer to (type-system.md §16): <c>Slice&lt;T&gt;</c> is a
+    /// shared reference to <c>[T]</c> and <c>SliceMut&lt;T&gt;</c> a mutable one. <c>[T]</c> is never a value type.
+    /// </summary>
+    Array,
 }
 
 public sealed class StructField
@@ -201,10 +206,19 @@ public sealed class NovaType
         : this(TypeKind.Enum, name) => Enum = definition;
 
     internal NovaType(NovaType pointee, bool isMutable)
-        : this(TypeKind.Reference, (isMutable ? "borrow mut " : "borrow ") + pointee.Name)
+        : this(TypeKind.Reference, pointee.IsUnsized
+            ? (isMutable ? "SliceMut<" : "Slice<") + pointee.Element!.Name + ">"
+            : (isMutable ? "borrow mut " : "borrow ") + pointee.Name)
     {
         Pointee = pointee;
         IsMutableReference = isMutable;
+    }
+
+    internal NovaType(NovaType element, long length)
+        : this(TypeKind.Array, length < 0 ? $"[{element.Name}]" : $"[{element.Name}; {length}]")
+    {
+        Element = element;
+        ArrayLength = length;
     }
 
     internal NovaType(TypeKind kind, string name, int bits = 0, bool isSigned = false)
@@ -228,8 +242,17 @@ public sealed class NovaType
     /// <summary>The definition of an enum type; null for every other kind.</summary>
     public EnumDefinition? Enum { get; }
 
-    /// <summary>The element type of an array or slice; null for every other kind (M2d).</summary>
-    public NovaType? Element { get; init; }
+    /// <summary>The element type of an array; null for every other kind (M2d).</summary>
+    public NovaType? Element { get; }
+
+    /// <summary>N for <c>[T; N]</c>; -1 for the unsized <c>[T]</c>.</summary>
+    public long ArrayLength { get; }
+
+    /// <summary>The unsized <c>[T]</c>: only behind a slice.</summary>
+    public bool IsUnsized => Kind == TypeKind.Array && ArrayLength < 0;
+
+    /// <summary><c>Slice&lt;T&gt;</c> or <c>SliceMut&lt;T&gt;</c>.</summary>
+    public bool IsSlice => Kind == TypeKind.Reference && Pointee!.IsUnsized;
 
     /// <summary>The referent type of a reference; null for every other kind.</summary>
     public NovaType? Pointee { get; }
@@ -319,6 +342,30 @@ public sealed class TypeTable
         new(name, new EnumDefinition(syntax, source));
 
     private readonly Dictionary<(NovaType, bool), NovaType> _references = [];
+    private readonly Dictionary<(NovaType, long), NovaType> _arrays = [];
+    private readonly List<NovaType> _composites = [];
+
+    /// <summary>Array and slice types in creation order (deterministic: checking order is), for the C backend.</summary>
+    public IReadOnlyList<NovaType> Composites => _composites;
+
+    /// <summary>The unique <c>[T; N]</c>, or <c>[T]</c> when <paramref name="length"/> is -1.</summary>
+    public NovaType ArrayOf(NovaType element, long length)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        if (!_arrays.TryGetValue((element, length), out var array))
+        {
+            array = new NovaType(element, length);
+            _arrays.Add((element, length), array);
+            if (length >= 0)
+            {
+                _composites.Add(array);
+            }
+        }
+        return array;
+    }
+
+    /// <summary><c>Slice&lt;T&gt;</c> or <c>SliceMut&lt;T&gt;</c>.</summary>
+    public NovaType SliceOf(NovaType element, bool isMutable) => ReferenceTo(ArrayOf(element, -1), isMutable);
 
     /// <summary>The unique reference type to <paramref name="pointee"/> (types are compared by reference).</summary>
     public NovaType ReferenceTo(NovaType pointee, bool isMutable)
@@ -328,6 +375,10 @@ public sealed class TypeTable
         {
             reference = new NovaType(pointee, isMutable);
             _references.Add((pointee, isMutable), reference);
+            if (pointee.IsUnsized)
+            {
+                _composites.Add(reference);
+            }
         }
         return reference;
     }
@@ -347,7 +398,13 @@ public sealed class TypeTable
             case TypeKind.Bool:
                 return (1, 1);
             case TypeKind.Reference:
-                return (8, 8); // LP64 targets only in M2 (TargetInfo.PointerBits is asserted in the generated C)
+                // LP64 targets only in M2 (TargetInfo.PointerBits is asserted in the generated C).
+                return type.IsSlice ? (16, 8) : (8, 8); // a slice is (pointer, u64 length)
+            case TypeKind.Array:
+            {
+                var (elementSize, elementAlign) = LayoutOf(type.Element!);
+                return ((int)(elementSize * type.ArrayLength), elementAlign); // N0259 bounds the size
+            }
             case TypeKind.Enum:
             {
                 var (size, align, _, _) = EnumLayout(type);

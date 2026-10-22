@@ -98,6 +98,12 @@ public sealed record NamedType(QualifiedName Name, TextSpan Span) : TypeSyntax(S
 
 public sealed record MissingType(TextSpan Span) : TypeSyntax(Span);
 
+/// <summary><c>[T; N]</c> (type-system.md §16.1); <see cref="Length"/> is an integer literal.</summary>
+public sealed record ArrayType(TypeSyntax Element, Expr Length, TextSpan Span) : TypeSyntax(Span);
+
+/// <summary>A name with type arguments: <c>Slice&lt;T&gt;</c>, <c>SliceMut&lt;T&gt;</c> (type-system.md §16.1).</summary>
+public sealed record GenericType(QualifiedName Name, ImmutableArray<TypeSyntax> Arguments, TextSpan Span) : TypeSyntax(Span);
+
 /// <summary>
 /// <c>borrow T</c>, <c>borrow mut T</c>; <see cref="Sources"/> is the <c>(a, b)</c> list allowed in
 /// return types (lifetimes.md §7), default when absent.
@@ -146,6 +152,9 @@ public sealed record VariantPattern(QualifiedName Path, ImmutableArray<Identifie
 public sealed record IfStmt(Expr Condition, BlockStmt Then, Stmt? Else, TextSpan Span) : Stmt(Span);
 
 public sealed record WhileStmt(Expr Condition, BlockStmt Body, TextSpan Span) : Stmt(Span);
+
+/// <summary><c>for (x in e) { }</c> or <c>for (i in lo..hi) { }</c> (type-system.md §16.4).</summary>
+public sealed record ForStmt(Identifier Variable, Expr Start, Expr? End, BlockStmt Body, TextSpan Span) : Stmt(Span);
 
 public sealed record LoopStmt(BlockStmt Body, TextSpan Span) : Stmt(Span);
 
@@ -246,5 +255,17 @@ public sealed record MutArgExpr(Expr Operand, TextSpan Span) : Expr(Span);
 
 /// <summary><c>S { f: e, ... }</c>; initialisers in source order.</summary>
 public sealed record StructLiteralExpr(Identifier TypeName, ImmutableArray<FieldInit> Fields, TextSpan Span) : Expr(Span);
+
+/// <summary><c>[a, b, c]</c> (type-system.md §16.2).</summary>
+public sealed record ArrayLiteralExpr(ImmutableArray<Expr> Elements, TextSpan Span) : Expr(Span);
+
+/// <summary><c>[v; N]</c>; <see cref="Count"/> is an integer literal.</summary>
+public sealed record ArrayRepeatExpr(Expr Value, Expr Count, TextSpan Span) : Expr(Span);
+
+/// <summary><c>a[i]</c>.</summary>
+public sealed record IndexExpr(Expr Target, Expr Index, TextSpan Span) : Expr(Span);
+
+/// <summary><c>a[lo..hi]</c>; either bound may be absent (type-system.md §16.3).</summary>
+public sealed record SliceExpr(Expr Target, Expr? Low, Expr? High, TextSpan Span) : Expr(Span);
 
 public sealed record FieldInit(Identifier Name, Expr Value, TextSpan Span) : SyntaxNode(Span);

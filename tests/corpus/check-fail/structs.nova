@@ -6,7 +6,7 @@ struct Dup { a: i32; a: i64; } // error[N0228]
 struct DupFn { a: i32; fn a() { } } // error[N0228]
 struct i32 { } // error[N0201]
 struct Point { } // error[N0201]
-const ORIGIN: Point = Point.origin(); // error[N0216] // error[N0217]
+const ORIGIN: Point = Point.origin(); // error[N0216] (the value is not checked further)
 fn literals() {
     let a = Point { x: 1 }; // error[N0229]
     let b = Point { x: 1, y: 2, z: 3 }; // error[N0230]

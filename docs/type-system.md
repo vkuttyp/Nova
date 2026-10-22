@@ -315,6 +315,10 @@ The analysis runs on NIR move paths (`intermediate-representation.md`):
   been assigned, that is N0212. If it may have been moved, that is N0250.
 - Assigning a field `p.f` requires the rest of `p` to be initialised (no piecewise construction
   of an uninitialised struct). Re-initialising a moved-out field is allowed.
+  - If some enclosing struct of `p.f` has a `drop` block, that whole struct must be initialised,
+    `f` included: such a struct is never partially moved (N0252), so a missing field means the
+    whole value was moved. This also covers a struct whose only field is `f` (found by the
+    mutation suite, M2d).
 
 ### 14.5 Destruction (O4)
 - A value that needs drop is destroyed exactly once, at the first of these:
@@ -405,3 +409,69 @@ Binding   = Identifier | '_'
   - `_` binds nothing.
 - The scrutinee is evaluated once. When it is a place it is not moved (only Copy payloads are
   read). A temporary scrutinee lives until the end of the `match` statement.
+
+## 16. Arrays, slices and `for` (M2d)
+
+### 16.1 Types
+- `[T; N]` is a fixed array of `N` elements. `N` is an integer literal (no suffix or `usize`) with
+  1 ≤ N ≤ 2^48 − 1, and the array is at most 2^31 − 1 bytes. It is laid out as `N` consecutive `T`s:
+  size `N × size(T)`, the alignment of `T`.
+  - **v0 restriction:** `T` must be a Copy type, so arrays are Copy and never need drop. Arrays of
+    move types need element-wise move tracking (future).
+  - Otherwise arrays may appear anywhere a value may: locals, parameters, results, struct fields,
+    enum payloads and other arrays. Constants of array type are not supported yet (N0216).
+- `Slice<T>` / `SliceMut<T>` are **borrowed views** `(pointer, length)` of a run of `T`s in an array
+  or another slice. They follow every rule for references (§13), with the same scoping:
+  - only in parameters, `let` locals with an initialiser, and return types with a source list;
+  - never in fields, payloads, array elements, constants or `var` locals (N0246);
+  - `Slice<T>` is Copy, and each use of a `SliceMut<T>` reborrows it; `SliceMut<T>` coerces to
+    `Slice<T>`;
+  - a slice holds a loan of the whole array (or slice) it was taken from (`lifetimes.md`);
+  - a function returning a slice has no `borrow(...)` source list: it must have exactly one
+    reference (or slice) parameter, which the result is derived from (§13.5's default rule);
+  - the element type follows the array rules: Copy, never a reference.
+- Internally, `Slice<T>` is `borrow [T]` and `SliceMut<T>` is `borrow mut [T]`, with `[T]` an
+  unsized array type that only exists behind a slice. That is why every reference rule applies.
+
+### 16.2 Values
+- `[e1, …, en]`: all elements have the same type (the expected element type, or the first
+  element's), n ≥ 1.
+- `[v; N]`: N copies of `v`.
+- `a.length` is a `usize`: the constant `N` for arrays, the stored length for slices. For an
+  array, `a` must be a place (a variable, field or element), because the constant would skip
+  evaluating it (N0216).
+
+### 16.3 Indexing and slicing
+- `a[i]`:
+  - `a` is an array or slice place, or a reference to an array;
+  - `i` is a `usize` (a flexible literal becomes `usize`);
+  - `i ≥ a.length` **panics** ("index out of bounds", reported at the index expression);
+  - `a[i]` is a place: it can be read (a copy), assigned (if mutable: an array rooted at a `var`
+    or reached through `borrow mut`, or a `SliceMut`), and borrowed.
+- `a[lo..hi]`, `a[lo..]`, `a[..hi]`, `a[..]` give a `Slice<T>` of elements `lo` up to but not
+  including `hi` (default `0` and `a.length`). `lo ≤ hi ≤ a.length` is checked; otherwise the
+  program **panics**.
+- `borrow mut a[lo..hi]` gives a `SliceMut<T>` and needs `a` to be mutable. As a call argument
+  for a `SliceMut<T>` parameter, `mut a[lo..hi]` means the same.
+- Slicing needs a place (N0247): slice a local, not a call result.
+- Evaluation order: the array place (with its own indexes), then `lo`, then `hi`. In an assignment
+  `a[i] = v`, the target's indexes are evaluated and checked before `v`.
+- The borrow checker treats all elements of an array as **overlapping** (no index reasoning in v0).
+  Borrowing `a[0]` and then writing `a[1]` while the borrow is live is rejected.
+
+### 16.4 `for`
+The header is parenthesised, like `while` and `match`, so a name before the body is never read as a
+struct literal.
+- `for (i in lo..hi) { … }`: `i` takes each value from `lo` up to but not including `hi`. Both bounds
+  are evaluated once, have the same integer type (flexible literals adapt), and `i` is immutable
+  in the body.
+- `for (x in seq) { … }`: `seq` is an array place, a slice, or a reference to an array. `x` is a copy
+  of each element from index 0 upward. The element is read when the loop reaches it, and the
+  length is read once at the start.
+- `break` and `continue` behave as in `while`. `continue` proceeds to the next element.
+
+- The loop variable is immutable. It has the bounds' type for a range, and the element type
+  for a sequence. Like every local, it cannot shadow another (N0203).
+
+Diagnostics: N0259 (an element type that is not Copy, an invalid length, or a too-large array).
+The other errors reuse N0205, N0211, N0216, N0230, N0246, N0247 and N0248 (`diagnostics.md`).

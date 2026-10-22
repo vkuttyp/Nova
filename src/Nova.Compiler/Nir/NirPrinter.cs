@@ -75,6 +75,10 @@ public static class NirPrinter
         NirDiscriminant d => $"discriminant({Place(d.Place, symbols)})",
         NirEnumAggregate e => $"{e.Type}.{symbols.GetName(e.Variant.Name)}({string.Join(", ", e.Payload.Select(f => Operand(f, symbols)))})",
         NirAggregate a => $"{a.Type} {{ {string.Join(", ", a.Fields.Select(f => Operand(f, symbols)))} }}",
+        NirArray a => $"[{string.Join(", ", a.Elements.Select(e => Operand(e, symbols)))}]",
+        NirArrayRepeat a => $"[{Operand(a.Value, symbols)}; {a.Type.ArrayLength}]",
+        NirSlice s => $"&{(s.IsMutable ? "mut " : "")}{Place(s.Base, symbols)}[{Operand(s.Low, symbols)}..{Operand(s.High, symbols)}]",
+        NirLength l => $"length({Place(l.Slice, symbols)})",
         NirBuiltin b => $"{b.Function}({string.Join(", ", b.Arguments.Select(a => Operand(a, symbols)))})",
         _ => rvalue.ToString(),
     };
@@ -83,6 +87,8 @@ public static class NirPrinter
     {
         NirAssign a => $"{Place(a.Target, symbols)} = {Rvalue(a.Value, symbols)}",
         NirEval e => Rvalue(e.Value, symbols),
+        NirBoundsCheck c => $"BoundsCheck({Operand(c.Index, symbols)} < {Operand(c.Length, symbols)})",
+        NirRangeCheck c => $"RangeCheck({Operand(c.Low, symbols)} <= {Operand(c.High, symbols)} <= {Operand(c.Length, symbols)})",
         NirStorageDead d => $"StorageDead({Local(d.Local, symbols)})",
         NirDrop { Flag: null } d => $"Drop({Place(d.Place, symbols)})",
         NirDrop d => $"Drop({Place(d.Place, symbols)}) if {Local(d.Flag!, symbols)}",

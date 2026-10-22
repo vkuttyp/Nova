@@ -68,6 +68,9 @@ internal sealed class TypeChecker
     private HirFunction? _function;
     private List<Dictionary<Symbol, HirLocal>> _scopes = [];
     private int _loopDepth;
+    /// <summary>Array and slice element types named before Copy-ness was known; checked after <see cref="ComputeCopyAndDrop"/>.</summary>
+    private readonly List<(NovaType Element, long Length, TextSpan Span, SourceText Source)> _pendingElements = [];
+    private bool _copyKnown;
 
     public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics)
     {
@@ -121,6 +124,12 @@ internal sealed class TypeChecker
         }
         CheckStructRecursion();
         ComputeCopyAndDrop();
+        _copyKnown = true;
+        foreach (var (element, length, span, source) in _pendingElements)
+        {
+            _source = source;
+            CheckElementCopy(element, length, span);
+        }
 
         foreach (var constant in _constants)
         {
@@ -169,9 +178,9 @@ internal sealed class TypeChecker
             case ConstDecl c:
             {
                 var type = ResolveType(c.Type, allowVoid: false);
-                if (type.Kind == TypeKind.Struct)
+                if (type.Kind is TypeKind.Struct or TypeKind.Array)
                 {
-                    Error(DiagnosticCodes.Unsupported, c.Type.Span, "constants of struct type are not supported yet");
+                    Error(DiagnosticCodes.Unsupported, c.Type.Span, $"constants of {(type.Kind == TypeKind.Array ? "array" : "struct")} type are not supported yet");
                     type = _types.Error;
                 }
                 else if (type.IsReference)
@@ -226,21 +235,22 @@ internal sealed class TypeChecker
     /// <summary>The parameters a returned reference may be derived from (type-system.md §13.5, lifetimes.md §7).</summary>
     private ImmutableArray<int> ResolveReturnSources(FunctionDecl fn, HirFunction hir)
     {
-        var syntax = (ReferenceType)fn.ReturnType!;
+        // A slice return type has no source list: it uses the default rule.
+        var syntax = fn.ReturnType as ReferenceType;
         var referenceParameters = hir.Parameters.Where(p => p.Type.IsReference).ToList();
-        if (!syntax.HasSources)
+        if (syntax is not { HasSources: true })
         {
             if (referenceParameters.Count == 1)
             {
                 var only = referenceParameters[0];
                 if (hir.ReturnType.IsMutableReference && !only.Type.IsMutableReference)
                 {
-                    Error(DiagnosticCodes.ReturnSourceMismatch, syntax.Span,
+                    Error(DiagnosticCodes.ReturnSourceMismatch, fn.ReturnType!.Span,
                         $"a 'borrow mut' result cannot be derived from the shared reference parameter '{Name(only.Name)}'");
                 }
                 return [only.Id];
             }
-            Error(DiagnosticCodes.ReturnSourceMismatch, syntax.Span, referenceParameters.Count == 0
+            Error(DiagnosticCodes.ReturnSourceMismatch, fn.ReturnType!.Span, referenceParameters.Count == 0
                 ? "a function without reference parameters cannot return a reference: there is nothing it could borrow from"
                 : "this function has several reference parameters: name the ones the result is borrowed from, e.g. 'borrow(a, b) T'");
             return [];
@@ -373,12 +383,23 @@ internal sealed class TypeChecker
     }
 
     /// <summary>The types an aggregate contains by value, with the declaring span (struct fields, enum payloads).</summary>
+    /// <remarks>An array contains its elements by value, so arrays are looked through.</remarks>
     private static IEnumerable<(NovaType Type, TextSpan Span, SourceText Source)> Contained(NovaType type) => type.Kind switch
     {
-        TypeKind.Struct => type.Struct!.Fields.Select(f => (f.Type, f.Span, type.Struct.Source)),
-        TypeKind.Enum => type.Enum!.Variants.SelectMany(v => v.Payload).Select(f => (f.Type, f.Span, type.Enum.Source)),
+        TypeKind.Struct => type.Struct!.Fields.Select(f => (ElementOf(f.Type), f.Span, type.Struct.Source)),
+        TypeKind.Enum => type.Enum!.Variants.SelectMany(v => v.Payload).Select(f => (ElementOf(f.Type), f.Span, type.Enum.Source)),
         _ => [],
     };
+
+    /// <summary>The innermost element type of nested arrays; any other type itself.</summary>
+    private static NovaType ElementOf(NovaType type)
+    {
+        while (type.Kind == TypeKind.Array)
+        {
+            type = type.Element!;
+        }
+        return type;
+    }
 
     private static bool IsAggregate(NovaType type) => type.Kind is TypeKind.Struct or TypeKind.Enum;
 
@@ -480,6 +501,33 @@ internal sealed class TypeChecker
             }
             return pointee.IsBottom ? _types.Error : _types.ReferenceTo(pointee, reference.IsMutable);
         }
+        if (syntax is ArrayType arrayType)
+        {
+            var element = ResolveType(arrayType.Element, allowVoid: false);
+            if (arrayType.Length is not IntLiteralExpr { Suffix: IntSuffix.None or IntSuffix.USize } literal
+                || literal.Value == 0 || literal.Value > MaxArrayLength)
+            {
+                Error(DiagnosticCodes.InvalidArray, arrayType.Length.Span,
+                    $"an array length must be an integer literal from 1 to {MaxArrayLength}");
+                return _types.Error;
+            }
+            return ArrayType(element, (long)literal.Value, arrayType.Element.Span);
+        }
+        if (syntax is GenericType generic)
+        {
+            var genericName = generic.Name.Parts.Length == 1 ? Name(generic.Name.Parts[0].Name) : "";
+            if (genericName is not ("Slice" or "SliceMut") || generic.Arguments.Length != 1)
+            {
+                Error(DiagnosticCodes.UnknownType, generic.Span, genericName is "Slice" or "SliceMut"
+                    ? $"'{genericName}' takes one type argument: '{genericName}<T>'"
+                    : "only 'Slice<T>' and 'SliceMut<T>' take type arguments");
+                return _types.Error;
+            }
+            var element = ResolveType(generic.Arguments[0], allowVoid: false);
+            return CheckElement(element, -1, generic.Arguments[0].Span)
+                ? _types.SliceOf(element, genericName == "SliceMut")
+                : _types.Error;
+        }
         if (syntax is not NamedType named)
         {
             return _types.Error;
@@ -508,6 +556,61 @@ internal sealed class TypeChecker
             return _types.Error;
         }
         return type;
+    }
+
+    /// <summary>Lengths fit in 48 bits, like every size in memory-model.md §7.</summary>
+    private const long MaxArrayLength = (1L << 48) - 1;
+
+    /// <summary><c>[element; length]</c> after checking the element type, or the error type.</summary>
+    private NovaType ArrayType(NovaType element, long length, TextSpan elementSpan) =>
+        CheckElement(element, length, elementSpan) ? _types.ArrayOf(element, length) : _types.Error;
+
+    /// <summary>
+    /// Can <paramref name="element"/> be an array or slice element (type-system.md §16.1)? References
+    /// never; non-Copy types are reported once Copy-ness is known (N0259).
+    /// </summary>
+    private bool CheckElement(NovaType element, long length, TextSpan span)
+    {
+        if (element.IsBottom)
+        {
+            return false;
+        }
+        if (element.IsReference)
+        {
+            Error(DiagnosticCodes.ReferenceNotAllowed, span, "array and slice elements cannot be references in v0");
+            return false;
+        }
+        if (_copyKnown)
+        {
+            CheckElementCopy(element, length, span);
+        }
+        else
+        {
+            _pendingElements.Add((element, length, span, _source));
+        }
+        return true;
+    }
+
+    private void CheckElementCopy(NovaType element, long length, TextSpan span)
+    {
+        if (!TypeTable.IsCopy(element))
+        {
+            Error(DiagnosticCodes.InvalidArray, span,
+                $"array and slice elements must be Copy types in v0; '{element}' is not Copy (it has a drop block or contains a move type)");
+            return;
+        }
+        if (length > 0 && HasLayout(element) && TypeTable.LayoutOf(element).Size * (Int128)length > int.MaxValue)
+        {
+            Error(DiagnosticCodes.InvalidArray, span, $"an array of {length} '{element}' values is larger than {int.MaxValue} bytes");
+        }
+    }
+
+    /// <summary>False if the type contains a recursive aggregate, which has no layout (N0227 was reported).</summary>
+    private static bool HasLayout(NovaType type)
+    {
+        var inner = ElementOf(type);
+        return inner.Struct is not { IsRecursive: true } && inner.Enum is not { IsRecursive: true }
+            && Contained(inner).All(c => HasLayout(c.Type));
     }
 
     private void CheckMain()
@@ -548,7 +651,9 @@ internal sealed class TypeChecker
         var (savedSource, savedFunction, savedScopes, savedLoopDepth) = (_source, _function, _scopes, _loopDepth);
         (_source, _function, _scopes, _loopDepth) = (entry.Source, null, [], 0);
 
-        var value = Fold(CheckExpr(entry.Decl.Value, entry.Hir.Type));
+        var checkedValue = CheckExpr(entry.Decl.Value, entry.Hir.Type);
+        // A constant whose type was rejected is not folded: that would only add a cascading error.
+        var value = ReferenceEquals(entry.Hir.Type, _types.Error) ? ErrorResult(entry.Decl.Value.Span) : Fold(checkedValue);
 
         (_source, _function, _scopes, _loopDepth) = (savedSource, savedFunction, savedScopes, savedLoopDepth);
         // A cycle may already have stored an error value for this constant; keep the first result.
@@ -599,7 +704,9 @@ internal sealed class TypeChecker
                     var other => other,
                 };
             default:
-                Error(DiagnosticCodes.NotConstant, expr.Span, "constant expressions cannot contain calls");
+                Error(DiagnosticCodes.NotConstant, expr.Span, expr is HirCall or HirBuiltinCall
+                    ? "constant expressions cannot contain calls"
+                    : "constant expressions can only contain literals, operators, casts and other constants");
                 return ErrorResult(expr.Span);
         }
     }
@@ -718,6 +825,8 @@ internal sealed class TypeChecker
                 _loopDepth--;
                 return new HirLoop(body, stmt.Span);
             }
+            case ForStmt forStmt:
+                return CheckFor(forStmt);
             case BreakStmt:
                 CheckInLoop(stmt.Span, "break");
                 return new HirBreak(stmt.Span);
@@ -743,6 +852,57 @@ internal sealed class TypeChecker
             default:
                 throw new InvalidOperationException($"unexpected statement {stmt.GetType().Name}");
         }
+    }
+
+    /// <summary>`for` over an integer range or the elements of an array or slice (type-system.md §16.4).</summary>
+    private HirFor CheckFor(ForStmt forStmt)
+    {
+        HirExpr start;
+        HirExpr? end = null;
+        NovaType variableType;
+        if (forStmt.End is null)
+        {
+            start = AutoDeref(Synth(forStmt.Start, null));
+            variableType = start.Type.Kind == TypeKind.Array ? start.Type.Element! : _types.Error;
+            if (!start.Type.IsBottom && start.Type.Kind != TypeKind.Array)
+            {
+                Error(DiagnosticCodes.TypeMismatch, forStmt.Start.Span,
+                    $"'for' iterates over an array, a slice or a range 'a..b'; found '{start.Type}'");
+            }
+        }
+        else
+        {
+            // The bounds have one integer type; a flexible literal takes the other bound's type.
+            if (IsFlexible(forStmt.Start) && !IsFlexible(forStmt.End))
+            {
+                end = AutoDeref(Synth(forStmt.End, null));
+                start = CheckExpr(forStmt.Start, end.Type.IsInteger ? end.Type : null);
+            }
+            else
+            {
+                start = AutoDeref(Synth(forStmt.Start, null));
+                end = CheckExpr(forStmt.End, start.Type.IsInteger ? start.Type : null);
+            }
+            variableType = start.Type.IsInteger ? start.Type : _types.Error;
+            if (!start.Type.IsBottom && !start.Type.IsInteger)
+            {
+                Error(DiagnosticCodes.TypeMismatch, forStmt.Start.Span, $"a range in 'for' needs integer bounds; found '{start.Type}'");
+            }
+        }
+
+        if (LookupLocal(forStmt.Variable.Name) is not null)
+        {
+            Error(DiagnosticCodes.LocalRedeclared, forStmt.Variable.Span,
+                $"'{Name(forStmt.Variable.Name)}' is already declared in this function; locals cannot be shadowed");
+        }
+        _scopes.Add([]);
+        var variable = _function!.AddLocal(forStmt.Variable.Name, variableType, isMutable: false, isParameter: false, forStmt.Variable.Span);
+        _scopes[^1][forStmt.Variable.Name] = variable;
+        _loopDepth++;
+        var body = CheckBlock(forStmt.Body);
+        _loopDepth--;
+        _scopes.RemoveAt(_scopes.Count - 1);
+        return new HirFor(variable, start, end, body, forStmt.Span);
     }
 
     /// <summary>A `match` statement: patterns, bindings, exhaustiveness (type-system.md §15.2).</summary>
@@ -1026,7 +1186,7 @@ internal sealed class TypeChecker
             }
             return null;
         }
-        if (target is not (NameExpr or MemberExpr or ThisExpr or ParenExpr))
+        if (target is not (NameExpr or MemberExpr or ThisExpr or ParenExpr or IndexExpr))
         {
             Error(DiagnosticCodes.Unsupported, target.Span, "only variables, their fields, and places reached through references can be assigned");
             return null;
@@ -1060,6 +1220,7 @@ internal sealed class TypeChecker
         HirLocalRef local => new HirPlace(local.Local, [], local.Type),
         HirFieldAccess field when ToPlace(field.Target) is { } target => Project(target, new Projection(field.Field)),
         HirDeref deref when ToPlace(deref.Reference) is { } target => Project(target, Projection.Deref),
+        HirIndex index when ToPlace(index.Target) is { } target => Project(target, Projection.At(index.Index)),
         _ => null,
     };
 
@@ -1103,7 +1264,8 @@ internal sealed class TypeChecker
             text += "." + Name(projection.Field!.Name);
             hasField = true;
         }
-        return hasField ? $"'{text}'" : place.Projections.IsEmpty ? $"'{text}'" : $"the value '{text}' refers to";
+        return place.Projections.Any(p => p.Kind == ProjectionKind.Index) ? $"an element of '{text}'"
+            : hasField ? $"'{text}'" : place.Projections.IsEmpty ? $"'{text}'" : $"the value '{text}' refers to";
     }
 
     /// <summary>Reads through references until the value is not a reference (auto-deref, type-system.md §13.3).</summary>
@@ -1177,6 +1339,10 @@ internal sealed class TypeChecker
                     "'mut' is only for arguments passed to a 'borrow mut' parameter");
                 Synth(mutArgument.Operand, null);
                 return ErrorResult(argument.Span);
+            }
+            if (mutArgument.Operand is SliceExpr mutSlice && parameterType.IsSlice)
+            {
+                return Coerce(SynthSlice(mutSlice, isMutable: true, argument.Span), parameterType, argument.Span);
             }
             var target = Synth(mutArgument.Operand, IntegerHint(parameterType.Pointee));
             if (target.Type.IsBottom || target.Type.IsReference)
@@ -1331,6 +1497,8 @@ internal sealed class TypeChecker
                 return ErrorResult(expr.Span);
             case StructLiteralExpr literal:
                 return SynthStructLiteral(literal);
+            case BorrowExpr { Operand: SliceExpr slice } borrow:
+                return SynthSlice(slice, borrow.IsMutable, borrow.Span);
             case BorrowExpr borrow:
             {
                 var operand = Synth(borrow.Operand, null);
@@ -1345,6 +1513,50 @@ internal sealed class TypeChecker
                     return ErrorResult(borrow.Span);
                 }
                 return BorrowPlace(operand, borrow.IsMutable, borrow.Span);
+            }
+            case SliceExpr slice:
+                return SynthSlice(slice, isMutable: false, slice.Span);
+            case IndexExpr index:
+            {
+                var target = AutoDeref(Synth(index.Target, null));
+                var position = CheckExpr(index.Index, _types.USize);
+                if (target.Type.IsBottom)
+                {
+                    return target;
+                }
+                if (target.Type.Kind != TypeKind.Array)
+                {
+                    Error(DiagnosticCodes.TypeMismatch, index.Target.Span, $"only arrays and slices can be indexed; found '{target.Type}'");
+                    return ErrorResult(index.Span);
+                }
+                return new HirIndex(target, position, target.Type.Element!, index.Span);
+            }
+            case ArrayLiteralExpr literal:
+            {
+                var elementExpected = expected is { Kind: TypeKind.Array, IsUnsized: false } ? expected.Element : null;
+                var first = ArrayElement(literal.Elements[0], elementExpected);
+                var elementType = elementExpected ?? first.Type;
+                var elements = ImmutableArray.CreateBuilder<HirExpr>(literal.Elements.Length);
+                elements.Add(first);
+                foreach (var element in literal.Elements.Skip(1))
+                {
+                    elements.Add(CheckExpr(element, elementType));
+                }
+                var arrayType = ArrayType(elementType, literal.Elements.Length, literal.Elements[0].Span);
+                return arrayType.IsBottom ? ErrorResult(literal.Span) : new HirArrayLiteral(elements.MoveToImmutable(), arrayType, literal.Span);
+            }
+            case ArrayRepeatExpr repeat:
+            {
+                var elementExpected = expected is { Kind: TypeKind.Array, IsUnsized: false } ? expected.Element : null;
+                var value = ArrayElement(repeat.Value, elementExpected);
+                if (repeat.Count is not IntLiteralExpr { Suffix: IntSuffix.None or IntSuffix.USize } count
+                    || count.Value == 0 || count.Value > MaxArrayLength)
+                {
+                    Error(DiagnosticCodes.InvalidArray, repeat.Count.Span, $"an array length must be an integer literal from 1 to {MaxArrayLength}");
+                    return ErrorResult(repeat.Span);
+                }
+                var arrayType = ArrayType(elementExpected ?? value.Type, (long)count.Value, repeat.Value.Span);
+                return arrayType.IsBottom ? ErrorResult(repeat.Span) : new HirArrayRepeat(value, arrayType, repeat.Span);
             }
             case MoveExpr move:
             {
@@ -1383,6 +1595,51 @@ internal sealed class TypeChecker
         }
     }
 
+    /// <summary>An array element: checked against the expected element type, or its own type (auto-deref'd).</summary>
+    private HirExpr ArrayElement(Expr element, NovaType? expected)
+    {
+        if (expected is not null)
+        {
+            return CheckExpr(element, expected);
+        }
+        var value = AutoDeref(Synth(element, null));
+        if (value.Type.Kind is TypeKind.Void or TypeKind.Never)
+        {
+            Error(DiagnosticCodes.VoidValue, element.Span, $"this expression has no value (its type is '{value.Type}')");
+            return ErrorResult(element.Span);
+        }
+        return value;
+    }
+
+    /// <summary><c>a[lo..hi]</c> or <c>borrow mut a[lo..hi]</c>: a slice of an array or slice place (type-system.md §16.3).</summary>
+    private HirExpr SynthSlice(SliceExpr slice, bool isMutable, TextSpan span)
+    {
+        var target = AutoDeref(Synth(slice.Target, null));
+        var low = slice.Low is null ? null : CheckExpr(slice.Low, _types.USize);
+        var high = slice.High is null ? null : CheckExpr(slice.High, _types.USize);
+        if (target.Type.IsBottom)
+        {
+            return target;
+        }
+        if (target.Type.Kind != TypeKind.Array)
+        {
+            Error(DiagnosticCodes.TypeMismatch, slice.Target.Span, $"only arrays and slices can be sliced; found '{target.Type}'");
+            return ErrorResult(span);
+        }
+        if (ToPlace(target) is not { } place)
+        {
+            Error(DiagnosticCodes.BorrowOfNonPlace, span,
+                "only a variable, a field, or a place reached through a reference can be sliced; bind the value to a local first");
+            return ErrorResult(span);
+        }
+        if (isMutable && MutabilityError(place) is { } reason)
+        {
+            Error(DiagnosticCodes.BorrowMutOfImmutable, span, $"cannot borrow {DescribePlace(place)} as mutable: {reason}");
+            return ErrorResult(span);
+        }
+        return new HirSlice(isMutable, place, low, high, _types.SliceOf(target.Type.Element!, isMutable), span);
+    }
+
     private HirExpr SynthMember(MemberExpr member)
     {
         // `Shape.Empty`: a variant without payload.
@@ -1398,6 +1655,24 @@ internal sealed class TypeChecker
             return ErrorResult(member.Span);
         }
         var value = AutoDeref(Synth(member.Target, null));
+        if (value.Type.Kind == TypeKind.Array)
+        {
+            if (Name(member.Member.Name) != "length")
+            {
+                Error(DiagnosticCodes.UnknownField, member.Member.Span,
+                    $"'{value.Type}' has no member '{Name(member.Member.Name)}'; arrays and slices only have 'length'");
+                return ErrorResult(member.Span);
+            }
+            if (!value.Type.IsUnsized && ToPlace(value) is null)
+            {
+                // The constant would skip evaluating the array (and any calls in it).
+                Error(DiagnosticCodes.Unsupported, member.Span, "'length' needs an array variable or field; bind the value to a local first");
+                return ErrorResult(member.Span);
+            }
+            return value.Type.IsUnsized
+                ? new HirSliceLength(((HirDeref)value).Reference, _types.USize, member.Span)
+                : new HirIntConst(value.Type.ArrayLength, _types.USize, member.Span);
+        }
         return ResolveField(value.Type, member.Member) is { } field
             ? new HirFieldAccess(value, field, member.Span)
             : ErrorResult(member.Span);

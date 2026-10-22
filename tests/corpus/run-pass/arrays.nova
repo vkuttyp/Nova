@@ -1,0 +1,71 @@
+struct Point { x: i32; y: i32; }
+struct Polygon {
+    corners: [Point; 3];
+    count: usize;
+}
+enum Cell { Empty, Full([u8; 2]) }
+
+fn sumPoints(p: borrow Polygon) -> i32 {
+    var total = 0;
+    for (c in p.corners) {
+        total += c.x * c.y;
+    }
+    return total;
+}
+
+fn reversed(a: [i32; 4]) -> [i32; 4] {
+    var r = a;
+    for (i in 0..4usize) {
+        r[i] = a[3usize - i];
+    }
+    return r;
+}
+
+fn bump(a: borrow mut [i32; 4]) {
+    a[0] += 100;
+}
+
+fn main() {
+    var a = [1, 2, 3, 4];
+    let r = reversed(a); // a is copied: arrays are Copy
+    for (x in r) { Console.write(x); Console.write(" "); }
+    Console.writeLine(a[0]);
+
+    bump(mut a);
+    Console.writeLine(a[0]);
+
+    let poly = Polygon { corners: [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }, Point { x: 5, y: 6 }], count: 3 };
+    Console.writeLine(sumPoints(poly));
+    Console.writeLine(poly.corners[2].y);
+
+    var grid = [[0u8; 3]; 2];
+    grid[1][2] = 7u8;
+    var cells = 0usize;
+    for (row in grid) {
+        for (v in row) { cells += v as usize; }
+    }
+    Console.writeLine(cells);
+    Console.writeLine(grid.length * grid[0].length);
+
+    let c = Cell.Full([9u8, 8u8]);
+    match (c) {
+        Cell.Empty => { Console.writeLine("empty"); }
+        Cell.Full(bytes) => { Console.writeLine(bytes[0] + bytes[1]); }
+    }
+
+    var flags = [false; 3];
+    flags[1] = true;
+    Console.writeLine(flags[1]);
+    let i = 2usize;
+    let r2 = borrow flags[i];
+    Console.writeLine(r2);
+}
+// expect-stdout: 4 3 2 1 1
+// expect-stdout: 101
+// expect-stdout: 44
+// expect-stdout: 6
+// expect-stdout: 7
+// expect-stdout: 6
+// expect-stdout: 17
+// expect-stdout: true
+// expect-stdout: false

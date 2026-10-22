@@ -504,9 +504,23 @@ public sealed class Parser
             var pointee = ParseType();
             return new ReferenceType(isMutable, sources, pointee, SpanFrom(start)) { HasSources = hasSources };
         }
+        if (At(TokenKind.OpenBracket))
+        {
+            var start = Advance().Span.Start;
+            var element = ParseType();
+            Expect(TokenKind.Semicolon);
+            var length = ParsePrimary();
+            Expect(TokenKind.CloseBracket);
+            return new ArrayType(element, length, SpanFrom(start));
+        }
         if (At(TokenKind.Identifier))
         {
             var name = ParseQualifiedName();
+            if (At(TokenKind.Less))
+            {
+                var arguments = ParseGenericArguments();
+                return new GenericType(name, arguments, SpanFrom(name.Span.Start));
+            }
             return new NamedType(name, name.Span);
         }
         Error(DiagnosticCodes.ExpectedType, Current.Span, $"expected type, found {TokenFacts.Describe(Current.Kind)}");
@@ -518,7 +532,7 @@ public sealed class Parser
     private static bool IsStatementKeyword(TokenKind kind) => kind is TokenKind.LetKeyword or TokenKind.VarKeyword
         or TokenKind.UsingKeyword or TokenKind.DeferKeyword
         or TokenKind.IfKeyword or TokenKind.WhileKeyword or TokenKind.LoopKeyword or TokenKind.ReturnKeyword
-        or TokenKind.BreakKeyword or TokenKind.ContinueKeyword or TokenKind.MatchKeyword;
+        or TokenKind.BreakKeyword or TokenKind.ContinueKeyword or TokenKind.MatchKeyword or TokenKind.ForKeyword;
 
     /// <summary>Tokens that cannot start a statement but do start an item: a block ends before them.</summary>
     private static bool EndsBlock(TokenKind kind) => kind is TokenKind.CloseBrace or TokenKind.EndOfFile
@@ -625,6 +639,18 @@ public sealed class Parser
                 var condition = ParseParenthesizedCondition();
                 var body = ParseBlock();
                 return new WhileStmt(condition, body, SpanFrom(start));
+            }
+            case TokenKind.ForKeyword:
+            {
+                Advance();
+                Expect(TokenKind.OpenParen);
+                var variable = ParseIdentifier();
+                Expect(TokenKind.InKeyword);
+                var first = ParseExpr();
+                var end = Eat(TokenKind.DotDot) ? ParseExpr() : null;
+                Expect(TokenKind.CloseParen);
+                var body = ParseBlock();
+                return new ForStmt(variable, first, end, body, SpanFrom(start));
             }
             case TokenKind.LoopKeyword:
             {
@@ -753,10 +779,10 @@ public sealed class Parser
 
         if (TryPeekAssignOp(out var op, out var tokenCount))
         {
-            if (expr is not (NameExpr or MemberExpr or ErrorExpr))
+            if (expr is not (NameExpr or MemberExpr or IndexExpr or ErrorExpr))
             {
                 Error(DiagnosticCodes.InvalidAssignmentTarget, expr.Span,
-                    "invalid assignment target; only a variable or member can be assigned");
+                    "invalid assignment target; only a variable, a member or an element can be assigned");
             }
             for (var i = 0; i < tokenCount; i++)
             {
@@ -941,6 +967,22 @@ public sealed class Parser
                 var member = ParseIdentifier();
                 expr = new MemberExpr(expr, member, SpanFrom(start));
             }
+            else if (At(TokenKind.OpenBracket))
+            {
+                Advance();
+                var low = At(TokenKind.DotDot) ? null : ParseExpr();
+                if (Eat(TokenKind.DotDot))
+                {
+                    var high = At(TokenKind.CloseBracket) ? null : ParseExpr();
+                    Expect(TokenKind.CloseBracket);
+                    expr = new SliceExpr(expr, low, high, SpanFrom(start));
+                }
+                else
+                {
+                    Expect(TokenKind.CloseBracket);
+                    expr = new IndexExpr(expr, low!, SpanFrom(start));
+                }
+            }
             else
             {
                 return expr;
@@ -988,6 +1030,25 @@ public sealed class Parser
             case TokenKind.ThisKeyword:
                 Advance();
                 return new ThisExpr(token.Span);
+            case TokenKind.OpenBracket:
+            {
+                Advance();
+                var first = ParseExpr();
+                if (Eat(TokenKind.Semicolon))
+                {
+                    var count = ParsePrimary();
+                    Expect(TokenKind.CloseBracket);
+                    return new ArrayRepeatExpr(first, count, SpanFrom(token.Span.Start));
+                }
+                var elements = ImmutableArray.CreateBuilder<Expr>();
+                elements.Add(first);
+                while (Eat(TokenKind.Comma) && !At(TokenKind.CloseBracket))
+                {
+                    elements.Add(ParseExpr());
+                }
+                Expect(TokenKind.CloseBracket);
+                return new ArrayLiteralExpr(elements.ToImmutable(), SpanFrom(token.Span.Start));
+            }
             case TokenKind.OpenParen:
             {
                 Advance();

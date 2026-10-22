@@ -138,7 +138,10 @@ public sealed record HirBlock(ImmutableArray<HirStmt> Statements, TextSpan Span)
 
 public sealed record HirLocalDecl(HirLocal Local, HirExpr? Initializer, TextSpan Span) : HirStmt(Span);
 
-/// <summary>A local followed by field and deref projections: <c>p</c>, <c>p.a.b</c>, <c>(*r).f</c>.</summary>
+/// <summary>
+/// A local followed by projections: <c>p</c>, <c>p.a.b</c>, <c>(*r).f</c>, <c>a[i]</c>. An Index projection
+/// holds the index as a <see cref="HirExpr"/>, evaluated (and bounds-checked) when the place is lowered.
+/// </summary>
 public sealed record HirPlace(HirLocal Root, ImmutableArray<Projection> Projections, NovaType Type)
 {
     public bool IsLocal => Projections.IsEmpty;
@@ -152,6 +155,12 @@ public sealed record HirIf(HirExpr Condition, HirBlock Then, HirStmt? Else, Text
 public sealed record HirWhile(HirExpr Condition, HirBlock Body, TextSpan Span) : HirStmt(Span);
 
 public sealed record HirLoop(HirBlock Body, TextSpan Span) : HirStmt(Span);
+
+/// <summary>
+/// <c>for</c> (type-system.md §16.4). With <see cref="End"/>, <see cref="Start"/>..End is an integer range;
+/// without, <see cref="Start"/> is the sequence: a value of array type or an unsized <c>[T]</c> behind a slice.
+/// </summary>
+public sealed record HirFor(HirLocal Variable, HirExpr Start, HirExpr? End, HirBlock Body, TextSpan Span) : HirStmt(Span);
 
 /// <summary>Leaves the innermost enclosing loop.</summary>
 public sealed record HirBreak(TextSpan Span) : HirStmt(Span);
@@ -247,6 +256,21 @@ public sealed record HirMove(HirPlace Place, TextSpan Span) : HirExpr(Place.Type
 
 /// <summary>Reads the value a reference points to (auto-deref, type-system.md §13.3).</summary>
 public sealed record HirDeref(HirExpr Reference, TextSpan Span) : HirExpr(Reference.Type.Pointee!, Span);
+
+/// <summary><c>[a, b, c]</c>.</summary>
+public sealed record HirArrayLiteral(ImmutableArray<HirExpr> Elements, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary><c>[v; N]</c>: N copies of the value.</summary>
+public sealed record HirArrayRepeat(HirExpr Value, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary><c>a[i]</c>: <see cref="Target"/> is an array or an unsized <c>[T]</c> (a deref'd slice); bounds-checked.</summary>
+public sealed record HirIndex(HirExpr Target, HirExpr Index, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary><c>a[lo..hi]</c>: a slice of the array or <c>[T]</c> in <see cref="Base"/>; a missing bound is 0 or the length.</summary>
+public sealed record HirSlice(bool IsMutable, HirPlace Base, HirExpr? Low, HirExpr? High, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary>The length of the slice <see cref="Slice"/> (an array's length is a constant).</summary>
+public sealed record HirSliceLength(HirExpr Slice, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
 
 /// <summary>Stands in for an expression that produced a diagnostic.</summary>
 public sealed record HirError(NovaType Type, TextSpan Span) : HirExpr(Type, Span);

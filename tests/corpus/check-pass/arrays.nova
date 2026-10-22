@@ -1,0 +1,29 @@
+struct Row { cells: [u8; 4]; }
+
+fn sum(xs: Slice<i32>) -> i32 {
+    var total = 0;
+    for (x in xs) { total += x; }
+    return total;
+}
+
+fn view(r: borrow Row) -> Slice<u8> {
+    return r.cells[1..3];
+}
+
+fn fill(xs: SliceMut<i32>) {
+    for (i in 0..xs.length) { xs[i] = truncate<i32>(i); }
+}
+
+fn main() {
+    var a = [3, 1, 2];
+    let b: [i64; 2] = [7; 2];
+    a[0] = sum(a[..]);
+    fill(mut a[1..]);
+    let s = a[..2];
+    let n = s.length + a.length;
+    let r = Row { cells: [0u8; 4] };
+    let v = view(r);
+    let first = v[0];
+    let e = borrow b[1];
+    for (i in 0u8..first) { }
+}

@@ -1,0 +1,44 @@
+(program
+  (fn sum ((xs#0: Slice<i32>)) -> i32
+    (block
+      (var total#1: i32 = 0:i32)
+      (for x#2 in (deref xs#0):[i32]
+        (block
+          (+= total#1 x#2)
+        )
+      )
+      (return total#1)
+    )
+  )
+  (fn view ((r#0: borrow Row)) -> Slice<u8>
+    (block
+      (return (slice (*r#0).cells 1:usize 3:usize):Slice<u8>)
+    )
+  )
+  (fn fill ((xs#0: SliceMut<i32>)) -> void
+    (block
+      (for i#1 in 0:usize .. (length xs#0):usize
+        (block
+          (= (*xs#0)[i#1] (truncate i32 i#1))
+        )
+      )
+    )
+  )
+  (fn main () -> void
+    (block
+      (var a#0: [i32; 3] = (array 3:i32 1:i32 2:i32):[i32; 3])
+      (let b#1: [i64; 2] = (array-repeat 7:i64):[i64; 2])
+      (= a#0[0:usize] (call sum (slice a#0 _ _):Slice<i32>):i32)
+      (expr (call fill (slice-mut a#0 1:usize _):SliceMut<i32>):void)
+      (let s#2: Slice<i32> = (slice a#0 _ 2:usize):Slice<i32>)
+      (let n#3: usize = (+ (length s#2):usize 3:usize):usize)
+      (let r#4: Row = (new Row (cells (array-repeat 0:u8):[u8; 4])))
+      (let v#5: Slice<u8> = (call view (borrow r#4)):Slice<u8>)
+      (let first#6: u8 = (index (deref v#5):[u8] 0:usize):u8)
+      (let e#7: borrow i64 = (borrow b#1[1:usize]))
+      (for i#8 in 0:u8 .. first#6
+        (block)
+      )
+    )
+  )
+)

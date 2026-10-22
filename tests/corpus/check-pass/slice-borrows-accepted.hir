@@ -1,0 +1,40 @@
+(program
+  (fn sum ((xs#0: Slice<i32>)) -> i32
+    (block
+      (var total#1: i32 = 0:i32)
+      (for x#2 in (deref xs#0):[i32]
+        (block
+          (+= total#1 x#2)
+        )
+      )
+      (return total#1)
+    )
+  )
+  (fn main () -> void
+    (block
+      (var a#0: [i32; 4] = (array 1:i32 2:i32 3:i32 4:i32):[i32; 4])
+      (let s#1: Slice<i32> = (slice a#0 _ _):Slice<i32>)
+      (let t#2: i32 = (call sum s#1):i32)
+      (= a#0[0:usize] t#2)
+      (block
+        (let x#3: SliceMut<i32> = (slice-mut a#0 _ 2:usize):SliceMut<i32>)
+        (= (*x#3)[0:usize] 1:i32)
+      )
+      (let y#4: SliceMut<i32> = (slice-mut a#0 2:usize _):SliceMut<i32>)
+      (= (*y#4)[0:usize] 2:i32)
+      (let p#5: Slice<i32> = (slice a#0 _ 2:usize):Slice<i32>)
+      (let q#6: Slice<i32> = (slice a#0 1:usize _):Slice<i32>)
+      (let u#7: i32 = (+ (index (deref p#5):[i32] 0:usize):i32 (index (deref q#6):[i32] 0:usize):i32):i32)
+      (let m#8: SliceMut<i32> = (slice-mut a#0 _ _):SliceMut<i32>)
+      (let m2#9: Slice<i32> = (slice (*m#8) 1:usize _):Slice<i32>)
+      (let w#10: i32 = (index (deref m2#9):[i32] 0:usize):i32)
+      (= (*m#8)[0:usize] w#10)
+      (let copy#11: [i32; 4] = a#0)
+      (for x#12 in copy#11
+        (block
+          (= a#0[0:usize] x#12)
+        )
+      )
+    )
+  )
+)

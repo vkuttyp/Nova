@@ -1,0 +1,47 @@
+struct Res {
+    id: i32;
+    drop { }
+}
+struct Holder {
+    view: Slice<i32>; // error[N0246]
+    items: [Res; 2]; // error[N0259]
+}
+const TABLE: [i32; 2] = [1, 2]; // error[N0216]
+
+fn sizes(a: [i32; 0], b: [u8; 3i32]) { } // error[N0259]@19 // error[N0259]@31
+fn refs(a: [borrow i32; 2]) { } // error[N0246]
+fn generics(a: Slice<i32, i32>, b: Vec<i32>) { } // error[N0204]@16 // error[N0204]@36
+fn make() -> [i32; 2] { return [1, 2]; }
+
+fn f(n: i32, s: Slice<i32>) {
+    let a = [1, 2, 3];
+    let b: [i32; 3] = [1, 2]; // error[N0205]
+    let c = [1, true]; // error[N0205]
+    let d = a[n]; // error[N0205]
+    let e = n[0]; // error[N0205]
+    let g = n[0..1]; // error[N0205]
+    a[0] = 5; // error[N0211]
+    s[0] = 5; // error[N0211]
+    let h = borrow mut a[..]; // error[N0248]
+    let i = a.size; // error[N0230]
+    let j = make().length; // error[N0216]
+    let k = make()[0..1]; // error[N0247]
+    let l = [0; 0]; // error[N0259]
+    let m: SliceMut<i32> = s; // error[N0205]
+    var o = a[..]; // error[N0246]
+    let p = [Res { id: 1 }]; // error[N0259]
+    let q = [f(n, s), f(n, s)]; // error[N0224]
+}
+
+fn loops(n: i64, s: Slice<i32>) {
+    for (x in n) { } // error[N0205]
+    for (i in true..false) { } // error[N0205]
+    for (i in 0..n) {
+        i = 3; // error[N0211]
+    }
+    for (x in s) {
+        x += 1; // error[N0211]
+    }
+    for (n in s) { } // error[N0203]
+    for (i in 0i32..n) { } // error[N0205]
+}

@@ -49,9 +49,9 @@ Status: Milestone 0 proposal. Applies from M1. CosmoOS-specific flags are covere
 | `enum E { A, B(T) }` | `struct { uint32_t tag; union { T B; } u; }`. The tag width is the smallest unsigned that fits, unless `@repr(u8)` etc. |
 | `T?` | `T*`-niche for `Box`/references, else `struct { bool has; T value; }` |
 | `borrow T` | `const T *`. `borrow mut T` → `T *` (`restrict` only where the borrow checker proves exclusivity *and* M9 enables it). `Ref(k, p)` is `&p`, a deref place is `(*r)`, and reference locals are zero-initialised to `NULL` (never read before assignment) |
-| `Slice<T>` | `struct { T* ptr; uintptr_t len; }` (pointer may be a dangling-but-aligned sentinel for `len==0`, **never NULL arithmetic**) |
+| `Slice<T>` / `SliceMut<T>` | `nvSl_<elem>` = `struct { const T *ptr; uint64_t len; }` and `nvSm_<elem>` = `struct { T *ptr; uint64_t len; }` (M2d; size 16, align 8, asserted). Slices are only made from arrays (N ≥ 1), so `ptr` is never NULL; `a[n..]` is the one-past-the-end pointer with length 0. An element is `s.ptr[i]`; a reborrow or `SliceMut`→`Slice` coercion rebuilds the struct from `ptr` and `len` |
 | `Box<T, A>` | `T*` when `A` is zero-sized; `struct { T* ptr; A a; }` otherwise |
-| Arrays `[T; N]` | wrapped in a struct `struct { T e[N]; }`, so assignment and return by value work |
+| Arrays `[T; N]` | `nvA<N>_<elem>` = `struct { T e[N]; }`, so assignment, parameters and return by value work (M2d). An element is `a.e[i]`; `[v; N]` is a `for` loop over `e`; zero-initialised with `{0}`. Element names: integers and `bool` by name, `S<len><Name>` for structs, `E<len><Name>` for enums, `A<N>_<elem>` for arrays (`[[i32; 3]; 2]` → `nvA2_A3_i32`) |
 | Function pointers | C function pointer types via typedef |
 
 Names (as implemented in M2a):
@@ -65,6 +65,15 @@ Names (as implemented in M2a):
 The prefixes keep the namespaces apart and avoid C keywords. Planned: package/namespace
 qualification, plus a stable hash of the type arguments for monomorphised instances (not .NET
 `GetHashCode`). `@export("sym")` overrides the name.
+
+Arrays and slices are defined with the structs, each after the types it contains by value; slices
+come after their element types. Every array and slice type the program uses is emitted, in the
+order the checker created it.
+
+Bounds checks (M2d) call `nv_check_index(i, len, loc)` and `nv_check_range(lo, hi, len, loc)`
+from `nova/rt.h`; they panic with "index out of bounds" and "slice range out of bounds". A
+constant index below a constant length, and a constant range within a constant length, are not
+checked.
 
 Layout verification: for every emitted struct the backend emits
 `_Static_assert(sizeof(S) == N && _Alignof(S) == A, "...")` and `offsetof`

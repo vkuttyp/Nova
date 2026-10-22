@@ -1,0 +1,36 @@
+(unit
+  (struct default Buffer
+    (field default bytes [u8; 16])
+    (field default used usize)
+  )
+  (fn default total (params (xs (Slice i32)) (out (SliceMut i64))) (returns i32)
+    (block
+      (var sum = 0)
+      (for x xs
+        (block
+          (+= sum x)
+        )
+      )
+      (for i 0 .. (. xs length)
+        (block
+          (= (index out i) (as (index xs i) i64))
+        )
+      )
+      (return sum)
+    )
+  )
+  (fn default main (params)
+    (block
+      (var a = (array 1 2 3))
+      (let b : [[i32; 2]; 3] = (array-repeat (array-repeat 0 2) 3))
+      (= (index a 0) (index (index b 1) 0))
+      (let s = (slice a _ _))
+      (let t = (slice a 1 _))
+      (let u = (slice a _ 2))
+      (let v = (borrow-mut (slice a 0 1)))
+      (for i (paren 0) .. (paren 10)
+        (block)
+      )
+    )
+  )
+)

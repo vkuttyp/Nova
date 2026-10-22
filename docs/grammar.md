@@ -105,6 +105,8 @@ ConstDecl = 'const' Identifier ':' Type '=' Expr ';'
 
 Type = QualifiedName
      | 'borrow' 'mut'? Sources? Type          (* M2b references; Sources only in return types *)
+     | '[' Type ';' IntLiteral ']'             (* M2d fixed array *)
+     | ('Slice' | 'SliceMut') '<' Type '>'     (* M2d slices *)
 Sources = '(' Identifier (',' Identifier)* ')'
 
 Block = '{' Statement* '}'
@@ -119,6 +121,7 @@ Statement = Block
           | 'using' Identifier (':' Type)? '=' Expr ';'      (* M2c *)
           | 'defer' Statement                               (* M2c *)
           | MatchStmt                                       (* M2d; type-system.md §15.2 *)
+          | 'for' '(' Identifier 'in' Expr ('..' Expr)? ')' Block   (* M2d; type-system.md §16.4 *)
           | Expr AssignOp Expr ';'        (* assignment: a statement, not an expression *)
           | Expr ';'
 LocalDecl = ('let' | 'var') Identifier (':' Type)? ('=' Expr)? ';'
@@ -161,10 +164,12 @@ The ordering puts bitwise operators **above** comparisons (as in Rust and Swift)
 Primary = IntLiteral | FloatLiteral | StringLiteral | CharLiteral | 'true' | 'false'
         | Identifier GenericArgs? | '(' Expr ')' | 'this'
         | Identifier '{' FieldInits? '}'                    (* struct literal, M2a *)
+        | '[' Expr (',' Expr)* ','? ']' | '[' Expr ';' IntLiteral ']'   (* array literals, M2d *)
 FieldInits = FieldInit (',' FieldInit)* ','?
 FieldInit  = Identifier ':' Expr
 GenericArgs = '<' Type (',' Type)* '>'      (* only when followed by '(' — see below *)
-Postfix = Primary ( '(' ArgList? ')' | '.' Identifier )*
+Postfix = Primary ( '(' ArgList? ')' | '.' Identifier | '[' IndexOrRange ']' )*
+IndexOrRange = Expr | Expr? '..' Expr?               (* M2d: element or slice *)
 ArgList = Arg (',' Arg)* ','?
 Arg     = 'mut' Expr | Expr                (* `mut x` for a `borrow mut` parameter, M2b *)
 ```

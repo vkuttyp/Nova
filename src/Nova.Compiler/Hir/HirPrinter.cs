@@ -121,6 +121,11 @@ public sealed class HirPrinter
             case HirLoop loop:
                 Nested("loop", loop.Body);
                 break;
+            case HirFor forStmt:
+                Nested(forStmt.End is null
+                    ? $"for {Local(forStmt.Variable)} in {Expr(forStmt.Start)}"
+                    : $"for {Local(forStmt.Variable)} in {Expr(forStmt.Start)} .. {Expr(forStmt.End)}", forStmt.Body);
+                break;
             case HirBreak:
                 Line("(break)");
                 break;
@@ -184,6 +189,11 @@ public sealed class HirPrinter
         HirEnumValue e => e.Payload.IsEmpty
             ? $"({e.Type}.{_symbols.GetName(e.Variant.Name)})"
             : $"({e.Type}.{_symbols.GetName(e.Variant.Name)}{Args(e.Payload)})",
+        HirArrayLiteral a => $"(array{Args(a.Elements)}):{a.Type}",
+        HirArrayRepeat a => $"(array-repeat {Expr(a.Value)}):{a.Type}",
+        HirIndex i => $"(index {Expr(i.Target)} {Expr(i.Index)}):{i.Type}",
+        HirSlice s => $"({(s.IsMutable ? "slice-mut" : "slice")} {Place(s.Base)} {(s.Low is null ? "_" : Expr(s.Low))} {(s.High is null ? "_" : Expr(s.High))}):{s.Type}",
+        HirSliceLength l => $"(length {Expr(l.Slice)}):{l.Type}",
         HirError => "<error>",
         _ => throw new InvalidOperationException($"unknown HIR expression {expr.GetType().Name}"),
     };

@@ -34,7 +34,9 @@ typedef enum nv_panic_kind {
     NV_PANIC_OVERFLOW = 1,
     NV_PANIC_DIVIDE_BY_ZERO = 2,
     NV_PANIC_SHIFT = 3,
-    NV_PANIC_UNREACHABLE = 4
+    NV_PANIC_UNREACHABLE = 4,
+    NV_PANIC_INDEX = 5,
+    NV_PANIC_SLICE = 6
 } nv_panic_kind;
 
 /* A Nova source location; `file` points to a string in the generated program's file table. */
@@ -215,6 +217,16 @@ static inline int8_t nv_as_i8(uint8_t u) { return u <= INT8_MAX ? (int8_t)u : (i
 static inline int16_t nv_as_i16(uint16_t u) { return u <= INT16_MAX ? (int16_t)u : (int16_t)(-(int)(UINT16_MAX - u) - 1); }
 static inline int32_t nv_as_i32(uint32_t u) { return u <= INT32_MAX ? (int32_t)u : (int32_t)(-(int64_t)(UINT32_MAX - u) - 1); }
 static inline int64_t nv_as_i64(uint64_t u) { return u <= INT64_MAX ? (int64_t)u : -(int64_t)(UINT64_MAX - u) - 1; }
+
+/* ---- Bounds checks (type-system.md §16.3) ------------------------------------------------- */
+
+static inline void nv_check_index(uint64_t index, uint64_t length, nv_loc loc) {
+    if (index >= length) nova_panic(NV_PANIC_INDEX, loc);
+}
+
+static inline void nv_check_range(uint64_t low, uint64_t high, uint64_t length, nv_loc loc) {
+    if (low > high || high > length) nova_panic(NV_PANIC_SLICE, loc);
+}
 
 /* ---- Platform services (supplied by the profile runtime) -------------------------------- */
 

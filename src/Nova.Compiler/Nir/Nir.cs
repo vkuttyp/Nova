@@ -171,6 +171,21 @@ public sealed record NirEnumAggregate(EnumVariant Variant, ImmutableArray<NirOpe
 /// <summary>A struct value built from its field values, given in declaration order.</summary>
 public sealed record NirAggregate(ImmutableArray<NirOperand> Fields, NovaType Type) : NirRvalue(Type);
 
+/// <summary>An array value from its elements in order.</summary>
+public sealed record NirArray(ImmutableArray<NirOperand> Elements, NovaType Type) : NirRvalue(Type);
+
+/// <summary>An array of N copies of <see cref="Value"/>.</summary>
+public sealed record NirArrayRepeat(NirOperand Value, NovaType Type) : NirRvalue(Type);
+
+/// <summary>
+/// A slice of elements [Low, High) of <see cref="Base"/>, an array or a deref'd slice. Creates a loan of
+/// Base like <see cref="NirRef"/>; the range was checked by a preceding <see cref="NirRangeCheck"/>.
+/// </summary>
+public sealed record NirSlice(bool IsMutable, NirPlace Base, NirOperand Low, NirOperand High, NovaType Type) : NirRvalue(Type);
+
+/// <summary>The length of the slice in <see cref="Slice"/>, as a usize.</summary>
+public sealed record NirLength(NirPlace Slice, NovaType Type) : NirRvalue(Type);
+
 public sealed record NirCall(HirFunction Callee, ImmutableArray<NirOperand> Arguments, NovaType Type) : NirRvalue(Type);
 
 public sealed record NirBuiltin(BuiltinFunction Function, ImmutableArray<NirOperand> Arguments, NovaType Type) : NirRvalue(Type);
@@ -193,6 +208,12 @@ public sealed record NirStorageDead(NirLocal Local) : NirStatement;
 public sealed record NirDrop(NirPlace Place, NirLocal? Flag) : NirStatement;
 
 public sealed record NirAssign(NirPlace Target, NirRvalue Value) : NirStatement;
+
+/// <summary>Panics ("index out of bounds") unless Index &lt; Length (type-system.md §16.3).</summary>
+public sealed record NirBoundsCheck(NirOperand Index, NirOperand Length) : NirStatement;
+
+/// <summary>Panics ("slice range out of bounds") unless Low &lt;= High &lt;= Length.</summary>
+public sealed record NirRangeCheck(NirOperand Low, NirOperand High, NirOperand Length) : NirStatement;
 
 /// <summary>Evaluates an rvalue for its effect (a call whose result is unused).</summary>
 public sealed record NirEval(NirRvalue Value) : NirStatement;

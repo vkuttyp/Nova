@@ -185,6 +185,13 @@ public sealed class AstPrinter
                 _indent--;
                 Line(")");
                 break;
+            case ForStmt forStmt:
+                Line($"(for {Name(forStmt.Variable)} {Expr(forStmt.Start)}{(forStmt.End is null ? "" : " .. " + Expr(forStmt.End))}");
+                _indent++;
+                PrintStmt(forStmt.Body);
+                _indent--;
+                Line(")");
+                break;
             case LoopStmt loop:
                 Line("(loop");
                 _indent++;
@@ -258,6 +265,10 @@ public sealed class AstPrinter
         StructLiteralExpr s => s.Fields.IsEmpty
             ? $"(new {Name(s.TypeName)})"
             : $"(new {Name(s.TypeName)} {string.Join(" ", s.Fields.Select(f => $"({Name(f.Name)} {Expr(f.Value)})"))})",
+        ArrayLiteralExpr a => $"(array {string.Join(" ", a.Elements.Select(Expr))})",
+        ArrayRepeatExpr a => $"(array-repeat {Expr(a.Value)} {Expr(a.Count)})",
+        IndexExpr i => $"(index {Expr(i.Target)} {Expr(i.Index)})",
+        SliceExpr s => $"(slice {Expr(s.Target)} {(s.Low is null ? "_" : Expr(s.Low))} {(s.High is null ? "_" : Expr(s.High))})",
         _ => throw new InvalidOperationException($"unknown expression {expr.GetType().Name}"),
     };
 
@@ -274,6 +285,8 @@ public sealed class AstPrinter
     {
         NamedType n => Name(n.Name),
         MissingType => "<missing-type>",
+        ArrayType a => $"[{Type(a.Element)}; {Expr(a.Length)}]",
+        GenericType g => $"({Name(g.Name)} {string.Join(" ", g.Arguments.Select(Type))})",
         ReferenceType r => $"({(r.IsMutable ? "borrow-mut" : "borrow")}{(r.HasSources ? "(" + string.Join(" ", r.Sources.Select(Name)) + ")" : "")} {Type(r.Pointee)})",
         _ => throw new InvalidOperationException($"unknown type syntax {type.GetType().Name}"),
     };

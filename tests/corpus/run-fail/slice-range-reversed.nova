@@ -1,0 +1,6 @@
+fn main() {
+    let a = [1, 2, 3, 4];
+    var lo = 3usize;
+    let s = a[lo..2]; // expect-panic: slice range out of bounds
+    Console.writeLine(s.length);
+}

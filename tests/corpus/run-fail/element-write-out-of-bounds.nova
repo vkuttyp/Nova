@@ -1,0 +1,4 @@
+fn main() {
+    var a = [0u8; 4];
+    a[4] = 1u8; // expect-panic: index out of bounds
+}

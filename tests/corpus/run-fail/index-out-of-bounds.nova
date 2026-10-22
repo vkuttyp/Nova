@@ -1,0 +1,11 @@
+fn main() {
+    let a = [1, 2, 3];
+    var i = 0usize;
+    while (i < 5usize) {
+        Console.writeLine(a[i]); // expect-panic: index out of bounds
+        i += 1usize;
+    }
+}
+// expect-stdout: 1
+// expect-stdout: 2
+// expect-stdout: 3

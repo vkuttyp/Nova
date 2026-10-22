@@ -19,6 +19,7 @@ public sealed class CEmitter
     private readonly TypeTable _types;
     private readonly Dictionary<SourceText, int> _fileIds = [];
     private readonly StringBuilder _sb = new();
+    private NirFunction? _function;
 
     private CEmitter(NirProgram program, SymbolTable symbols, TypeTable types, IEnumerable<SourceText> sources)
     {
@@ -83,11 +84,12 @@ public sealed class CEmitter
     /// </summary>
     private void EmitStructs()
     {
-        if (_program.Structs.IsEmpty)
+        var aggregates = _program.Structs.Concat(_types.Composites).ToList();
+        if (aggregates.Count == 0)
         {
             return;
         }
-        foreach (var type in _program.Structs)
+        foreach (var type in aggregates)
         {
             Line($"typedef struct {CTypeName(type)} {CTypeName(type)};");
         }
@@ -105,8 +107,13 @@ public sealed class CEmitter
                 EmitEnum(type, Emit);
                 return;
             }
+            if (type.Kind is TypeKind.Array or TypeKind.Reference)
+            {
+                EmitComposite(type, Emit);
+                return;
+            }
             var definition = type.Struct!;
-            foreach (var field in definition.Fields.Where(f => f.Type.Kind is TypeKind.Struct or TypeKind.Enum))
+            foreach (var field in definition.Fields.Where(f => IsAggregate(f.Type)))
             {
                 Emit(field.Type);
             }
@@ -132,17 +139,46 @@ public sealed class CEmitter
             Line();
         }
 
-        foreach (var type in _program.Structs)
+        foreach (var type in aggregates)
         {
             Emit(type);
         }
+    }
+
+    /// <summary>Types defined as C structs, which must be defined before a struct containing them by value.</summary>
+    private static bool IsAggregate(NovaType type) => type.Kind is TypeKind.Struct or TypeKind.Enum or TypeKind.Array;
+
+    /// <summary>
+    /// <c>[T; N]</c> is <c>struct { T e[N]; }</c>, so arrays are values in C too; a slice is
+    /// <c>struct { T *ptr; uint64_t len; }</c>, with <c>const T</c> for <c>Slice&lt;T&gt;</c> (type-system.md §16.1).
+    /// </summary>
+    private void EmitComposite(NovaType type, Action<NovaType> emitDependency)
+    {
+        var name = CTypeName(type);
+        if (type.Kind == TypeKind.Array)
+        {
+            if (IsAggregate(type.Element!))
+            {
+                emitDependency(type.Element!);
+            }
+            Line($"struct {name} {{ {CType(type.Element!)} e[{type.ArrayLength}]; }};");
+        }
+        else
+        {
+            var element = CType(type.Pointee!.Element!);
+            Line($"struct {name} {{ {(type.IsMutableReference ? "" : "const ")}{element} *ptr; uint64_t len; }};");
+        }
+        var (size, align) = TypeTable.LayoutOf(type);
+        Line($"_Static_assert(sizeof({name}) == {size}, \"novac layout: sizeof({type})\");");
+        Line($"_Static_assert(_Alignof({name}) == {align}, \"novac layout: alignof({type})\");");
+        Line();
     }
 
     /// <summary>An enum: <c>struct { uintN_t tag; union { struct { … } v_V; … } u; }</c> (type-system.md §15.1).</summary>
     private void EmitEnum(NovaType type, Action<NovaType> emitDependency)
     {
         var definition = type.Enum!;
-        foreach (var field in definition.Variants.SelectMany(v => v.Payload).Where(f => f.Type.Kind is TypeKind.Struct or TypeKind.Enum))
+        foreach (var field in definition.Variants.SelectMany(v => v.Payload).Where(f => IsAggregate(f.Type)))
         {
             emitDependency(field.Type);
         }
@@ -246,6 +282,7 @@ public sealed class CEmitter
 
     private void EmitFunction(NirFunction function)
     {
+        _function = function;
         Line($"static {Signature(function, withNames: true)} {{");
         foreach (var local in function.Locals.Skip(function.ParameterCount))
         {
@@ -253,7 +290,8 @@ public sealed class CEmitter
             var zero = local.Type.Kind switch
             {
                 TypeKind.Bool => "false",
-                TypeKind.Struct or TypeKind.Enum => "{0}",
+                TypeKind.Struct or TypeKind.Enum or TypeKind.Array => "{0}",
+                TypeKind.Reference when local.Type.IsSlice => "{0}",
                 TypeKind.Reference => "NULL",
                 _ => "0",
             };
@@ -285,8 +323,17 @@ public sealed class CEmitter
     {
         switch (statement)
         {
+            case NirAssign { Value: NirArrayRepeat repeat } assign:
+                Line($"    for (uint64_t nv_i = 0; nv_i < {repeat.Type.ArrayLength}u; nv_i++) {Place(assign.Target)}.e[nv_i] = {Operand(repeat.Value)};");
+                break;
             case NirAssign assign:
                 Line($"    {Place(assign.Target)} = {Rvalue(assign.Value)};");
+                break;
+            case NirBoundsCheck check:
+                Line($"    nv_check_index({Operand(check.Index)}, {Operand(check.Length)}, {Location(_function!.Source.Source, check.Span)});");
+                break;
+            case NirRangeCheck check:
+                Line($"    nv_check_range({Operand(check.Low)}, {Operand(check.High)}, {Operand(check.Length)}, {Location(_function!.Source.Source, check.Span)});");
                 break;
             case NirStorageDead:
                 break; // storage is the C local's; destruction is an explicit NirDrop
@@ -376,7 +423,13 @@ public sealed class CEmitter
         NirTruncate truncate => Truncate(truncate),
         NirCall call => $"{FunctionName(call.Callee)}({string.Join(", ", call.Arguments.Select(Operand))})",
         NirAggregate aggregate => Aggregate(aggregate),
+        // A slice reborrow (or SliceMut to Slice): the place of `s.*` is the slice `s` itself.
+        NirRef { Place.Type.IsUnsized: true } reborrow =>
+            $"(({CTypeName(reborrow.Type)}){{ .ptr = {Place(reborrow.Place)}.ptr, .len = {Place(reborrow.Place)}.len }})",
         NirRef reference => $"&{Place(reference.Place)}",
+        NirSlice slice => Slice(slice),
+        NirLength length => $"{Place(length.Slice)}.len",
+        NirArray array => $"(({CTypeName(array.Type)}){{ .e = {{ {string.Join(", ", array.Elements.Select(Operand))} }} }})",
         NirDiscriminant discriminant => $"(uint32_t){Place(discriminant.Place)}.tag",
         NirEnumAggregate value => EnumAggregate(value),
         _ => throw new InvalidOperationException($"cannot emit rvalue {rvalue}"),
@@ -463,20 +516,36 @@ public sealed class CEmitter
         return $"NV_LOC(nv_file_{_fileIds[source]}, {position.Line}u, {position.Column}u)";
     }
 
+    /// <summary>
+    /// A place as a C lvalue. The deref of a slice <c>s</c> is not an lvalue by itself: it stays <c>s</c>, and
+    /// its elements are <c>s.ptr[i]</c>; elements of an array place are <c>a.e[i]</c>.
+    /// </summary>
     private string Place(NirPlace place)
     {
         var text = LocalName(place.Local);
+        var type = place.Local.Type;
         foreach (var projection in place.Projections)
         {
             text = projection.Kind switch
             {
+                ProjectionKind.Deref when type.IsSlice => text,
                 ProjectionKind.Deref => $"(*{text})",
                 ProjectionKind.Field => $"{text}.{FieldName(projection.Field!)}",
                 ProjectionKind.Downcast => $"{text}.u.{VariantName(projection.Variant!)}",
-                _ => throw new InvalidOperationException("array elements arrive in a later increment"),
+                _ when type.IsUnsized => $"{text}.ptr[{Operand((NirOperand)projection.Index!)}]",
+                _ => $"{text}.e[{Operand((NirOperand)projection.Index!)}]",
             };
+            type = projection.Apply(type);
         }
         return text;
+    }
+
+    /// <summary>Elements [low, high) of an array or slice place; the range was checked before.</summary>
+    private string Slice(NirSlice slice)
+    {
+        var start = slice.Base.Type.IsUnsized ? $"{Place(slice.Base)}.ptr" : $"{Place(slice.Base)}.e";
+        var low = Operand(slice.Low);
+        return $"(({CTypeName(slice.Type)}){{ .ptr = {start} + {low}, .len = {Operand(slice.High)} - {low} }})";
     }
 
     private string EnumAggregate(NirEnumAggregate value)
@@ -513,8 +582,22 @@ public sealed class CEmitter
         TypeKind.Integer => $"{(type.IsSigned ? "int" : "uint")}{type.Bits}_t",
         TypeKind.Struct => $"nvT_{type.Name}",
         TypeKind.Enum => $"nvE_{type.Name}",
+        TypeKind.Reference when type.IsSlice => $"nvS{(type.IsMutableReference ? "m" : "l")}_{Mangle(type.Pointee!.Element!)}",
         TypeKind.Reference => type.IsMutableReference ? $"{CTypeName(type.Pointee!)} *" : $"const {CTypeName(type.Pointee!)} *",
+        TypeKind.Array => $"nvA{type.ArrayLength}_{Mangle(type.Element!)}",
         _ => throw new InvalidOperationException($"type '{type}' has no C representation"),
+    };
+
+    /// <summary>
+    /// An element type in an array or slice type name. Struct and enum names carry their length, so
+    /// the names cannot collide: <c>[[i32; 3]; 2]</c> is <c>nvA2_A3_i32</c>, <c>Slice&lt;Point&gt;</c> is <c>nvSl_S5Point</c>.
+    /// </summary>
+    private static string Mangle(NovaType type) => type.Kind switch
+    {
+        TypeKind.Struct => $"S{type.Name.Length}{type.Name}",
+        TypeKind.Enum => $"E{type.Name.Length}{type.Name}",
+        TypeKind.Array => $"A{type.ArrayLength}_{Mangle(type.Element!)}",
+        _ => type.Name,
     };
 
     /// <summary>Helper suffix: isize/usize use the helpers of their fixed width.</summary>

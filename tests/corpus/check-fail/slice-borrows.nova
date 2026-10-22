@@ -1,0 +1,61 @@
+fn sum(xs: Slice<i32>) -> i32 {
+    var total = 0;
+    for (x in xs) { total += x; }
+    return total;
+}
+
+fn local(unused: Slice<i32>) -> Slice<i32> {
+    let a = [1, 2, 3];
+    return a[..]; // error[N0244]
+}
+
+fn write_while_sliced() {
+    var a = [1, 2, 3];
+    let s = a[..];
+    a[0] = 9; // error[N0240]
+    sum(s);
+}
+
+fn elements_overlap() {
+    var a = [1, 2, 3];
+    let r = borrow a[0];
+    a[1] = 9; // error[N0240]
+    Console.writeLine(r);
+}
+
+fn two_mut_slices() {
+    var a = [1, 2, 3, 4];
+    let x = borrow mut a[..2];
+    let y = borrow mut a[2..]; // error[N0241]
+    x[0] = y[0];
+}
+
+fn read_while_mut() {
+    var a = [1, 2, 3];
+    let m = borrow mut a[1..];
+    Console.writeLine(a[0]); // error[N0242]
+    m[0] = 1;
+}
+
+fn modify_in_loop() {
+    var a = [1, 2, 3];
+    for (x in a[..]) {
+        a[0] = x; // error[N0240]
+    }
+}
+
+fn sub_slice_outlives() -> i32 {
+    var t = 0;
+    {
+        let a = [1, 2];
+        let s = a[..];
+        t = sum(s);
+    }
+    return t;
+}
+
+fn after_scope(out: SliceMut<i32>) {
+    let tmp = [5, 6];
+    let s = tmp[..];
+    out[0] = s[0];
+}

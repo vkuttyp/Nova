@@ -84,6 +84,15 @@ internal sealed class MoveChecker
             CheckUse(discriminant.Place, isMove: false, state, span);
             return;
         }
+        if (rvalue is NirLength length)
+        {
+            CheckUse(length.Slice, isMove: false, state, span);
+            return;
+        }
+        if (rvalue is NirSlice slice)
+        {
+            CheckUse(slice.Base, isMove: false, state, span);
+        }
         var running = state.Clone();
         foreach (var operand in MoveData.Operands(rvalue).OfType<NirPlaceOperand>())
         {
@@ -173,7 +182,11 @@ internal sealed class MoveChecker
         }
         // p.f = v needs the rest of p initialised: no piecewise construction (type-system.md §14.4).
         var written = _data.PathFor(target);
-        var rest = _data.Root(target.Local).Leaves().Except(written.Leaves());
+        // A struct with a drop block is never partially moved (N0252), so an uninitialised leaf means the
+        // whole value is gone: its fields cannot be written, even when the written field is the only one.
+        var rest = written.Ancestors().LastOrDefault(a => a.Type.Struct?.DropFunction is not null) is { } owner
+            ? owner.Leaves().Concat(_data.Root(target.Local).Leaves().Except(owner.Leaves()))
+            : _data.Root(target.Local).Leaves().Except(written.Leaves());
         if (rest.Any(leaf => state.MaybeUninit[leaf.LeafIndex]))
         {
             var moved = rest.Any(leaf => state.MaybeUninit[leaf.LeafIndex] && state.MaybeMoved[leaf.LeafIndex]);

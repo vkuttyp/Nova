@@ -1,0 +1,10 @@
+fn f() {
+    let a = [1, 2; // error[N0100]
+}
+fn g() {
+    for x in a { } // error[N0100]
+}
+fn h(a: [i32 3]) { } // error[N0100]
+fn k() {
+    let b = a[]; // error[N0102]
+}

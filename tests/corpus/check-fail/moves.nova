@@ -77,3 +77,13 @@ fn movesOutOfPayloadReference(h: borrow Holder) -> Res {
         Holder.One(r) => { return r; } // error[N0251]
     }
 }
+fn fieldWriteAfterWholeMove() {
+    var r = make(1);
+    consume(r);
+    r.id = 2; // error[N0250]
+}
+fn fieldWriteIntoMovedOwner() {
+    var o = Owner { res: make(1) };
+    let p = o;
+    o.res = make(2); // error[N0250]
+}
