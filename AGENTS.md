@@ -22,7 +22,7 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
 
 - Milestone 0 / C0 is complete. All M0 decisions were accepted on 2026-10-22
   (`docs/decisions/0002-milestone-0-decision-set.md`).
-- M1 increments 1a–1c are done: Nova compiles to C and runs (`novac build`). Next is increment 1d, C1 in CosmoOS (`docs/roadmap.md`).
+- M1 and C1 are complete. Nova compiles to C, and its programs run natively in CosmoOS (`integrations/cosmoos/c1.py`). Next is M2, ownership and borrowing (`docs/roadmap.md`).
 
 ## Build and test
 

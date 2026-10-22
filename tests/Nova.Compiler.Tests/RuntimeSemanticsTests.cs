@@ -193,7 +193,10 @@ public class RuntimeSemanticsTests
         Parallel.ForEach(CToolchains.Configs, (config, _, index) =>
         {
             var exe = Path.Combine(temp.Path, $"harness-{index}");
-            var build = Toolchain.CompileExecutable(config.Compiler, temp.Path, program, exe, config.Flags);
+            // The harness itself uses setjmp/longjmp, which GCC's -Wclobbered (in -Wextra) flags for
+            // the NV_LOC compound literals. Generated programs never use setjmp; this is harness-only.
+            var flags = config.Name.StartsWith("gcc", StringComparison.Ordinal) ? [.. config.Flags, "-Wno-clobbered"] : config.Flags;
+            var build = Toolchain.CompileExecutable(config.Compiler, temp.Path, program, exe, flags);
             if (build.ExitCode != 0)
             {
                 failures.Add($"[{config.Name}] harness did not compile:\n{build.StandardError}");

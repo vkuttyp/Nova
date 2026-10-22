@@ -4,6 +4,9 @@ Status: C0 (deliverables 1 and 12). Based on read-only audits of CosmoOS HEAD
 `30d34b29` (branch `b2-cosmofs-defects`, v1.0.9-11) and main `4527d16d` (v1.0.9).
 **Nothing was built, booted or modified in CosmoOS during C0.**
 
+> **Update 2026-10-22:** the C1 recommendation below was carried out and passed on both
+> architectures. See `c1-report.md`.
+
 ## Verdict
 
 | Area | Feasible? | Conditions |

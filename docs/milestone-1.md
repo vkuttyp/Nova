@@ -110,13 +110,18 @@ Deviation: no separate LIR yet (`intermediate-representation.md` §4).
 | # | Criterion | Status |
 |---|---|---|
 | 1 | Corpus ≥ 40 parse, ≥ 40 check-fail, ≥ 50 run-pass, ≥ 15 run-fail | met: 38 files / 72 cases, 19 files / 99 cases, 51, 19 |
-| 2 | Generated C warning-free under the strict set on clang **and gcc** | clang: met. gcc: **not run** (no GCC on the dev host) |
-| 3 | Differential: {clang, gcc} × {-O0, -O2} × {plain, ASan+UBSan} agree | clang half met (plus the portable-overflow config). gcc and Linux CI: **pending** |
-| 4 | Corpus compiles for both CosmoOS triples with CosmoOS `USER_CFLAGS` | generic freestanding flags met. Exact CosmoOS flags: **pending (1d)** |
+| 2 | Generated C warning-free under the strict set on clang **and gcc** | met: Apple clang 21 locally, plus clang 18 and GCC 13.3 on Linux CI (run 39792099920: every run test passed under GCC) |
+| 3 | Differential: {clang, gcc} × {-O0, -O2} × {plain, ASan+UBSan} agree | met, with one difference: ASan+UBSan runs with clang only. The GCC configurations are `-O0`, `-O2` and portable-overflow |
+| 4 | Corpus compiles for both CosmoOS triples with CosmoOS `USER_CFLAGS` | met, and exceeded: all 70 run programs compile with the exact flags, link against CosmoOS libc, **and run correctly inside CosmoOS** on x86-64 and AArch64 (`cosmoos/c1-report.md`) |
 | 5 | Determinism | met (byte-identical C, no host paths) |
 | 6 | Diagnostics tests assert code and position | met (line, and column where annotated) |
 | 7 | Docs | met: grammar, type-system, IR, diagnostics, testing |
 
-**Increment 1d (next):** C1 (`hello` in CosmoOS under QEMU on both arches, stage S0), compiling the
-corpus with the exact CosmoOS flags, and a GCC differential run (Linux CI or a local GCC). 1b (resolution + types + HIR),
+**Increment 1d — done 2026-10-22.**
+- C1 on both architectures, plus the whole run corpus inside CosmoOS (`cosmoos/c1-report.md`).
+- Linux CI (`.github/workflows/ci.yml`) with GCC 13 and clang 18.
+- GCC's `-Wclobbered` fired on the runtime harness's setjmp use; it is now disabled for that
+  harness only.
+
+**Milestone 1 is complete** (all criteria in §3 met). 1b (resolution + types + HIR),
 1c (NIR + LIR + C + runtime + run tests) and 1d (C1 script) follow.

@@ -17,8 +17,8 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | # | Scope | Acceptance (measurable) |
 |---|---|---|
 | **M0/C0** ✅ 2026-10-22 | Research, architecture, specs, audits | This document set. All decisions accepted (ADR 0002) |
-| **M1** Minimal compiler | Lexer, parser, AST, primitives, locals, functions, arithmetic, conditions, loops, semantic checks, HIR, NIR, LIR, C emission, executable | See `milestone-1.md`: ≥ 150 corpus tests, generated C clean under strict warnings, clang + gcc host runs agree, both CosmoOS triples compile, determinism check |
-| **C1** Native Hello World | M1 output linked against CosmoOS libc and run in QEMU (S0, out of tree) | `NOVATEST: PASS` printed by the Nova program inside CosmoOS on **x86-64 and AArch64**. `.note.cosmo` present. `llvm-nm -u` shows only libc symbols. Exact flags recorded. No CosmoOS file modified (`git status` clean) |
+| **M1** ✅ 2026-10-22 Minimal compiler | Lexer, parser, AST, primitives, locals, functions, arithmetic, conditions, loops, semantic checks, HIR, NIR, LIR, C emission, executable | See `milestone-1.md`: ≥ 150 corpus tests, generated C clean under strict warnings, clang + gcc host runs agree, both CosmoOS triples compile, determinism check |
+| **C1** ✅ 2026-10-22 Native Hello World | M1 output linked against CosmoOS libc and run in QEMU (S0, out of tree) | `NOVATEST: PASS` printed by the Nova program inside CosmoOS on **x86-64 and AArch64**. `.note.cosmo` present. `llvm-nm -u` shows only libc symbols. Exact flags recorded. No CosmoOS file modified (`git status` clean) |
 | **M2** Ownership & borrowing | Structs, enums, references, moves, init check, NLL borrow check, drop elaboration, `drop`, `using`, `defer`, slices of arrays | Each of O1–O5, B1–B5, E1–E4 has ≥ 2 compile-fail and ≥ 1 near-miss compile-pass test (≥ 120 total). Drop-order run tests. Mutation suite. ASan/UBSan clean |
 | **M3** Safe heap | `Allocator`, `SystemHeap`, `Box`, `AllocError`, `Result`/`?`, `FailingAllocator`, recursive types, iterative drops | Fault-injection sweep: for every test that allocates *n* times, run with failure at each *k ≤ n*; no leaks/double frees under ASan. Ex4, Ex5, Ex11, Ex14 pass |
 | **C2** Safe allocation in CosmoOS | M2+M3 features in Profile A | Allocation, destruction and fault-injection tests pass inside QEMU on both arches |
@@ -39,11 +39,16 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 
 ## Next highest-priority task
 
-M1 increments 1a (parser), 1b (type checker, HIR) and 1c (NIR, C backend, runtime,
-`novac build`, run tests) are done (2026-10-22). Nova programs now compile to C and run.
-Next: **increment 1d**:
-- C1: a Nova program running in CosmoOS under QEMU on x86-64 and AArch64, out of tree;
-- compiling the corpus with the exact CosmoOS flags;
-- a GCC differential run.
+**M1 and C1 are complete (2026-10-22).**
+- Nova compiles its M1 subset to C.
+- The test suite passes on macOS (clang) and Linux CI (clang and GCC).
+- All 70 run-corpus programs run natively inside CosmoOS on x86-64 and AArch64
+  (`cosmoos/c1-report.md`).
 
-These close M1 (`milestone-1.md` acceptance table).
+Next: **M2, ownership and borrowing**:
+- structs, enums, references, moves;
+- NIR-based init and borrow checking;
+- drop elaboration.
+
+Write `lifetimes.md` and the M2 spec first. In parallel, when the owner wants it: propose the S1
+in-tree port for C1 (OD-20).

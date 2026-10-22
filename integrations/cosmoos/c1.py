@@ -189,7 +189,7 @@ def make_image(cosmo, work, elves):
 
 def boot(cosmo, work, image, programs, timeout):
     serial_log = work / "serial.log"
-    env = dict(os.environ, ARCH=cosmo.arch, QEMU_TESTDISK=str(work / "testdisk.img"),
+    env = dict(os.environ, QEMU_ARCH=cosmo.arch, QEMU_TESTDISK=str(work / "testdisk.img"),
                QEMU_RMDISK=str(work / "rmdisk.img"), QEMU_VCON=str(work / "vcon.log"))
     commands = [p.guest_name for p in programs] + ["exit 0"]
     with open(serial_log, "wb") as out:
@@ -310,6 +310,8 @@ def main():
         for failure in failures:
             log(f"corpus: {failure}")
         checks[f"run corpus in the guest ({len(corpus)} programs)"] = not failures
+    # isa-debug-exit / semihosting: CosmoOS exits QEMU with 33 on a clean shutdown, 35 on failure.
+    checks["CosmoOS shut down cleanly (QEMU exit status 33)"] = qemu_status == 33
     status_after = git_status(root)
     checks["CosmoOS working tree unchanged"] = status_before == status_after
 

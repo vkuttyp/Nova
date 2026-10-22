@@ -6,7 +6,9 @@ compiled ahead of time to portable C, with no garbage collector. Its first targe
 
 **Status:** early development. The design is complete (Milestone 0). The compiler
 compiles the Milestone 1 subset (integers, booleans, functions, control flow) to portable C and
-builds executables: `novac build hello.nova -o hello`. Ownership, structs and the heap come next.
+builds executables: `novac build hello.nova -o hello`. The same programs also run natively inside
+CosmoOS on x86-64 and AArch64 ([C1 report](docs/cosmoos/c1-report.md)). Ownership, structs and
+the heap come next.
 
 ```nova
 namespace Demo;

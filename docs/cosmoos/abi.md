@@ -13,8 +13,8 @@ CosmoOS revision read: HEAD `30d34b29`, main `4527d16d` (v1.0.9).
 |---|---|---|---|
 | Target triples | `x86_64-unknown-none-elf`, `aarch64-unknown-none-elf` [PA §3] | `TargetInfo` entries `x86_64-cosmoos`, `aarch64-cosmoos` | verified (docs/Make) |
 | Data model | LP64, max align 16, `char` signed (x86-64) / unsigned (AArch64) | Layout from `TargetInfo`; `_Static_assert`s in generated C catch mismatches | verified (clang predefines) |
-| C dialect / flags | `USER_CFLAGS` (`build/toolchain.mk:27-61`, `libc/libc.mk:12-18`) | Generated C must be warning-clean under them | to verify (C1) |
-| Builtins library | none linked | No libcalls (`c-backend.md` §1) | to verify: AArch64 outline atomics |
+| C dialect / flags | `USER_CFLAGS` (`build/toolchain.mk:27-61`, `libc/libc.mk:12-18`) | Generated C must be warning-clean under them | **verified (C1, 2026-10-22)**: 72 programs × 2 arches, `-Werror` |
+| Builtins library | none linked | No libcalls (`c-backend.md` §1) | **verified (C1)**: no undefined symbols on either arch. No outline-atomic helpers were needed |
 | Executable format | static ET_EXEC @ 0x400000, `user.ld`, three W^X PT_LOADs, PT_GNU_STACK non-exec | Link only with CosmoOS `USER_LDFLAGS` | verified (link recipe) |
 | Personality | `.note.cosmo` from `crt0.o`. A missing note means Linux personality, silently [PA impl 6] | Always link `crt0.o`. CI check with `llvm-readelf -n` | verified |
 | Entry | `crt0` → `__libc_start` → `main(argc, argv, envp)`; `exit` flushes stdio | Generated `main`; Nova cleanup done before return | verified |
@@ -43,8 +43,8 @@ CosmoOS revision read: HEAD `30d34b29`, main `4527d16d` (v1.0.9).
    `quiesce_read_unlock` (KQ-2). Built-in code is unaffected.
 2. No `call_quiesce` barrier at module unload (KQ-3) → Nova modules may not
    leave quiesce callbacks pending in module text.
-3. AArch64 userland may emit outline-atomic helpers with no builtins library
-   present → must be checked in C1 (`llvm-nm -u`).
+3. ~~AArch64 userland may emit outline-atomic helpers~~: checked in C1. None are emitted for
+   Nova's M1 programs (no atomics). This must be rechecked when Nova gains atomics.
 4. `limits.h` `CHAR_MIN/MAX` are wrong on AArch64 (CosmoOS bug; Nova
    unaffected because it never uses `char`). **Report to the owner**; do not fix it from
    the Nova side.

@@ -1,7 +1,7 @@
 # Nova Documentation — Milestone 0 / C0 Deliverable
 
 Date: 2026-10-22. Status: **M0/C0 complete; all decisions accepted ([ADR 0002](decisions/0002-milestone-0-decision-set.md)).**
-M1 increments 1a–1c done (Nova compiles to C and runs); next is increment 1d (C1 in CosmoOS) ([roadmap.md](roadmap.md)).
+**M1 and C1 complete**: Nova compiles to C and runs, including natively inside CosmoOS on x86-64 and AArch64. Next: M2 (ownership) ([roadmap.md](roadmap.md)).
 Implemented-feature specs: [grammar.md](grammar.md) (M1 grammar), [type-system.md](type-system.md)
 (M1 static semantics), [intermediate-representation.md](intermediate-representation.md) (HIR/NIR as
 implemented) and [diagnostics.md](diagnostics.md) (error codes).
@@ -39,7 +39,7 @@ implemented) and [diagnostics.md](diagnostics.md) (error codes).
 | 9 | Security and correctness risk register | [risks.md](risks.md) |
 | 10 | Detailed milestone roadmap | [roadmap.md](roadmap.md) |
 | 11 | Acceptance-test matrix | [testing.md](testing.md) |
-| 12 | Recommendation for first integration | [cosmoos/feasibility.md](cosmoos/feasibility.md) |
+| 12 | Recommendation for first integration | [cosmoos/feasibility.md](cosmoos/feasibility.md); result: [cosmoos/c1-report.md](cosmoos/c1-report.md) |
 
 Primary-source audits: [research/cosmoos-kernel-audit.md](research/cosmoos-kernel-audit.md),
 [research/cosmoos-platform-audit.md](research/cosmoos-platform-audit.md)
