@@ -13,6 +13,7 @@ static uint64_t nv_gcd(NV_UNUSED uint64_t v_a_0, NV_UNUSED uint64_t v_b_1) {
     NV_UNUSED uint64_t v_y_3 = 0;
     NV_UNUSED uint64_t v_t_4 = 0;
     NV_UNUSED bool t_5 = false;
+    NV_UNUSED uint64_t t_6 = 0;
     v_x_2 = v_a_0;
     v_y_3 = v_b_1;
     goto bb1;
@@ -25,13 +26,15 @@ bb2:
     v_y_3 = v_t_4;
     goto bb1;
 bb3:
-    return v_x_2;
+    t_6 = v_x_2;
+    return t_6;
 }
 
 static int32_t nv_main(void) {
     NV_UNUSED uint64_t t_0 = 0;
     NV_UNUSED uint64_t t_1 = 0;
     NV_UNUSED uint64_t t_2 = 0;
+    NV_UNUSED int32_t t_3 = 0;
     t_0 = nv_gcd(((uint64_t)1071), ((uint64_t)462));
     nova_write_u64((uint64_t)t_0);
     nova_write_newline();
@@ -41,7 +44,8 @@ static int32_t nv_main(void) {
     t_2 = nv_gcd(((uint64_t)0), ((uint64_t)9));
     nova_write_u64((uint64_t)t_2);
     nova_write_newline();
-    return ((int32_t)0);
+    t_3 = ((int32_t)0);
+    return t_3;
 }
 
 int main(void) {

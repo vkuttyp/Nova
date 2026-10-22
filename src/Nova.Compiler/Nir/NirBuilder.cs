@@ -17,7 +17,8 @@ public sealed class NirBuilder
     private readonly List<NirLocal> _locals = [];
     private readonly List<NirBlock> _blocks = [];
     private readonly Stack<LoopTargets> _loops = new();
-    private readonly List<List<NirLocal>> _scopes = [];
+    /// <summary>Open scopes; each entry is a local (ends with StorageDead) or a deferred statement (type-system.md §14.7).</summary>
+    private readonly List<List<object>> _scopes = [];
     private List<NirLocal>? _statementTemps;
     private NirBlock? _current;
     private TextSpan _span;
@@ -49,14 +50,17 @@ public sealed class NirBuilder
         // HIR locals keep their ids; temporaries are appended after them.
         foreach (var local in _function.Locals)
         {
-            _locals.Add(new NirLocal(local.Id, local.Type, local.Name));
+            _locals.Add(new NirLocal(local.Id, local.Type, local.Name) { IsUsing = local.IsUsing });
         }
 
         _current = NewBlock();
+        // By-value parameters are owned by the function: the outermost scope, ended at every return.
+        _scopes.Add([.. _locals.Take(_function.Parameters.Length)]);
         LowerStmt(_function.Body!);
         if (_current is not null)
         {
             // Flow analysis guarantees only void functions can fall off the end.
+            EmitStorageDead(0);
             Terminate(_function.ReturnType.Kind == TypeKind.Void ? new NirReturn(null) : new NirUnreachable());
         }
 
@@ -111,14 +115,29 @@ public sealed class NirBuilder
         _current = null;
     }
 
-    /// <summary>Ends the storage of the locals in the scopes above <paramref name="depth"/>, innermost first.</summary>
+    /// <summary>
+    /// Leaves the scopes at index <paramref name="depth"/> and above, innermost first: each local
+    /// ends (StorageDead, where drop elaboration later destroys it) and each deferred statement runs,
+    /// in reverse order of position (type-system.md §14.5, §14.7).
+    /// </summary>
     private void EmitStorageDead(int depth)
     {
-        for (var i = _scopes.Count - 1; i >= depth; i--)
+        var top = _scopes.Count - 1;
+        for (var i = top; i >= depth; i--)
         {
-            for (var j = _scopes[i].Count - 1; j >= 0; j--)
+            var scope = _scopes[i];
+            for (var j = scope.Count - 1; j >= 0 && _current is not null; j--)
             {
-                Emit(new NirStorageDead(_scopes[i][j]));
+                if (scope[j] is NirLocal local)
+                {
+                    Emit(new NirStorageDead(local));
+                }
+                else
+                {
+                    var saved = _statementTemps;
+                    LowerStmt(((HirDefer)scope[j]).Body);
+                    _statementTemps = saved;
+                }
             }
         }
     }
@@ -236,14 +255,39 @@ public sealed class NirBuilder
             }
             case HirReturn ret:
             {
+                // The value is computed first and moved into a local that no scope owns; then the
+                // statement's temporaries end, then every scope (drops and defers), then the return.
                 NirOperand? value = null;
-                if (ret.Value is not null && (value = LowerOperand(ret.Value)) is null)
+                var saved = _statementTemps;
+                _statementTemps = [];
+                if (ret.Value is not null)
                 {
-                    break; // the value never completes
+                    if (LowerOperand(ret.Value) is not { } computed)
+                    {
+                        _statementTemps = saved;
+                        break; // the value never completes
+                    }
+                    var result = new NirLocal(_locals.Count, computed.Type, null);
+                    _locals.Add(result);
+                    Emit(new NirAssign(new NirPlace(result), new NirUse(computed)));
+                    value = Read(new NirPlace(result));
                 }
-                Terminate(new NirReturn(value));
+                for (var i = _statementTemps.Count - 1; i >= 0; i--)
+                {
+                    Emit(new NirStorageDead(_statementTemps[i]));
+                }
+                _statementTemps = saved;
+                _span = ret.Span;
+                EmitStorageDead(0);
+                if (_current is not null)
+                {
+                    Terminate(new NirReturn(value));
+                }
                 break;
             }
+            case HirDefer defer:
+                _scopes[^1].Add(defer);
+                break;
             case HirExprStmt exprStmt:
                 WithStatementTemps(() =>
                 {
@@ -348,7 +392,9 @@ public sealed class NirBuilder
             case HirStringConst s:
                 return new NirString(s.Value, s.Type);
             case HirLocalRef l:
-                return new NirPlaceOperand(_locals[l.Local.Id]);
+                return Read(new NirPlace(_locals[l.Local.Id]));
+            case HirMove move:
+                return new NirPlaceOperand(ToPlace(move.Place), IsMove: true);
             case HirFieldAccess field:
             {
                 // A field of a place is itself a place; a field of any other value reads from a temporary.
@@ -356,7 +402,7 @@ public sealed class NirBuilder
                 {
                     return null;
                 }
-                return new NirPlaceOperand(target.Place.Field(field.Field));
+                return Read(target.Place.Field(field.Field));
             }
             case HirDeref deref:
             {
@@ -364,7 +410,7 @@ public sealed class NirBuilder
                 {
                     return null;
                 }
-                return new NirPlaceOperand(reference.Place.Deref());
+                return Read(reference.Place.Deref());
             }
         }
 
@@ -375,8 +421,11 @@ public sealed class NirBuilder
         }
         var temp = NewTemp(expr.Type);
         Emit(new NirAssign(new NirPlace(temp), rvalue));
-        return new NirPlaceOperand(temp);
+        return Read(new NirPlace(temp));
     }
+
+    /// <summary>Using a place by value copies a Copy type and moves anything else (type-system.md §14.3).</summary>
+    private static NirPlaceOperand Read(NirPlace place) => new(place, IsMove: !TypeTable.IsCopy(place.Type));
 
     private NirRvalue? LowerRvalue(HirExpr expr)
     {
@@ -396,7 +445,7 @@ public sealed class NirBuilder
     {
         switch (expr)
         {
-            case HirIntConst or HirBoolConst or HirLocalRef or HirStringConst:
+            case HirIntConst or HirBoolConst or HirLocalRef or HirStringConst or HirMove:
                 return new NirUse(LowerOperand(expr)!);
             case HirBorrow borrow:
                 return new NirRef(borrow.IsMutable, ToPlace(borrow.Place), borrow.Type);
@@ -519,7 +568,7 @@ public sealed class NirBuilder
             {
                 var temp = NewTemp(operand.Type);
                 Emit(new NirAssign(new NirPlace(temp), new NirUse(operand)));
-                operand = new NirPlaceOperand(temp);
+                operand = Read(new NirPlace(temp));
             }
             result.Add(operand);
         }

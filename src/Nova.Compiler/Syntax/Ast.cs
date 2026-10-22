@@ -63,7 +63,13 @@ public sealed record StructDecl(
     Identifier Name,
     ImmutableArray<FieldDecl> Fields,
     ImmutableArray<FunctionDecl> Functions,
-    TextSpan Span) : Item(Visibility, Name, Span);
+    TextSpan Span) : Item(Visibility, Name, Span)
+{
+    /// <summary>The struct's <c>drop { ... }</c> block, if any (type-system.md §14.2).</summary>
+    public DropBlock? Drop { get; init; }
+}
+
+public sealed record DropBlock(BlockStmt Body, TextSpan Span) : SyntaxNode(Span);
 
 public sealed record FieldDecl(Visibility Visibility, Identifier Name, TypeSyntax Type, TextSpan Span) : SyntaxNode(Span);
 
@@ -104,7 +110,14 @@ public sealed record LocalDeclStmt(
     Identifier Name,
     TypeSyntax? Type,
     Expr? Initializer,
-    TextSpan Span) : Stmt(Span);
+    TextSpan Span) : Stmt(Span)
+{
+    /// <summary>Declared with <c>using</c> (type-system.md §14.6).</summary>
+    public bool IsUsing { get; init; }
+}
+
+/// <summary><c>defer s;</c> (type-system.md §14.7).</summary>
+public sealed record DeferStmt(Stmt Body, TextSpan Span) : Stmt(Span);
 
 /// <summary><see cref="Else"/> is null, a <see cref="BlockStmt"/>, or an <see cref="IfStmt"/>.</summary>
 public sealed record IfStmt(Expr Condition, BlockStmt Then, Stmt? Else, TextSpan Span) : Stmt(Span);
@@ -201,6 +214,9 @@ public sealed record ThisExpr(TextSpan Span) : Expr(Span);
 
 /// <summary><c>borrow e</c> or <c>borrow mut e</c>.</summary>
 public sealed record BorrowExpr(bool IsMutable, Expr Operand, TextSpan Span) : Expr(Span);
+
+/// <summary><c>move p</c>: moves out of a place (type-system.md §14.3).</summary>
+public sealed record MoveExpr(Expr Operand, TextSpan Span) : Expr(Span);
 
 /// <summary><c>mut e</c>: only as a call argument for a <c>borrow mut</c> parameter.</summary>
 public sealed record MutArgExpr(Expr Operand, TextSpan Span) : Expr(Span);

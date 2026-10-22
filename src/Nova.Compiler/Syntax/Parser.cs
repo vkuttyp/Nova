@@ -311,6 +311,7 @@ public sealed class Parser
         var name = ParseIdentifier();
         var fields = ImmutableArray.CreateBuilder<FieldDecl>();
         var functions = ImmutableArray.CreateBuilder<FunctionDecl>();
+        DropBlock? drop = null;
         if (!At(TokenKind.OpenBrace))
         {
             Expect(TokenKind.OpenBrace);
@@ -323,7 +324,20 @@ public sealed class Parser
             var startPos = _pos;
             var memberStart = Current.Span.Start;
             var memberVisibility = ParseVisibility();
-            if (At(TokenKind.FnKeyword))
+            if (At(TokenKind.DropKeyword))
+            {
+                var dropStart = Advance().Span.Start;
+                var body = ParseBlock();
+                if (drop is not null)
+                {
+                    Error(DiagnosticCodes.DuplicateMember, TextSpan.FromBounds(dropStart, dropStart + 4), "a struct can have only one 'drop' block");
+                }
+                else
+                {
+                    drop = new DropBlock(body, SpanFrom(dropStart));
+                }
+            }
+            else if (At(TokenKind.FnKeyword))
             {
                 functions.Add(ParseFunction(memberVisibility, memberStart));
             }
@@ -348,7 +362,7 @@ public sealed class Parser
             }
         }
         Expect(TokenKind.CloseBrace);
-        return new StructDecl(visibility, name, fields.ToImmutable(), functions.ToImmutable(), SpanFrom(start));
+        return new StructDecl(visibility, name, fields.ToImmutable(), functions.ToImmutable(), SpanFrom(start)) { Drop = drop };
     }
 
     /// <summary>Recovery inside a struct body (grammar.md §3): skip to the next member start or the closing brace.</summary>
@@ -364,7 +378,7 @@ public sealed class Parser
             while (!At(TokenKind.EndOfFile))
             {
                 var kind = Current.Kind;
-                var memberStart = kind is TokenKind.FnKeyword or TokenKind.PublicKeyword or TokenKind.InternalKeyword
+                var memberStart = kind is TokenKind.FnKeyword or TokenKind.DropKeyword or TokenKind.PublicKeyword or TokenKind.InternalKeyword
                     or TokenKind.PrivateKeyword || (kind == TokenKind.Identifier && Peek(1).Kind == TokenKind.Colon);
                 if (depth == 0 && (memberStart || kind == TokenKind.CloseBrace))
                 {
@@ -465,6 +479,7 @@ public sealed class Parser
     // ---- Statements ----
 
     private static bool IsStatementKeyword(TokenKind kind) => kind is TokenKind.LetKeyword or TokenKind.VarKeyword
+        or TokenKind.UsingKeyword or TokenKind.DeferKeyword
         or TokenKind.IfKeyword or TokenKind.WhileKeyword or TokenKind.LoopKeyword or TokenKind.ReturnKeyword
         or TokenKind.BreakKeyword or TokenKind.ContinueKeyword;
 
@@ -547,6 +562,22 @@ public sealed class Parser
             case TokenKind.LetKeyword:
             case TokenKind.VarKeyword:
                 return ParseLocalDecl();
+            case TokenKind.UsingKeyword:
+            {
+                Advance();
+                var name = ParseIdentifier();
+                var type = Eat(TokenKind.Colon) ? ParseType() : null;
+                Expect(TokenKind.Equals);
+                var initializer = ParseExpr();
+                Expect(TokenKind.Semicolon);
+                return new LocalDeclStmt(false, name, type, initializer, SpanFrom(start)) { IsUsing = true };
+            }
+            case TokenKind.DeferKeyword:
+            {
+                Advance();
+                var body = ParseStatement();
+                return new DeferStmt(body, SpanFrom(start));
+            }
             case TokenKind.IfKeyword:
                 return ParseIf();
             case TokenKind.WhileKeyword:
@@ -764,6 +795,12 @@ public sealed class Parser
             var isMutable = Eat(TokenKind.MutKeyword);
             var operand = ParseUnary();
             return new BorrowExpr(isMutable, operand, SpanFrom(start));
+        }
+        if (At(TokenKind.MoveKeyword))
+        {
+            Advance();
+            var operand = ParseUnary();
+            return new MoveExpr(operand, SpanFrom(start));
         }
         if (At(TokenKind.Minus) || At(TokenKind.Bang))
         {

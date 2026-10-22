@@ -1,0 +1,51 @@
+struct Res {
+    id: i32;
+    drop { Console.write("drop "); Console.writeLine(this.id); }
+}
+struct Pair { a: Res; b: Res; }
+struct Owner { tag: i32; res: Res; drop { Console.write("owner "); Console.writeLine(this.tag); } }
+
+fn consume(r: Res) { Console.write("consume "); Console.writeLine(r.id); }
+fn make(id: i32) -> Res => Res { id: id };
+
+fn main() {
+    Console.writeLine("-- scope");
+    {
+        let x = make(1);
+        let y = make(2);
+    }
+    Console.writeLine("-- overwrite");
+    var v = make(3);
+    v = make(4);
+    Console.writeLine("-- move into call");
+    let m = make(5);
+    consume(m);
+    Console.writeLine("-- partial move");
+    let p = Pair { a: make(20), b: make(21) };
+    consume(p.a);
+    Console.writeLine("-- nested owner");
+    let o = Owner { tag: 7, res: make(22) };
+    Console.writeLine("-- temporary");
+    Console.writeLine(make(60).id);
+    Console.writeLine("-- end");
+}
+// expect-stdout: -- scope
+// expect-stdout: drop 2
+// expect-stdout: drop 1
+// expect-stdout: -- overwrite
+// expect-stdout: drop 3
+// expect-stdout: -- move into call
+// expect-stdout: consume 5
+// expect-stdout: drop 5
+// expect-stdout: -- partial move
+// expect-stdout: consume 20
+// expect-stdout: drop 20
+// expect-stdout: -- nested owner
+// expect-stdout: -- temporary
+// expect-stdout: 60
+// expect-stdout: drop 60
+// expect-stdout: -- end
+// expect-stdout: owner 7
+// expect-stdout: drop 22
+// expect-stdout: drop 21
+// expect-stdout: drop 4

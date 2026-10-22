@@ -72,6 +72,14 @@ public sealed class AstPrinter
                 {
                     PrintFunction(function);
                 }
+                if (s.Drop is not null)
+                {
+                    Line("(drop");
+                    _indent++;
+                    PrintStmt(s.Drop.Body);
+                    _indent--;
+                    Line(")");
+                }
                 _indent--;
                 Line(")");
                 break;
@@ -133,7 +141,7 @@ public sealed class AstPrinter
                 break;
             case LocalDeclStmt local:
             {
-                var sb = new StringBuilder(local.IsMutable ? "(var " : "(let ").Append(Name(local.Name));
+                var sb = new StringBuilder(local.IsUsing ? "(using " : local.IsMutable ? "(var " : "(let ").Append(Name(local.Name));
                 if (local.Type is not null)
                 {
                     sb.Append(" : ").Append(Type(local.Type));
@@ -189,6 +197,13 @@ public sealed class AstPrinter
             case ExprStmt exprStmt:
                 Line($"(expr {Expr(exprStmt.Expression)})");
                 break;
+            case DeferStmt defer:
+                Line("(defer");
+                _indent++;
+                PrintStmt(defer.Body);
+                _indent--;
+                Line(")");
+                break;
             default:
                 throw new InvalidOperationException($"unknown statement {stmt.GetType().Name}");
         }
@@ -215,6 +230,7 @@ public sealed class AstPrinter
         ThisExpr => "this",
         BorrowExpr b => $"({(b.IsMutable ? "borrow-mut" : "borrow")} {Expr(b.Operand)})",
         MutArgExpr m => $"(mut-arg {Expr(m.Operand)})",
+        MoveExpr m => $"(move {Expr(m.Operand)})",
         StructLiteralExpr s => s.Fields.IsEmpty
             ? $"(new {Name(s.TypeName)})"
             : $"(new {Name(s.TypeName)} {string.Join(" ", s.Fields.Select(f => $"({Name(f.Name)} {Expr(f.Value)})"))})",

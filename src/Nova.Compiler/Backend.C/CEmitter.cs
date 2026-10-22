@@ -64,6 +64,7 @@ public sealed class CEmitter
         {
             Line($"static NV_UNUSED {Signature(function, withNames: false)};");
         }
+        EmitDropGluePrototypes();
         Line();
 
         foreach (var function in _program.Functions)
@@ -71,6 +72,7 @@ public sealed class CEmitter
             EmitFunction(function);
             Line();
         }
+        EmitDropGlue();
 
         EmitMainWrapper();
     }
@@ -132,6 +134,36 @@ public sealed class CEmitter
     }
 
     private string FieldName(StructField field) => "f_" + _symbols.GetName(field.Name);
+
+    /// <summary>The drop glue of a struct that needs drop: its drop block, then its fields in declaration order.</summary>
+    private static string DropGlueName(NovaType type) => $"nvD_{type.Name.Length}{type.Name}";
+
+    private void EmitDropGluePrototypes()
+    {
+        foreach (var type in _program.Structs.Where(TypeTable.NeedsDrop))
+        {
+            Line($"static NV_UNUSED void {DropGlueName(type)}({CTypeName(type)} *);");
+        }
+    }
+
+    private void EmitDropGlue()
+    {
+        foreach (var type in _program.Structs.Where(TypeTable.NeedsDrop))
+        {
+            var definition = type.Struct!;
+            Line($"static void {DropGlueName(type)}({CTypeName(type)} *p) {{");
+            if (definition.DropFunction is { } drop)
+            {
+                Line($"    {FunctionName(drop)}(p);");
+            }
+            foreach (var field in definition.Fields.Where(f => TypeTable.NeedsDrop(f.Type)))
+            {
+                Line($"    {DropGlueName(field.Type)}(&(*p).{FieldName(field)});");
+            }
+            Line("}");
+            Line();
+        }
+    }
 
     private string FunctionName(NirFunction function) => FunctionName(function.Source);
 
@@ -195,7 +227,13 @@ public sealed class CEmitter
                 Line($"    {Place(assign.Target)} = {Rvalue(assign.Value)};");
                 break;
             case NirStorageDead:
-                break; // storage is the C local's; nothing to emit (drops arrive in M2c)
+                break; // storage is the C local's; destruction is an explicit NirDrop
+            case NirDrop { Flag: null } drop:
+                Line($"    {DropGlueName(drop.Place.Type)}(&{Place(drop.Place)});");
+                break;
+            case NirDrop drop:
+                Line($"    if ({LocalName(drop.Flag!)}) {DropGlueName(drop.Place.Type)}(&{Place(drop.Place)});");
+                break;
             case NirEval { Value: NirBuiltin builtin }:
                 EmitBuiltin(builtin);
                 break;

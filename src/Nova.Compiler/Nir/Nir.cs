@@ -36,14 +36,19 @@ public sealed class NirLocal
 
     /// <summary>The source name, or null for a compiler temporary.</summary>
     public Symbol? Name { get; }
+
+    /// <summary>A `using` binding: cannot be moved out of (type-system.md §14.6).</summary>
+    public bool IsUsing { get; init; }
 }
 
 public sealed class NirFunction
 {
-    internal NirFunction(HirFunction source, ImmutableArray<NirLocal> locals, int parameterCount, ImmutableArray<NirBlock> blocks)
+    private readonly List<NirLocal> _locals;
+
+    internal NirFunction(HirFunction source, IEnumerable<NirLocal> locals, int parameterCount, ImmutableArray<NirBlock> blocks)
     {
         Source = source;
-        Locals = locals;
+        _locals = [.. locals];
         ParameterCount = parameterCount;
         Blocks = blocks;
     }
@@ -55,7 +60,15 @@ public sealed class NirFunction
     public NovaType ReturnType => Source.ReturnType;
 
     /// <summary>All locals; the first <see cref="ParameterCount"/> are the parameters in order.</summary>
-    public ImmutableArray<NirLocal> Locals { get; }
+    public IReadOnlyList<NirLocal> Locals => _locals;
+
+    /// <summary>Adds a compiler local after lowering (drop flags).</summary>
+    internal NirLocal AddLocal(NovaType type)
+    {
+        var local = new NirLocal(_locals.Count, type, null);
+        _locals.Add(local);
+        return local;
+    }
 
     public int ParameterCount { get; }
 
@@ -111,8 +124,8 @@ public sealed record NirPlace(NirLocal Local, ImmutableArray<Projection> Project
     public override int GetHashCode() => HashCode.Combine(Local, Projections.Length);
 }
 
-/// <summary>Reads (copies) the value in a place.</summary>
-public sealed record NirPlaceOperand(NirPlace Place) : NirOperand(Place.Type)
+/// <summary>Reads the value in a place: a copy, or a move (the place becomes uninitialised, type-system.md §14.3).</summary>
+public sealed record NirPlaceOperand(NirPlace Place, bool IsMove = false) : NirOperand(Place.Type)
 {
     public NirPlaceOperand(NirLocal local)
         : this(new NirPlace(local))
@@ -161,6 +174,12 @@ public abstract record NirStatement
 
 /// <summary>The local's storage ends: scope exit, or the end of the statement for a temporary.</summary>
 public sealed record NirStorageDead(NirLocal Local) : NirStatement;
+
+/// <summary>
+/// Destroys the value in <see cref="Place"/> (its drop glue). Inserted by drop elaboration; when
+/// <see cref="Flag"/> is set, only if that bool local is true at runtime (type-system.md §14.5).
+/// </summary>
+public sealed record NirDrop(NirPlace Place, NirLocal? Flag) : NirStatement;
 
 public sealed record NirAssign(NirPlace Target, NirRvalue Value) : NirStatement;
 

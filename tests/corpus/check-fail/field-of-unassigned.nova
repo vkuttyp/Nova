@@ -1,0 +1,6 @@
+struct Point { x: i64; y: i64; }
+fn piecewise() {
+    var q: Point;
+    q.x = 1; // error[N0212]
+    q.y = 2;
+}

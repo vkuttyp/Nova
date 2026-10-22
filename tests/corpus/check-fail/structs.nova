@@ -34,8 +34,6 @@ fn mutation(p: Point) {
     let fixed = Point { x: 1, y: 2 };
     fixed.x = 3; // error[N0211]
     p.y = 4; // error[N0211]
-    var q: Point;
-    q.x = 1; // error[N0212]
 }
 struct Mutator {
     v: i32;

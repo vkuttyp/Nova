@@ -1,0 +1,10 @@
+fn f(n: i32) -> i32 {
+    defer return 1; // error[N0254]
+    loop {
+        defer break; // error[N0254]
+        defer { if (n > 0) { continue; } } // error[N0254]
+    }
+}
+fn g() {
+    defer defer Console.writeLine("x"); // error[N0254]
+}

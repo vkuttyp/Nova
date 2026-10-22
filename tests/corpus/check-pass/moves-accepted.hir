@@ -1,0 +1,89 @@
+(program
+  (fn consume ((r#0: Res)) -> void
+    (block)
+  )
+  (fn look ((r#0: borrow Res)) -> i32
+    (block
+      (return (. (deref r#0):Res id):i32)
+    )
+  )
+  (fn make ((id#0: i32)) -> Res
+    (block
+      (return (new Res (id id#0)))
+    )
+  )
+  (fn reinitializeMovedField () -> i32
+    (block
+      (var p#0: Pair = (new Pair (a (call make 1:i32):Res) (b (call make 2:i32):Res)))
+      (expr (call consume (. p#0 a):Res):void)
+      (= p#0.a (call make 3:i32):Res)
+      (let q#1: Pair = p#0)
+      (return (call look (borrow q#1.a)):i32)
+    )
+  )
+  (fn copyStructIsNotMoved () -> i32
+    (block
+      (let p#0: Plain = (new Plain (x 1:i32) (y 2:i32)))
+      (let q#1: Plain = p#0)
+      (return (+ (. p#0 x):i32 (. q#1 y):i32):i32)
+    )
+  )
+  (fn reassignAfterMove () -> i32
+    (block
+      (var r#0: Res = (call make 1:i32):Res)
+      (expr (call consume r#0):void)
+      (= r#0 (call make 2:i32):Res)
+      (return (call look (borrow r#0)):i32)
+    )
+  )
+  (fn moveOnOnePathThenReassign ((flag#0: bool)) -> i32
+    (block
+      (var r#1: Res = (call make 1:i32):Res)
+      (if flag#0
+        (block
+          (expr (call consume r#1):void)
+          (= r#1 (call make 2:i32):Res)
+        )
+      )
+      (return (call look (borrow r#1)):i32)
+    )
+  )
+  (fn movedFieldOtherFieldStillUsable () -> i32
+    (block
+      (let p#0: Pair = (new Pair (a (call make 1:i32):Res) (b (call make 2:i32):Res)))
+      (expr (call consume (. p#0 a):Res):void)
+      (return (call look (borrow p#0.b)):i32)
+    )
+  )
+  (fn borrowEndsThenMove () -> void
+    (block
+      (let r#0: Res = (call make 1:i32):Res)
+      (let id#1: i32 = (call look (borrow r#0)):i32)
+      (expr (call consume r#0):void)
+    )
+  )
+  (fn returnMovesOut () -> Res
+    (block
+      (let r#0: Res = (call make 1:i32):Res)
+      (return r#0)
+    )
+  )
+  (fn usingIsBorrowable () -> i32
+    (block
+      (using u#0: Res = (call make 5:i32):Res)
+      (return (call look (borrow u#0)):i32)
+    )
+  )
+  (fn deferReadsLaterAssignment () -> void
+    (block
+      (var x#0: i32)
+      (= x#0 1:i32)
+      (defer
+        (expr (Console.writeLine x#0))
+      )
+    )
+  )
+  (fn Res.drop ((this#0: borrow mut Res)) -> void
+    (block)
+  )
+)

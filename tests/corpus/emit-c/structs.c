@@ -58,6 +58,7 @@ static int32_t nv_main(void) {
     NV_UNUSED int32_t t_5 = 0;
     NV_UNUSED int32_t t_6 = 0;
     NV_UNUSED int32_t t_7 = 0;
+    NV_UNUSED int32_t t_8 = 0;
     t_3 = ((nvT_Point){ .f_x = ((int32_t)1), .f_y = ((int32_t)2) });
     t_4 = nvM_5Point_origin();
     v_l_0 = ((nvT_Line){ .f_from = t_4, .f_to = t_3 });
@@ -67,19 +68,24 @@ static int32_t nv_main(void) {
     t_5 = nvM_5Point_sum(v_l_0.f_to);
     t_6 = nv_as_i32((uint32_t)v_m_1.f_b);
     t_7 = nv_add_i32(t_5, t_6, NV_LOC(nv_file_0, 14u, 12u));
-    return t_7;
+    t_8 = t_7;
+    return t_8;
 }
 
 static int32_t nvM_5Point_sum(NV_UNUSED nvT_Point v_this_0) {
     NV_UNUSED int32_t t_1 = 0;
+    NV_UNUSED int32_t t_2 = 0;
     t_1 = nv_add_i32(v_this_0.f_x, v_this_0.f_y, NV_LOC(nv_file_0, 3u, 28u));
-    return t_1;
+    t_2 = t_1;
+    return t_2;
 }
 
 static nvT_Point nvM_5Point_origin(void) {
     NV_UNUSED nvT_Point t_0 = {0};
+    NV_UNUSED nvT_Point t_1 = {0};
     t_0 = ((nvT_Point){ .f_x = ((int32_t)0), .f_y = ((int32_t)0) });
-    return t_0;
+    t_1 = t_0;
+    return t_1;
 }
 
 int main(void) {

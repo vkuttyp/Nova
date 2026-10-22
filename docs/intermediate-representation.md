@@ -32,6 +32,7 @@ place     = local projection*                  -- projection = '.' field | Deref
 stmt      = Assign(place, rvalue)
           | Eval(rvalue)             -- for calls whose result is unused (void)
           | StorageDead(local)       -- scope end; temporaries at the end of their statement (M2b)
+          | Drop(place, flag?)       -- inserted by drop elaboration (M2c); guarded by a bool flag local if present
 rvalue    = Use(operand)
           | Binary(op, operand, operand, span)     -- op semantics: type-system.md §6 (may panic)
           | Unary(op, operand, span)
@@ -41,7 +42,7 @@ rvalue    = Use(operand)
           | Ref(Shared | Mut, place)               -- creates a loan (M2b; lifetimes.md)
           | Call(function, [operand])
           | Builtin(kind, [operand])               -- Console.write/writeLine
-operand   = Place(place) | Const(value, type) | String(text)
+operand   = Place(place, move?) | Const(value, type) | String(text)   -- move: non-Copy type or explicit `move` (M2c)
 terminator= Goto(bb) | Branch(operand, then_bb, else_bb) | Return(operand?)
           | Exit(operand)                          -- Process.exit
           | Unreachable                            -- after a call of type never
@@ -77,6 +78,26 @@ Lowering rules (HIR → NIR, `NirBuilder`):
   - every statement carries a source span for borrow diagnostics.
 - The **borrow checker** (`Analysis/BorrowChecker.cs`, `lifetimes.md`) runs on NIR inside
   `Compilation.Create`, so `novac check` reports borrow errors too.
+- **Moves and destruction (M2c).**
+  - Scopes hold locals *and* deferred statements. Leaving a scope (its end, `break`/`continue`,
+    or `return`) emits, in reverse order of position, `StorageDead` for locals and a fresh
+    lowering of each deferred statement.
+  - By-value parameters form the outermost scope.
+  - `return e` computes `e` into an unscoped temporary first, then ends the statement's
+    temporaries and every scope, then returns.
+  - **Move paths** (`Analysis/MovePaths.cs`): each local is a tree, expanded field by field
+    wherever a field is assigned or moved; all siblings are expanded, so children partition their
+    parent. A forward dataflow over the leaves tracks maybe-init, maybe-uninit and maybe-moved.
+    `MoveChecker` uses it for N0212/N0250–N0253.
+  - **Drop elaboration** (`Analysis/DropElaborator.cs`) runs only when every check passed:
+    - it inserts `Drop` before `StorageDead` of a local that needs drop, and before an assignment
+      that overwrites one; the assignment becomes `t = rvalue; Drop(p); p = t`;
+    - what is dropped depends on the state: whole, nothing, a flagged drop, or per field for a
+      partially moved struct;
+    - one bool flag per leaf is updated after every statement that changes that leaf's state.
+
+    The C backend emits drop glue `nvD_<len><Name>(T *)`: the `drop` block, then each field that
+    needs drop, in declaration order.
 
 Printed by `novac build --dump-nir`.
 

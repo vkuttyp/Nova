@@ -1,0 +1,73 @@
+// O2/O3 and the move restrictions (type-system.md §14.3).
+struct Res { id: i32; drop { } }
+struct Pair { a: Res; b: Res; }
+struct Owner { res: Res; drop { } }
+fn consume(r: Res) { }
+fn look(r: borrow Res) { }
+fn make(id: i32) -> Res => Res { id: id };
+fn useAfterMove() {
+    let r = make(1);
+    consume(r);
+    consume(r); // error[N0250]
+}
+fn useAfterMoveIntoLocal() {
+    let r = make(1);
+    let s = r;
+    look(r); // error[N0250]
+}
+fn maybeMoved(c: bool) {
+    let r = make(1);
+    if (c) { consume(r); }
+    look(r); // error[N0250]
+}
+fn movedInLoop() {
+    let r = make(1);
+    var i = 0;
+    while (i < 2) {
+        consume(r); // error[N0250]
+        i += 1;
+    }
+}
+fn wholeAfterPartial() {
+    let p = Pair { a: make(1), b: make(2) };
+    consume(p.a);
+    let q = p; // error[N0250]
+}
+fn explicitMoveOfCopy() {
+    let x = 5;
+    let y = move x;
+    let z = x; // error[N0250]
+}
+fn fieldThroughReference(r: borrow Pair) {
+    let a = r.a; // error[N0251]
+}
+fn wholeThroughReference(r: borrow mut Res) {
+    consume(r); // error[N0251]
+}
+fn fromUsing() {
+    using u = make(1);
+    consume(u); // error[N0253]
+}
+fn fieldFromUsing() {
+    using p = Pair { a: make(1), b: make(2) };
+    consume(p.b); // error[N0253]
+}
+fn fieldOfDropType() {
+    let o = Owner { res: make(1) };
+    consume(o.res); // error[N0252]
+}
+fn fieldOfDropTypeTemporary() {
+    consume(Owner { res: make(1) }.res); // error[N0252]
+}
+fn moveWhileBorrowed() {
+    let r = make(1);
+    let b = borrow r;
+    consume(r); // error[N0240]
+    look(b);
+}
+fn moveFieldWhileWholeBorrowed() {
+    let p = Pair { a: make(1), b: make(2) };
+    let b = borrow p;
+    consume(p.a); // error[N0240]
+    look(b.b);
+}

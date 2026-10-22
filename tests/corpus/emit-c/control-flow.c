@@ -11,18 +11,24 @@ static NV_UNUSED int32_t nv_main(void);
 
 static int32_t nv_classify(NV_UNUSED int32_t v_n_0) {
     NV_UNUSED bool t_1 = false;
-    NV_UNUSED bool t_2 = false;
+    NV_UNUSED int32_t t_2 = 0;
+    NV_UNUSED bool t_3 = false;
+    NV_UNUSED int32_t t_4 = 0;
+    NV_UNUSED int32_t t_5 = 0;
     t_1 = (v_n_0 < ((int32_t)0));
     if (t_1) goto bb1; else goto bb2;
 bb1:
-    return ((int32_t)-1);
+    t_2 = ((int32_t)-1);
+    return t_2;
 bb2:
-    t_2 = (v_n_0 == ((int32_t)0));
-    if (t_2) goto bb4; else goto bb5;
+    t_3 = (v_n_0 == ((int32_t)0));
+    if (t_3) goto bb4; else goto bb5;
 bb3:
-    return ((int32_t)1);
+    t_5 = ((int32_t)1);
+    return t_5;
 bb4:
-    return ((int32_t)0);
+    t_4 = ((int32_t)0);
+    return t_4;
 bb5:
     goto bb3;
 }
@@ -30,9 +36,11 @@ bb5:
 static uint8_t nv_bits(NV_UNUSED uint64_t v_x_0, NV_UNUSED int32_t v_n_1) {
     NV_UNUSED uint64_t t_2 = 0;
     NV_UNUSED uint8_t t_3 = 0;
+    NV_UNUSED uint8_t t_4 = 0;
     t_2 = nv_shr_u64(v_x_0, nv_shift_amount_s((int64_t)v_n_1, 64u, NV_LOC(nv_file_0, 7u, 47u)));
     t_3 = (uint8_t)t_2;
-    return t_3;
+    t_4 = t_3;
+    return t_4;
 }
 
 static int32_t nv_main(void) {
@@ -49,6 +57,7 @@ static int32_t nv_main(void) {
     NV_UNUSED bool t_10 = false;
     NV_UNUSED bool t_11 = false;
     NV_UNUSED uint8_t t_12 = 0;
+    NV_UNUSED int32_t t_13 = 0;
     v_i_0 = ((int32_t)0);
     goto bb1;
 bb1:
@@ -95,7 +104,8 @@ bb14:
     t_12 = nv_bits(((uint64_t)65280), ((int32_t)8));
     nova_write_u64((uint64_t)t_12);
     nova_write_newline();
-    return ((int32_t)0);
+    t_13 = ((int32_t)0);
+    return t_13;
 }
 
 int main(void) {

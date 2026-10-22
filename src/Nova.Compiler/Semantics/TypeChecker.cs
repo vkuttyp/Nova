@@ -99,6 +99,7 @@ internal sealed class TypeChecker
             ResolveStructMembers(entry);
         }
         CheckStructRecursion();
+        ComputeCopyAndDrop();
 
         foreach (var constant in _constants)
         {
@@ -286,6 +287,13 @@ internal sealed class TypeChecker
             }
             definition.AddField(field.Name.Name, type, field.Name.Span);
         }
+        if (entry.Decl.Drop is { } drop)
+        {
+            // The drop block is checked as a `borrow mut this` method that user code cannot call.
+            var syntax = new FunctionDecl(Visibility.Private, new Identifier(_symbols.Intern("drop"), drop.Span),
+                new Receiver(ReceiverKind.BorrowMut, drop.Span), [], null, drop.Body, null, drop.Span);
+            definition.DropFunction = DeclareFunction(syntax, entry.Type);
+        }
         foreach (var function in entry.Decl.Functions)
         {
             if (!memberNames.Add(function.Name.Name))
@@ -337,6 +345,29 @@ internal sealed class TypeChecker
             {
                 Visit(entry.Type);
             }
+        }
+    }
+
+    /// <summary>Copy and needs-drop for every struct (type-system.md §14.1); fields first, so order does not matter.</summary>
+    private void ComputeCopyAndDrop()
+    {
+        var done = new HashSet<NovaType>();
+        void Visit(NovaType type)
+        {
+            if (!done.Add(type) || type.Struct is not { IsRecursive: false } definition)
+            {
+                return;
+            }
+            foreach (var field in definition.Fields.Where(f => f.Type.Kind == TypeKind.Struct))
+            {
+                Visit(field.Type);
+            }
+            definition.NeedsDrop = definition.DropFunction is not null || definition.Fields.Any(f => TypeTable.NeedsDrop(f.Type));
+            definition.IsCopy = definition.DropFunction is null && definition.Fields.All(f => TypeTable.IsCopy(f.Type));
+        }
+        foreach (var entry in _structs)
+        {
+            Visit(entry.Type);
         }
     }
 
@@ -601,10 +632,31 @@ internal sealed class TypeChecker
                 return CheckReturn(ret);
             case ExprStmt exprStmt:
                 return new HirExprStmt(CheckExpressionStatement(exprStmt.Expression), stmt.Span);
+            case DeferStmt defer:
+            {
+                var body = CheckStmt(defer.Body);
+                if (FindJump(defer.Body) is { } jump)
+                {
+                    Error(DiagnosticCodes.JumpInDefer, jump.Span,
+                        "a deferred statement cannot contain 'return', 'break', 'continue' or 'defer'");
+                }
+                return new HirDefer(body, stmt.Span);
+            }
             default:
                 throw new InvalidOperationException($"unexpected statement {stmt.GetType().Name}");
         }
     }
+
+    /// <summary>The first `return`, `break`, `continue` or `defer` inside a statement (N0254).</summary>
+    private static Stmt? FindJump(Stmt stmt) => stmt switch
+    {
+        ReturnStmt or BreakStmt or ContinueStmt or DeferStmt => stmt,
+        BlockStmt block => block.Statements.Select(FindJump).FirstOrDefault(s => s is not null),
+        IfStmt ifStmt => FindJump(ifStmt.Then) ?? (ifStmt.Else is null ? null : FindJump(ifStmt.Else)),
+        WhileStmt w => FindJump(w.Body),
+        LoopStmt l => FindJump(l.Body),
+        _ => null,
+    };
 
     private void CheckInLoop(TextSpan span, string keyword)
     {
@@ -675,6 +727,7 @@ internal sealed class TypeChecker
 
         // Declared after the initializer is checked: `let x = x;` does not see the new `x`.
         var local = _function!.AddLocal(decl.Name.Name, type, decl.IsMutable, isParameter: false, decl.Name.Span);
+        local.IsUsing = decl.IsUsing;
         _scopes[^1][decl.Name.Name] = local;
         return new HirLocalDecl(local, initializer, decl.Span);
     }
@@ -1060,6 +1113,20 @@ internal sealed class TypeChecker
                     return ErrorResult(borrow.Span);
                 }
                 return BorrowPlace(operand, borrow.IsMutable, borrow.Span);
+            }
+            case MoveExpr move:
+            {
+                var operand = Synth(move.Operand, null);
+                if (operand.Type.IsBottom)
+                {
+                    return operand;
+                }
+                if (ToPlace(operand) is not { } place)
+                {
+                    Error(DiagnosticCodes.BorrowOfNonPlace, move.Span, "only a variable or a field can be moved out of with 'move'");
+                    return ErrorResult(move.Span);
+                }
+                return new HirMove(place, move.Span);
             }
             case MutArgExpr mutArgument:
                 Error(DiagnosticCodes.MutArgumentMismatch, mutArgument.Span,

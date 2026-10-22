@@ -46,10 +46,11 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
   (`cosmoos/c1-report.md`).
 
 In progress: **M2, ownership and borrowing** (`milestone-2.md`). Increments 2a (structs) and 2b
-(references and the NLL borrow checker) are done. Next is **2c**:
-- move types, `drop`, init/move analysis on NIR;
-- drop elaboration with drop flags;
-- `using` and `defer`.
+(references and the NLL borrow checker), and 2c (move types, `drop`, move checking on NIR, drop
+elaboration with flags, `using`, `defer`) are done. Next is **2d**:
+- enums with payloads and `match`;
+- fixed arrays and slices with bounds checks;
+- the mutation suite.
 
 M2 as a whole covers:
 - structs, enums, references, moves;

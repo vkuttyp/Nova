@@ -1,0 +1,45 @@
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+fn make(id: i32) -> Res => Res { id: id };
+
+fn early(flag: bool) -> i32 {
+    let a = make(1);
+    if (flag) {
+        let inner = make(2);
+        return 10;
+    }
+    let b = make(3);
+    return 20;
+}
+
+fn loops() {
+    var i = 0;
+    loop {
+        let outer = make(100 + i);
+        i += 1;
+        if (i == 1) {
+            let skipped = make(200);
+            continue;
+        }
+        if (i == 3) {
+            let leaving = make(300);
+            break;
+        }
+    }
+}
+
+fn main() {
+    Console.writeLine(early(true));
+    Console.writeLine(early(false));
+    loops();
+}
+// expect-stdout: drop 2
+// expect-stdout: drop 1
+// expect-stdout: 10
+// expect-stdout: drop 3
+// expect-stdout: drop 1
+// expect-stdout: 20
+// expect-stdout: drop 200
+// expect-stdout: drop 100
+// expect-stdout: drop 101
+// expect-stdout: drop 300
+// expect-stdout: drop 102

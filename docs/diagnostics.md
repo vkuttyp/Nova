@@ -114,6 +114,19 @@ errors carry notes ("borrowed here", "the borrow is used later here").
 | N0248 | `borrow mut` (or a `borrow mut this` call) on an immutable place | `borrow mut param`, `shared.grow()` |
 | N0249 | `mut` argument marker missing or misplaced | `take(x)` for `borrow mut`, `look(mut x)` for `borrow` |
 
+### Moves and destruction (N0250–N0259; `type-system.md` §14)
+
+N0212 and N0250–N0253 come from the NIR move checker (since M2c), which also runs only on
+programs that type-check. A move while borrowed is reported by the borrow checker as N0240.
+
+| Code | Meaning | Example |
+|---|---|---|
+| N0250 | Use of a value that was moved (on at least one path), including reading a partially moved struct as a whole | `consume(r); consume(r);` |
+| N0251 | Move out of a place reached through a reference | `let a = r.a;` with `r: borrow Pair` and `Pair.a` a move type |
+| N0252 | Move of a field out of a value whose type has a `drop` block | `consume(o.res)` with `struct Owner { res: Res; drop {} }` |
+| N0253 | Move out of a `using` binding | `using u = make(); consume(u);` |
+| N0254 | `return`, `break`, `continue` or `defer` inside a deferred statement | `defer return 1;` |
+
 ### Build (N0300–N0399)
 
 | Code | Meaning | Example |

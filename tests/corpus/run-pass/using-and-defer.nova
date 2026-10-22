@@ -1,0 +1,33 @@
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+fn make(id: i32) -> Res => Res { id: id };
+
+fn withDefers(flag: bool) -> i32 {
+    using u = make(1);
+    defer Console.writeLine("deferred 1");
+    let w = make(2);
+    defer Console.writeLine("deferred 2");
+    if (flag) { return 5; }
+    return 6;
+}
+
+fn main() {
+    Console.writeLine(withDefers(true));
+    {
+        defer Console.writeLine("block deferred");
+        Console.writeLine("block body");
+    }
+    var i = 0;
+    while (i < 2) {
+        defer Console.writeLine("iteration done");
+        i += 1;
+    }
+}
+// expect-stdout: deferred 2
+// expect-stdout: drop 2
+// expect-stdout: deferred 1
+// expect-stdout: drop 1
+// expect-stdout: 5
+// expect-stdout: block body
+// expect-stdout: block deferred
+// expect-stdout: iteration done
+// expect-stdout: iteration done

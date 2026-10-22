@@ -1,0 +1,28 @@
+(unit
+  (struct default File
+    (field default fd i32)
+    (fn default close (params this)
+      (block)
+    )
+    (drop
+      (block
+        (expr (call (. Sys close) (. this fd)))
+      )
+    )
+  )
+  (fn default work (params (f File)) (returns i32)
+    (block
+      (using guard = (new File (fd 3)))
+      (defer
+        (expr (call (. Console writeLine) "done"))
+      )
+      (defer
+        (block
+          (expr (call cleanup))
+        )
+      )
+      (let g = (move f))
+      (return (. g fd))
+    )
+  )
+)

@@ -27,8 +27,10 @@ static void nv_reset(NV_UNUSED int64_t * v_v_0) {
 
 static int64_t nv_twice(NV_UNUSED const int64_t * v_v_0) {
     NV_UNUSED int64_t t_1 = 0;
+    NV_UNUSED int64_t t_2 = 0;
     t_1 = nv_mul_i64((*v_v_0), ((int64_t)2), NV_LOC(nv_file_0, 7u, 35u));
-    return t_1;
+    t_2 = t_1;
+    return t_2;
 }
 
 static int32_t nv_main(void) {
@@ -45,6 +47,7 @@ static int32_t nv_main(void) {
     NV_UNUSED int64_t t_10 = 0;
     NV_UNUSED int64_t t_11 = 0;
     NV_UNUSED int32_t t_12 = 0;
+    NV_UNUSED int32_t t_13 = 0;
     v_x_0 = ((int64_t)3);
     t_2 = &v_x_0;
     nv_reset(t_2);
@@ -60,7 +63,8 @@ static int32_t nv_main(void) {
     t_10 = nv_twice(t_9);
     t_11 = nv_add_i64(t_7, t_10, NV_LOC(nv_file_0, 13u, 26u));
     t_12 = nv_as_i32((uint32_t)t_11);
-    return t_12;
+    t_13 = t_12;
+    return t_13;
 }
 
 static void nvM_7Counter_bump(NV_UNUSED nvT_Counter * v_this_0, NV_UNUSED uint32_t v_by_1) {
@@ -69,7 +73,9 @@ static void nvM_7Counter_bump(NV_UNUSED nvT_Counter * v_this_0, NV_UNUSED uint32
 }
 
 static uint32_t nvM_7Counter_get(NV_UNUSED const nvT_Counter * v_this_0) {
-    return (*v_this_0).f_count;
+    NV_UNUSED uint32_t t_1 = 0;
+    t_1 = (*v_this_0).f_count;
+    return t_1;
 }
 
 int main(void) {

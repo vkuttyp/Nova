@@ -1,0 +1,36 @@
+// A value moved on some paths is destroyed only when it was not moved (runtime drop flags).
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+fn consume(r: Res) { Console.write("consume "); Console.writeLine(r.id); }
+
+fn branch(flag: bool, id: i32) {
+    let r = Res { id: id };
+    if (flag) { consume(r); }
+    Console.writeLine("end of branch");
+}
+
+fn main() {
+    branch(true, 1);
+    branch(false, 2);
+    var i = 0;
+    while (i < 3) {
+        let c = Res { id: 10 + i };
+        if (i == 1) { consume(c); }
+        i += 1;
+    }
+    var r = Res { id: 30 };
+    if (i == 3) { consume(r); r = Res { id: 31 }; }
+    Console.writeLine("end");
+}
+// expect-stdout: consume 1
+// expect-stdout: drop 1
+// expect-stdout: end of branch
+// expect-stdout: end of branch
+// expect-stdout: drop 2
+// expect-stdout: drop 10
+// expect-stdout: consume 11
+// expect-stdout: drop 11
+// expect-stdout: drop 12
+// expect-stdout: consume 30
+// expect-stdout: drop 30
+// expect-stdout: end
+// expect-stdout: drop 31

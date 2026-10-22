@@ -1,0 +1,10 @@
+struct Res { id: i32; drop { Console.writeLine(this.id); } }
+struct Pair { a: Res; b: Res; }
+fn consume(r: Res) { }
+fn main() {
+    let p = Pair { a: Res { id: 1 }, b: Res { id: 2 } };
+    consume(p.a);
+    var r = Res { id: 3 };
+    if (p.b.id > 1) { consume(r); }
+    defer Console.writeLine(0);
+}

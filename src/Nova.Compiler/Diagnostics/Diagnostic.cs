@@ -82,6 +82,13 @@ public static class DiagnosticCodes
     public const string BorrowMutOfImmutable = "N0248";
     public const string MutArgumentMismatch = "N0249";
 
+    // Moves and destruction (type-system.md §14): N0250-N0259
+    public const string UseOfMoved = "N0250";
+    public const string MoveOutOfReference = "N0251";
+    public const string MoveOutOfDropType = "N0252";
+    public const string MoveOutOfUsing = "N0253";
+    public const string JumpInDefer = "N0254";
+
     // Build: N0300-N0399
     public const string MissingMain = "N0300";
 }

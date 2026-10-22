@@ -260,3 +260,86 @@ N0243 (out of scope or temporary dropped while borrowed).
   `borrow mut` result naming a shared parameter.
 - The body may only return references derived from the named parameters (N0245). A reference to
   a local or temporary of the function is N0244.
+
+## 14. Move types, destruction, `using` and `defer` (M2c)
+
+Normative for 2c. It implements `ownership.md` O1–O5 and R3. The NIR analyses are described in
+`intermediate-representation.md`.
+
+### 14.1 Copy and move types (OD-7)
+- **Copy:** integers, `bool`, and `borrow T`. A struct is Copy iff it has no `drop` block and every
+  field is Copy.
+- **Move types:** structs with a `drop` block or a move-type field, and `borrow mut T` (whose uses
+  are reborrows, §13.3, so in practice it is never moved out of a variable).
+- **Needs drop:** a struct with a `drop` block, or one with a field that needs drop. Every type that
+  needs drop is a move type. The converse does not hold.
+
+### 14.2 `drop` blocks
+```nova
+struct File {
+    fd: i32;
+    drop { Sys.close(this.fd); }      // `this` is `borrow mut File`
+}
+```
+- At most one `drop` block per struct (N0228). Inside it, `this` has type `borrow mut S`. The block
+  cannot be called explicitly. It runs exactly once when a value of `S` is destroyed (O4), and the
+  fields that need drop are destroyed **after** it, in declaration order.
+- Moving a field out of a value whose type has a `drop` block is N0252: the `drop` block needs the
+  whole value. Moving out of `this` inside `drop` is impossible anyway (§14.3).
+
+### 14.3 Moves
+- **Using a move-type place by value moves it**:
+  - an initialiser or right-hand side;
+  - a by-value argument or a by-value `this` receiver;
+  - a struct-literal field;
+  - a `return` value.
+
+  The place is then uninitialised. Reading, borrowing or moving it again before it is reassigned is
+  **N0250** ("use of moved value"); this is O2 and O3.
+- **`move p`** explicitly moves out of the place `p`, even for a Copy type. Afterwards `p` is
+  uninitialised, which ends a value's use early.
+- **Partial moves** (O2): moving `p.f` out of a local is allowed if no struct on the path from
+  `p` to `f` has a `drop` block. `p` is then partially initialised. `p.f` may be reassigned, after
+  which `p` is whole again. Reading `p` as a whole, or borrowing it, needs all of it initialised
+  (N0250).
+- **Not allowed:**
+  - moving out of a place reached through a reference (N0251), because the referent must stay
+    valid; this includes `this` in `borrow`/`borrow mut` methods;
+  - moving out of a `using` binding (N0253).
+- **Moves and borrows:** moving a place while it is borrowed is a conflict, treated like a write
+  (N0240).
+
+### 14.4 Initialisation (replaces §9's first bullet)
+The analysis runs on NIR move paths (`intermediate-representation.md`):
+- A place must be **definitely initialised** to be read, borrowed or moved. If it may never have
+  been assigned, that is N0212. If it may have been moved, that is N0250.
+- Assigning a field `p.f` requires the rest of `p` to be initialised (no piecewise construction
+  of an uninitialised struct). Re-initialising a moved-out field is allowed.
+
+### 14.5 Destruction (O4)
+- A value that needs drop is destroyed exactly once, at the first of these:
+  - the end of its variable's scope: the block end, a `break`/`continue` leaving the block, or a
+    `return`;
+  - the end of its statement, for a temporary;
+  - being **overwritten** by an assignment, in which case the old value is destroyed first.
+- **Order:** locals in reverse declaration order; then a struct's `drop` block; then its fields in
+  declaration order. By-value parameters are destroyed when the function returns, after the locals.
+- **Moved values are not destroyed.** A value that has been moved on *some* paths gets a runtime
+  **drop flag**. A partially moved struct destroys only the fields it still has.
+- **`Process.exit` and panics do not run destructors or deferred statements** (panic = abort,
+  OD-5).
+
+### 14.6 `using`
+`using x = e;` declares an immutable local that cannot be moved out of (N0253) and is destroyed at
+the end of its block, like any local (R3). It documents that the value's lifetime *is* the scope:
+a lock guard, an arena, a file.
+
+### 14.7 `defer`
+`defer s;` schedules the statement `s` to run when the enclosing block exits on any path:
+- the block end;
+- `break`/`continue` out of it;
+- `return` (after the return value is computed).
+
+Deferred statements and local destructions run in reverse order of their position, so a `defer`
+runs before the locals declared before it are destroyed, and after the locals declared after it.
+`s` may not contain `return`, `break`, `continue` or another `defer` (N0254).

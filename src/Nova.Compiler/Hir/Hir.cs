@@ -72,6 +72,9 @@ public sealed class HirLocal
     public bool IsParameter { get; }
 
     public TextSpan Span { get; }
+
+    /// <summary>Declared with <c>using</c>: cannot be moved out of (type-system.md §14.6).</summary>
+    public bool IsUsing { get; internal set; }
 }
 
 public sealed class HirFunction
@@ -160,6 +163,9 @@ public sealed record HirReturn(HirExpr? Value, TextSpan Span) : HirStmt(Span);
 
 public sealed record HirExprStmt(HirExpr Expression, TextSpan Span) : HirStmt(Span);
 
+/// <summary>Runs <see cref="Body"/> when the enclosing block exits (type-system.md §14.7).</summary>
+public sealed record HirDefer(HirStmt Body, TextSpan Span) : HirStmt(Span);
+
 // ---- Expressions ----
 
 public abstract record HirExpr(NovaType Type, TextSpan Span);
@@ -209,6 +215,9 @@ public sealed record HirBorrowTemp(bool IsMutable, HirExpr Value, NovaType Type,
 
 /// <summary>A new reference to the referent of <see cref="Reference"/>: a reborrow, or a mut-to-shared coercion.</summary>
 public sealed record HirReborrow(bool IsMutable, HirExpr Reference, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary><c>move p</c>: moves the value out of a place, leaving it uninitialised (type-system.md §14.3).</summary>
+public sealed record HirMove(HirPlace Place, TextSpan Span) : HirExpr(Place.Type, Span);
 
 /// <summary>Reads the value a reference points to (auto-deref, type-system.md §13.3).</summary>
 public sealed record HirDeref(HirExpr Reference, TextSpan Span) : HirExpr(Reference.Type.Pointee!, Span);

@@ -1,0 +1,23 @@
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+struct Box2 { first: Res; second: Res; }
+
+fn pass(r: Res) -> Res => r;
+fn build(a: i32, b: i32) -> Box2 => Box2 { first: Res { id: a }, second: Res { id: b } };
+fn takeFirst(b: Box2) -> Res => b.first;
+
+fn main() {
+    let r = pass(pass(Res { id: 1 }));
+    Console.writeLine(r.id);
+    let first = takeFirst(build(2, 3));
+    Console.writeLine(first.id);
+    var slot = Res { id: 4 };
+    slot = pass(move slot);
+    Console.writeLine(slot.id);
+}
+// expect-stdout: 1
+// expect-stdout: drop 3
+// expect-stdout: 2
+// expect-stdout: 4
+// expect-stdout: drop 4
+// expect-stdout: drop 2
+// expect-stdout: drop 1

@@ -94,7 +94,8 @@ Receiver     = ('borrow' 'mut'?)? 'this'   (* M2a: by value; M2b: reference rece
 Param        = Identifier ':' Type
 
 StructDecl   = 'struct' Identifier '{' Member* '}'          (* M2a *)
-Member       = Visibility? (FieldDecl | FunctionDecl)
+Member       = Visibility? (FieldDecl | FunctionDecl) | DropBlock
+DropBlock    = 'drop' Block                (* M2c *)
 FieldDecl    = Identifier ':' Type ';'
 FunctionBody = Block | '=>' Expr ';'
 
@@ -113,6 +114,8 @@ Statement = Block
           | 'break' ';'
           | 'continue' ';'
           | 'return' Expr? ';'
+          | 'using' Identifier (':' Type)? '=' Expr ';'      (* M2c *)
+          | 'defer' Statement                               (* M2c *)
           | Expr AssignOp Expr ';'        (* assignment: a statement, not an expression *)
           | Expr ';'
 LocalDecl = ('let' | 'var') Identifier (':' Type)? ('=' Expr)? ';'
@@ -145,7 +148,7 @@ comparisons, which are **non-associative**: `a < b < c` is error N0103.
 | 8 | `+ -` | |
 | 9 | `* / %` | |
 | 10 | `as` | `Expr 'as' Type`, left-assoc (`x as u32 as u64`) |
-| 11 | unary `- !`, `borrow`, `borrow mut` | prefix, right-assoc (`- -x`) |
+| 11 | unary `- !`, `borrow`, `borrow mut`, `move` | prefix, right-assoc (`- -x`) |
 | 12 | postfix: call `(...)`, member `.name` | |
 
 The ordering puts bitwise operators **above** comparisons (as in Rust and Swift), so

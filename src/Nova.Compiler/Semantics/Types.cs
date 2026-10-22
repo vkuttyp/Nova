@@ -88,6 +88,15 @@ public sealed class StructDefinition
     /// <summary>Set if the struct contains itself by value (N0227); such a struct has no layout.</summary>
     public bool IsRecursive { get; internal set; }
 
+    /// <summary>The body of the struct's <c>drop</c> block as a <c>borrow mut this</c> method, if any.</summary>
+    public HirFunction? DropFunction { get; internal set; }
+
+    /// <summary>Copy iff no drop block and all fields Copy (type-system.md §14.1). Set after members are resolved.</summary>
+    public bool IsCopy { get; internal set; } = true;
+
+    /// <summary>Has a drop block or a field that needs drop (type-system.md §14.1).</summary>
+    public bool NeedsDrop { get; internal set; }
+
     internal (int Size, int Align)? Layout { get; set; }
 
     public StructField? FindField(Symbol name) => _fields.Find(f => f.Name == name);
@@ -291,6 +300,24 @@ public sealed class TypeTable
         IntSuffix.USize => USize,
         _ => null,
     };
+
+    /// <summary>Copy types are duplicated by use; every other type is moved (type-system.md §14.1).</summary>
+    public static bool IsCopy(NovaType type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        return type.Kind switch
+        {
+            TypeKind.Struct => type.Struct!.IsCopy,
+            TypeKind.Reference => !type.IsMutableReference,
+            _ => true,
+        };
+    }
+
+    public static bool NeedsDrop(NovaType type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        return type.Struct is { NeedsDrop: true };
+    }
 
     /// <summary>Is every value of <paramref name="from"/> representable in <paramref name="to"/>? (type-system.md §7)</summary>
     public static bool IsLosslessCast(NovaType from, NovaType to)

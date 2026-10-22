@@ -1,0 +1,55 @@
+// Near-misses for O1-O5 (type-system.md §14): programs that must be accepted.
+struct Res { id: i32; drop { } }
+struct Pair { a: Res; b: Res; }
+struct Plain { x: i32; y: i32; }
+
+fn consume(r: Res) { }
+fn look(r: borrow Res) -> i32 => r.id;
+fn make(id: i32) -> Res => Res { id: id };
+
+fn reinitializeMovedField() -> i32 {
+    var p = Pair { a: make(1), b: make(2) };
+    consume(p.a);
+    p.a = make(3);
+    let q = p;
+    return look(q.a);
+}
+fn copyStructIsNotMoved() -> i32 {
+    let p = Plain { x: 1, y: 2 };
+    let q = p;
+    return p.x + q.y;
+}
+fn reassignAfterMove() -> i32 {
+    var r = make(1);
+    consume(r);
+    r = make(2);
+    return look(r);
+}
+fn moveOnOnePathThenReassign(flag: bool) -> i32 {
+    var r = make(1);
+    if (flag) { consume(r); r = make(2); }
+    return look(r);
+}
+fn movedFieldOtherFieldStillUsable() -> i32 {
+    let p = Pair { a: make(1), b: make(2) };
+    consume(p.a);
+    return look(p.b);
+}
+fn borrowEndsThenMove() {
+    let r = make(1);
+    let id = look(r);
+    consume(r);
+}
+fn returnMovesOut() -> Res {
+    let r = make(1);
+    return r;
+}
+fn usingIsBorrowable() -> i32 {
+    using u = make(5);
+    return look(u);
+}
+fn deferReadsLaterAssignment() {
+    var x: i32;
+    x = 1;
+    defer Console.writeLine(x);
+}

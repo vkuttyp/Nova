@@ -1,0 +1,13 @@
+struct File {
+    fd: i32;
+    fn close(this) { }
+    drop { Sys.close(this.fd); }
+}
+
+fn work(f: File) -> i32 {
+    using guard = File { fd: 3 };
+    defer Console.writeLine("done");
+    defer { cleanup(); }
+    let g = move f;
+    return g.fd;
+}

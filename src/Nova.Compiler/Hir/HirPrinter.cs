@@ -91,7 +91,7 @@ public sealed class HirPrinter
                 Nested("block", [.. block.Statements]);
                 break;
             case HirLocalDecl decl:
-                Line($"({(decl.Local.IsMutable ? "var" : "let")} {Local(decl.Local)}: {decl.Local.Type}" +
+                Line($"({(decl.Local.IsUsing ? "using" : decl.Local.IsMutable ? "var" : "let")} {Local(decl.Local)}: {decl.Local.Type}" +
                      (decl.Initializer is null ? ")" : $" = {Expr(decl.Initializer)})"));
                 break;
             case HirAssign assign:
@@ -126,6 +126,9 @@ public sealed class HirPrinter
             case HirExprStmt exprStmt:
                 Line($"(expr {Expr(exprStmt.Expression)})");
                 break;
+            case HirDefer defer:
+                Nested("defer", defer.Body);
+                break;
             default:
                 throw new InvalidOperationException($"unknown HIR statement {stmt.GetType().Name}");
         }
@@ -152,6 +155,7 @@ public sealed class HirPrinter
         HirBorrowTemp b => $"({(b.IsMutable ? "borrow-mut-temp" : "borrow-temp")} {Expr(b.Value)})",
         HirReborrow r => $"({(r.IsMutable ? "reborrow-mut" : "reborrow")} {Expr(r.Reference)})",
         HirDeref d => $"(deref {Expr(d.Reference)}):{d.Type}",
+        HirMove m => $"(move {Place(m.Place)})",
         HirError => "<error>",
         _ => throw new InvalidOperationException($"unknown HIR expression {expr.GetType().Name}"),
     };

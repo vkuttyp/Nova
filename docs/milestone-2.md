@@ -10,7 +10,7 @@ writes its spec section first, then the code and tests.
 |---|---|---|---|
 | **2a** | **Structs as plain-data value types**: declarations, struct literals, field read and write, nested structs, methods with a by-value `this`, static functions (`Point.origin()`), target layout with C static asserts | grammar §2, type-system §12 | **done 2026-10-22** |
 | 2b | **References**: `borrow T`, `borrow mut T`, borrow expressions, implicit call-site borrows and `mut x`, `borrow this` / `borrow mut this` receivers, auto-deref of field access. NIR places and loans. **NLL borrow checker** (B1–B5), return elision (E1–E2), no scoped fields (E3) | lifetimes.md, type-system §13 | **done 2026-10-22** |
-| 2c | **Move types and destruction**: `drop { }` blocks, implicit `Copy` (OD-7) versus move types, moves and `move x`, partial moves, init/move analysis on NIR (O2–O5, replacing the HIR flow analysis), drop elaboration with drop flags (O4), `using` (R3), `defer` | ownership.md §2–3, type-system §14 | planned |
+| 2c | **Move types and destruction**: `drop { }` blocks, implicit `Copy` (OD-7) versus move types, moves and `move x`, partial moves, init/move analysis on NIR (O2–O5, replacing the HIR flow analysis), drop elaboration with drop flags (O4), `using` (R3), `defer` | ownership.md §2–3, type-system §14 | **done 2026-10-22** |
 | 2d | **Enums and arrays**: `enum` with payloads, exhaustive `match`, fixed arrays `[T; N]`, `Slice<T>` / `SliceMut<T>` from arrays, bounds checks, `for x in slice` | grammar, type-system §15 | planned |
 
 ## Acceptance criteria (whole milestone; from `roadmap.md`)
@@ -63,9 +63,13 @@ are in `tests/corpus/check-pass/borrows-accepted.nova`.
 | E1 no return of local data | borrow-returns: 3 | `returnsFieldOfParameter` |
 | E2 return sources | borrow-returns: 2; reference-types: 5 | `returnsListedParameter` |
 | E3 no scoped fields | reference-types: struct field, constant | n/a (a type rule) |
-| O1–O5 | in 2c | in 2c |
+| O1 unique owner / O2 move de-initialises | moves: `useAfterMove`, `useAfterMoveIntoLocal`, `maybeMoved`, `movedInLoop`, `explicitMoveOfCopy`, `fieldThroughReference`, `wholeThroughReference`, `fieldOfDropType`, `fieldOfDropTypeTemporary` | moves-accepted: `reassignAfterMove`, `moveOnOnePathThenReassign`, `returnsMovesOut`, `borrowEndsThenMove` |
+| O3 definite initialisation | definite-assignment (5), field-of-unassigned, moves: `wholeAfterPartial` | moves-accepted: `deferReadsLaterAssignment`, `copyStructIsNotMoved` |
+| O4 exactly-once destruction | run tests check every drop's order and count: drop-order, drop-flags, drops-early-exit, drops-moves-and-returns, using-and-defer; also run under ASan | — |
+| O5 partial initialisation | moves: `wholeAfterPartial`; field-of-unassigned | moves-accepted: `reinitializeMovedField`, `movedFieldOtherFieldStillUsable` |
+| R3 using | moves: `fromUsing`, `fieldFromUsing` | moves-accepted: `usingIsBorrowable` |
+| Moves vs borrows (B2) | moves: `moveWhileBorrowed`, `moveFieldWhileWholeBorrowed` | moves-accepted: `borrowEndsThenMove` |
 
-Still to do for criterion 1:
-- O1–O5 (2c);
+Still to do:
 - the mutation suite (criterion 3);
-- raising the count to ≥ 120 by 2d.
+- raising the compile-fail count to ≥ 120 by 2d.

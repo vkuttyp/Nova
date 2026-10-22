@@ -67,7 +67,16 @@ public sealed class Compilation
             nir = NirBuilder.Build(hir, types);
             foreach (var function in nir.Functions)
             {
+                MoveChecker.Check(function, symbols, diagnostics);
                 BorrowChecker.Check(function, symbols, diagnostics);
+            }
+            if (!diagnostics.HasErrors)
+            {
+                // Destruction is inserted only into programs that passed every check (type-system.md §14.5).
+                foreach (var function in nir.Functions)
+                {
+                    DropElaborator.Elaborate(function, types);
+                }
             }
         }
         return new Compilation(units, symbols, types, diagnostics, hir, nir);

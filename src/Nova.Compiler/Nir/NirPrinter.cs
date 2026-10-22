@@ -75,6 +75,8 @@ public static class NirPrinter
         NirAssign a => $"{Place(a.Target, symbols)} = {Rvalue(a.Value, symbols)}",
         NirEval e => Rvalue(e.Value, symbols),
         NirStorageDead d => $"StorageDead({Local(d.Local, symbols)})",
+        NirDrop { Flag: null } d => $"Drop({Place(d.Place, symbols)})",
+        NirDrop d => $"Drop({Place(d.Place, symbols)}) if {Local(d.Flag!, symbols)}",
         _ => statement.ToString()!,
     };
 

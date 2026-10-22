@@ -20,6 +20,8 @@ internal sealed class BorrowChecker
         BorrowShared,
         BorrowMut,
         Dead,
+        /// <summary>A move out of a place: invalidates it like a write (type-system.md §14.3).</summary>
+        Move,
     }
 
     /// <summary>A loan. <see cref="Place"/> is null for the placeholder of a reference parameter.</summary>
@@ -138,7 +140,7 @@ internal sealed class BorrowChecker
     // ---- §4 Accesses ----
 
     private static IEnumerable<(AccessKind Kind, NirPlace Place)> OperandAccesses(NirOperand? operand) =>
-        operand is NirPlaceOperand place ? [(AccessKind.Read, place.Place)] : [];
+        operand is NirPlaceOperand place ? [(place.IsMove ? AccessKind.Move : AccessKind.Read, place.Place)] : [];
 
     private static IEnumerable<(AccessKind Kind, NirPlace Place)> RvalueAccesses(NirRvalue rvalue) => rvalue switch
     {
@@ -159,6 +161,7 @@ internal sealed class BorrowChecker
         NirAssign a => RvalueAccesses(a.Value).Append((AccessKind.Write, a.Target)),
         NirEval e => RvalueAccesses(e.Value),
         NirStorageDead d => [(AccessKind.Dead, new NirPlace(d.Local))],
+        NirDrop d => [(AccessKind.Dead, d.Place)],
         _ => [],
     };
 
@@ -189,7 +192,7 @@ internal sealed class BorrowChecker
     }
 
     private static bool Conflicts(Loan loan, AccessKind access) =>
-        loan.IsMutable || access is AccessKind.Write or AccessKind.BorrowMut or AccessKind.Dead;
+        loan.IsMutable || access is AccessKind.Write or AccessKind.BorrowMut or AccessKind.Dead or AccessKind.Move;
 
     // ---- §5 Liveness ----
 
@@ -255,6 +258,15 @@ internal sealed class BorrowChecker
             return;
         }
         var liveness = ComputeLiveness();
+        // Loans carried by a returned reference are judged by the return check (E1/E2, §7), not as
+        // "dropped while borrowed" when the function's locals end at the return.
+        var returned = _function.Blocks
+            .Select(b => b.Terminator)
+            .OfType<NirReturn>()
+            .Select(r => r.Value)
+            .OfType<NirPlaceOperand>()
+            .SelectMany(o => LoansOf(o.Place.Local))
+            .ToHashSet();
         foreach (var block in _function.Blocks)
         {
             var live = liveness[block];
@@ -271,7 +283,10 @@ internal sealed class BorrowChecker
                 {
                     foreach (var loan in liveLoans)
                     {
-                        if (Overlap(loan.Place!, place) && Conflicts(loan, kind) && _reported.Add((block, i, loan.Id)))
+                        // A reference going out of scope does not end what it refers to.
+                        var throughReference = kind == AccessKind.Dead
+                            && (loan.Place!.Projections.Any(p => p.IsDeref) || returned.Contains(loan.Id));
+                        if (!throughReference && Overlap(loan.Place!, place) && Conflicts(loan, kind) && _reported.Add((block, i, loan.Id)))
                         {
                             Report(loan, kind, place, span, block, i);
                         }
@@ -300,6 +315,7 @@ internal sealed class BorrowChecker
         var borrowKind = loan.IsMutable ? "mutably borrowed" : "borrowed";
         var (code, message) = kind switch
         {
+            AccessKind.Move => (DiagnosticCodes.WriteWhileBorrowed, $"cannot move out of {Quoted(place)} while {Quoted(loan.Place!)} is {borrowKind}"),
             AccessKind.Write => (DiagnosticCodes.WriteWhileBorrowed, $"cannot assign to {Quoted(place)} while {Quoted(loan.Place!)} is {borrowKind}"),
             AccessKind.BorrowShared or AccessKind.BorrowMut => (DiagnosticCodes.ConflictingBorrow,
                 $"cannot borrow {Quoted(place)}{(kind == AccessKind.BorrowMut ? " as mutable" : "")} while {Quoted(loan.Place!)} is {borrowKind}"),

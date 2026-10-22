@@ -1,0 +1,9 @@
+struct Res { id: i32; drop { Console.writeLine("must not print"); } }
+fn main() {
+    let r = Res { id: 1 };
+    let big: u8 = 255;
+    Console.writeLine("before");
+    let x = big + 1; // expect-panic: integer overflow
+    Console.writeLine(x);
+}
+// expect-stdout: before
