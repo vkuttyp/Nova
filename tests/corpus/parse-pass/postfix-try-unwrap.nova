@@ -1,0 +1,9 @@
+fn f() {
+    let a = g()?;
+    let b = g()!;
+    let c = h(x?)?.y!;
+    let d = -k()?;
+    let e = !m()!;
+    let n = a! == b!;
+    g()?;
+}

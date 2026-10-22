@@ -71,6 +71,11 @@ internal sealed class TypeChecker
     /// <summary>Array and slice element types named before Copy-ness was known; checked after <see cref="ComputeCopyAndDrop"/>.</summary>
     private readonly List<(NovaType Element, long Length, TextSpan Span, SourceText Source)> _pendingElements = [];
     private bool _copyKnown;
+    /// <summary>Nesting depth of deferred statements being checked: `?` may not appear in them (N0254).</summary>
+    private int _deferDepth;
+    private EnumEntry _allocError = null!;
+    private bool _allocErrorUsed;
+    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err"];
 
     public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics)
     {
@@ -89,6 +94,7 @@ internal sealed class TypeChecker
 
     public HirProgram Check()
     {
+        DeclareAllocError();
         // Struct names first, so every signature and field can refer to any struct.
         foreach (var unit in _units)
         {
@@ -142,8 +148,9 @@ internal sealed class TypeChecker
         }
 
         CheckMain();
+        // The built-in AllocError is emitted only if the program uses it.
         return new HirProgram([.. _functions], [.. _constants.Select(c => c.Hir)],
-            [.. _structs.Select(s => s.Type), .. _enums.Select(e => e.Type)]);
+            [.. _structs.Select(s => s.Type), .. _enums.Where(e => e != _allocError || _allocErrorUsed).Select(e => e.Type)]);
     }
 
     private string Name(Symbol symbol) => _symbols.GetName(symbol);
@@ -154,9 +161,37 @@ internal sealed class TypeChecker
 
     // ---- Declarations ----
 
+    /// <summary>The built-in <c>enum AllocError { OutOfMemory }</c> (type-system.md §17.1), declared like a user enum.</summary>
+    private void DeclareAllocError()
+    {
+        var source = new SourceText("<built-in>", "enum AllocError { OutOfMemory }");
+        var name = new Identifier(_symbols.Intern("AllocError"), new TextSpan(5, 10));
+        var variant = new Identifier(_symbols.Intern("OutOfMemory"), new TextSpan(18, 11));
+        var decl = new EnumDecl(Visibility.Public, name, [new VariantDecl(variant, [], variant.Span)], new TextSpan(0, source.Text.Length));
+        _allocError = new EnumEntry(decl, source, TypeTable.CreateEnum("AllocError", decl, source));
+        _items.Add(name.Name, _allocError);
+        _enums.Add(_allocError);
+    }
+
+    /// <summary>Reports N0201 if <paramref name="name"/> is a built-in name that items cannot take (type-system.md §17.1).</summary>
+    private bool IsReservedName(Identifier name)
+    {
+        var text = Name(name.Name);
+        if (!s_reservedNames.Contains(text) && !(text == "AllocError" && _items.ContainsKey(name.Name)))
+        {
+            return false;
+        }
+        Error(DiagnosticCodes.DuplicateItem, name.Span, $"'{text}' is a built-in name");
+        return true;
+    }
+
     private void Declare(Item item)
     {
         var name = item.Name.Name;
+        if (IsReservedName(item.Name))
+        {
+            return;
+        }
         if (_items.ContainsKey(name))
         {
             Error(DiagnosticCodes.DuplicateItem, item.Name.Span, $"'{Name(name)}' is already defined");
@@ -282,6 +317,10 @@ internal sealed class TypeChecker
     {
         var name = decl.Name.Name;
         var text = Name(name);
+        if (IsReservedName(decl.Name))
+        {
+            return;
+        }
         if (_types.Lookup(text) is not null)
         {
             Error(DiagnosticCodes.DuplicateItem, decl.Name.Span, $"'{text}' is the name of a built-in type");
@@ -301,6 +340,10 @@ internal sealed class TypeChecker
     {
         var name = decl.Name.Name;
         var text = Name(name);
+        if (IsReservedName(decl.Name))
+        {
+            return;
+        }
         if (_types.Lookup(text) is not null || _items.ContainsKey(name))
         {
             Error(DiagnosticCodes.DuplicateItem, decl.Name.Span, _types.Lookup(text) is not null
@@ -383,23 +426,25 @@ internal sealed class TypeChecker
     }
 
     /// <summary>The types an aggregate contains by value, with the declaring span (struct fields, enum payloads).</summary>
-    /// <remarks>An array contains its elements by value, so arrays are looked through.</remarks>
+    /// <remarks>
+    /// Arrays and results contain their element, <c>T</c> and <c>E</c> by value, so they are looked
+    /// through: only user structs and enums are nodes of the containment graph.
+    /// </remarks>
     private static IEnumerable<(NovaType Type, TextSpan Span, SourceText Source)> Contained(NovaType type) => type.Kind switch
     {
-        TypeKind.Struct => type.Struct!.Fields.Select(f => (ElementOf(f.Type), f.Span, type.Struct.Source)),
-        TypeKind.Enum => type.Enum!.Variants.SelectMany(v => v.Payload).Select(f => (ElementOf(f.Type), f.Span, type.Enum.Source)),
+        TypeKind.Struct => type.Struct!.Fields.SelectMany(f => Flatten(f.Type).Select(t => (t, f.Span, type.Struct.Source))),
+        TypeKind.Enum when type.Enum!.Source is { } source =>
+            type.Enum.Variants.SelectMany(v => v.Payload).SelectMany(f => Flatten(f.Type).Select(t => (t, f.Span, source))),
         _ => [],
     };
 
-    /// <summary>The innermost element type of nested arrays; any other type itself.</summary>
-    private static NovaType ElementOf(NovaType type)
+    /// <summary>The types a value of <paramref name="type"/> holds by value, looking through arrays and results.</summary>
+    private static IEnumerable<NovaType> Flatten(NovaType type) => type switch
     {
-        while (type.Kind == TypeKind.Array)
-        {
-            type = type.Element!;
-        }
-        return type;
-    }
+        { Kind: TypeKind.Array } => Flatten(type.Element!),
+        { Enum.ResultTypes: var (ok, err) } => Flatten(ok).Concat(Flatten(err)),
+        _ => [type],
+    };
 
     private static bool IsAggregate(NovaType type) => type.Kind is TypeKind.Struct or TypeKind.Enum;
 
@@ -516,11 +561,26 @@ internal sealed class TypeChecker
         if (syntax is GenericType generic)
         {
             var genericName = generic.Name.Parts.Length == 1 ? Name(generic.Name.Parts[0].Name) : "";
+            if (genericName == "Result" && generic.Arguments.Length == 2)
+            {
+                var ok = ResolveType(generic.Arguments[0], allowVoid: true);
+                var err = ResolveType(generic.Arguments[1], allowVoid: false);
+                foreach (var (argument, argumentSyntax) in new[] { (ok, generic.Arguments[0]), (err, generic.Arguments[1]) })
+                {
+                    if (argument.IsReference)
+                    {
+                        Error(DiagnosticCodes.ReferenceNotAllowed, argumentSyntax.Span, "'Result' cannot hold a reference or slice in v0");
+                        return _types.Error;
+                    }
+                }
+                return ok.IsBottom || err.IsBottom ? _types.Error : ResultOf(ok, err);
+            }
             if (genericName is not ("Slice" or "SliceMut") || generic.Arguments.Length != 1)
             {
                 Error(DiagnosticCodes.UnknownType, generic.Span, genericName is "Slice" or "SliceMut"
                     ? $"'{genericName}' takes one type argument: '{genericName}<T>'"
-                    : "only 'Slice<T>' and 'SliceMut<T>' take type arguments");
+                    : genericName == "Result" ? "'Result' takes two type arguments: 'Result<T, E>'"
+                    : "only 'Slice<T>', 'SliceMut<T>' and 'Result<T, E>' take type arguments");
                 return _types.Error;
             }
             var element = ResolveType(generic.Arguments[0], allowVoid: false);
@@ -542,7 +602,7 @@ internal sealed class TypeChecker
         var type = _types.Lookup(text) ?? _items.GetValueOrDefault(named.Name.Parts[0].Name) switch
         {
             StructEntry s => s.Type,
-            EnumEntry e => e.Type,
+            EnumEntry e => Used(e).Type,
             _ => null,
         };
         if (type is null)
@@ -556,6 +616,90 @@ internal sealed class TypeChecker
             return _types.Error;
         }
         return type;
+    }
+
+    private EnumEntry Used(EnumEntry entry)
+    {
+        _allocErrorUsed |= entry == _allocError;
+        return entry;
+    }
+
+    private NovaType ResultOf(NovaType ok, NovaType err) =>
+        _types.ResultOf(ok, err, _symbols.Intern("Ok"), _symbols.Intern("Err"), _symbols.Intern("_0"));
+
+    /// <summary>The variant of a built-in <c>Result</c> named by <paramref name="name"/> ("Ok" or "Err"), if it is one.</summary>
+    private static EnumVariant? ResultVariant(NovaType result, Symbol name) =>
+        result.Enum is { ResultTypes: not null } definition ? definition.FindVariant(name) : null;
+
+    /// <summary>
+    /// <c>Ok(e)</c>, <c>Ok()</c> or <c>Err(e)</c> against the expected <c>Result</c> type (type-system.md §17.2).
+    /// </summary>
+    private HirExpr CheckResultValue(CallExpr call, NameExpr name, NovaType? expected)
+    {
+        if (expected?.Enum is not { ResultTypes: not null } || ResultVariant(expected, name.Name.Name) is not { } variant)
+        {
+            if (expected is null || !expected.IsBottom)
+            {
+                Error(DiagnosticCodes.ResultTypeUnknown, call.Span, expected is null
+                    ? $"the 'Result' type of '{Name(name.Name.Name)}(...)' is unknown here; give the variable or parameter a 'Result<T, E>' type"
+                    : $"'{Name(name.Name.Name)}(...)' makes a 'Result', but '{expected}' is expected here");
+            }
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (call.Arguments.Length != variant.Payload.Count)
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, variant.Payload.Count == 0
+                ? $"'{Name(variant.Name)}' of '{expected}' takes no value: write '{Name(variant.Name)}()'"
+                : $"'{Name(variant.Name)}' of '{expected}' takes one value");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var payload = call.Arguments.Length == 0 ? [] : ImmutableArray.Create(CheckExpr(call.Arguments[0], variant.Payload[0].Type));
+        return new HirEnumValue(variant, payload, expected, call.Span);
+    }
+
+    /// <summary>The operand of <c>e?</c> or <c>e!</c>: a value of a <c>Result</c> type (N0262).</summary>
+    private HirExpr? CheckResultOperand(Expr operand, string text)
+    {
+        var value = Synth(operand, null);
+        if (value.Type.IsBottom)
+        {
+            return null;
+        }
+        if (value.Type.Enum is not { ResultTypes: not null })
+        {
+            Error(DiagnosticCodes.NotAResult, operand.Span, value.Type.Pointee?.Enum is { ResultTypes: not null }
+                ? $"'{text}' needs a 'Result' value, but this is a reference to one; '{text}' consumes the result"
+                : $"'{text}' needs a 'Result<T, E>' value, found '{value.Type}'");
+            return null;
+        }
+        return value;
+    }
+
+    private HirExpr CheckTry(TryExpr expr)
+    {
+        var operand = CheckResultOperand(expr.Operand, "?");
+        if (operand is null)
+        {
+            return ErrorResult(expr.Span);
+        }
+        var (ok, err) = operand.Type.Enum!.ResultTypes!.Value;
+        var returnType = _function?.ReturnType;
+        if (_deferDepth > 0)
+        {
+            Error(DiagnosticCodes.JumpInDefer, expr.Span, "a deferred statement cannot contain '?': it would return from the function");
+        }
+        else if (returnType?.Enum is not { ResultTypes: var (_, returnErr) } || !ReferenceEquals(returnErr, err))
+        {
+            if (returnType is null || !returnType.IsBottom)
+            {
+                Error(DiagnosticCodes.TryReturnMismatch, expr.Span, returnType?.Enum is { ResultTypes: var (_, other) }
+                    ? $"'?' would return 'Err' of type '{err}', but '{Name(_function!.Name)}' returns errors of type '{other}' (the types must be the same in v0)"
+                    : $"'?' returns 'Err' from the function, so '{(_function is null ? "this" : Name(_function.Name))}' must return 'Result<_, {err}>'");
+            }
+        }
+        return new HirTry(operand, ok, expr.Span);
     }
 
     /// <summary>Lengths fit in 48 bits, like every size in memory-model.md §7.</summary>
@@ -606,12 +750,9 @@ internal sealed class TypeChecker
     }
 
     /// <summary>False if the type contains a recursive aggregate, which has no layout (N0227 was reported).</summary>
-    private static bool HasLayout(NovaType type)
-    {
-        var inner = ElementOf(type);
-        return inner.Struct is not { IsRecursive: true } && inner.Enum is not { IsRecursive: true }
-            && Contained(inner).All(c => HasLayout(c.Type));
-    }
+    private static bool HasLayout(NovaType type) => Flatten(type).All(inner =>
+        inner.Struct is not { IsRecursive: true } && inner.Enum is not { IsRecursive: true }
+        && Contained(inner).All(c => HasLayout(c.Type)));
 
     private void CheckMain()
     {
@@ -841,7 +982,9 @@ internal sealed class TypeChecker
                 return CheckMatch(match);
             case DeferStmt defer:
             {
+                _deferDepth++;
                 var body = CheckStmt(defer.Body);
+                _deferDepth--;
                 if (FindJump(defer.Body) is { } jump)
                 {
                     Error(DiagnosticCodes.JumpInDefer, jump.Span,
@@ -998,12 +1141,27 @@ internal sealed class TypeChecker
             return null;
         }
         var parts = pattern.Path.Parts;
-        if (parts.Length != 2 || parts[0].Name != _symbols.Intern(type.Name))
+        EnumVariant variant;
+        if (type.Enum!.ResultTypes is not null)
+        {
+            // Result patterns have no type prefix: Ok(x), Err(e) (type-system.md §17.3).
+            if (parts.Length != 1 || ResultVariant(type, parts[0].Name) is not { } resultVariant)
+            {
+                Error(DiagnosticCodes.TypeMismatch, pattern.Path.Span, $"expected 'Ok(…)' or 'Err(…)' for a value of type '{type}'");
+                return null;
+            }
+            variant = resultVariant;
+        }
+        else if (parts.Length != 2 || parts[0].Name != _symbols.Intern(type.Name))
         {
             Error(DiagnosticCodes.TypeMismatch, pattern.Path.Span, $"expected a variant of '{type}', written '{type}.Variant'");
             return null;
         }
-        if (type.Enum!.FindVariant(parts[1].Name) is not { } variant)
+        else if (type.Enum.FindVariant(parts[1].Name) is { } found)
+        {
+            variant = found;
+        }
+        else
         {
             Error(DiagnosticCodes.UndefinedName, parts[1].Span, $"'{type}' has no variant named '{Name(parts[1].Name)}'");
             return null;
@@ -1064,7 +1222,7 @@ internal sealed class TypeChecker
 
     private HirExpr CheckExpressionStatement(Expr expr)
     {
-        if (expr is not CallExpr)
+        if (expr is not (CallExpr or TryExpr { Operand: CallExpr } or UnwrapExpr { Operand: CallExpr }))
         {
             Error(DiagnosticCodes.StatementNotCall, expr.Span, "only calls can be used as statements");
             return ErrorResult(expr.Span);
@@ -1584,8 +1742,20 @@ internal sealed class TypeChecker
                 return SynthBinary(binary, expected);
             case CastExpr cast:
                 return SynthCast(cast);
+            case CallExpr { Callee: NameExpr { TypeArguments.IsEmpty: true } constructor } call
+                when Name(constructor.Name.Name) is "Ok" or "Err" && Lookup(constructor.Name.Name) is null:
+                return CheckResultValue(call, constructor, expected);
             case CallExpr call:
                 return SynthCall(call);
+            case TryExpr tryExpr:
+                return CheckTry(tryExpr);
+            case UnwrapExpr unwrap:
+            {
+                var operand = CheckResultOperand(unwrap.Operand, "!");
+                return operand is null
+                    ? ErrorResult(unwrap.Span)
+                    : new HirUnwrap(operand, operand.Type.Enum!.ResultTypes!.Value.Ok, unwrap.Span);
+            }
             case MemberExpr member:
                 return SynthMember(member);
             case ErrorExpr:
@@ -2042,6 +2212,7 @@ internal sealed class TypeChecker
     /// <summary><c>E.V</c> or <c>E.V(payload…)</c> (type-system.md §15.1).</summary>
     private HirExpr CheckEnumValue(EnumEntry entry, MemberExpr member, ImmutableArray<Expr> arguments, TextSpan span)
     {
+        Used(entry);
         if (entry.Type.Enum!.FindVariant(member.Member.Name) is not { } variant)
         {
             Error(DiagnosticCodes.UndefinedName, member.Member.Span, $"'{entry.Type}' has no variant named '{Name(member.Member.Name)}'");

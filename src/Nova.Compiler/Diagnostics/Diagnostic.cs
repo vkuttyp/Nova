@@ -96,6 +96,11 @@ public static class DiagnosticCodes
     public const string NonCopyBinding = "N0258";
     public const string InvalidArray = "N0259";
 
+    // Results and the heap (type-system.md §17-§18): N0260-N0269
+    public const string ResultTypeUnknown = "N0260";
+    public const string TryReturnMismatch = "N0261";
+    public const string NotAResult = "N0262";
+
     // Build: N0300-N0399
     public const string MissingMain = "N0300";
 }

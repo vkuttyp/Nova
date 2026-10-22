@@ -1,0 +1,17 @@
+enum Code { Bad }
+struct Res { id: i32; drop { } }
+
+fn make(ok: bool) -> Result<Res, Code> {
+    if (ok) { return Ok(Res { id: 1 }); }
+    return Err(Code.Bad);
+}
+
+fn use2() -> Result<void, Code> {
+    let r = make(true)?;
+    return Ok();
+}
+
+fn main() -> i32 {
+    use2()!;
+    return 0;
+}

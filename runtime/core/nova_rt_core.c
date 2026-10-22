@@ -77,6 +77,7 @@ _Noreturn void nova_panic(nv_panic_kind kind, nv_loc loc) {
     case NV_PANIC_UNREACHABLE: reason = "entered unreachable code"; break;
     case NV_PANIC_INDEX: reason = "index out of bounds"; break;
     case NV_PANIC_SLICE: reason = "slice range out of bounds"; break;
+    case NV_PANIC_UNWRAP: reason = "unwrapped an Err value"; break;
     default: reason = "unknown panic"; break;
     }
     write_err_cstr("nova panic: ");

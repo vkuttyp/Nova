@@ -46,6 +46,7 @@ Status: Milestone 0 proposal. Applies from M1. CosmoOS-specific flags are covere
 | `char` | `uint32_t` |
 | `f32`/`f64` | `float`/`double` (`_Static_assert(sizeof(double)==8)`); **kernel profile forbids floats** unless the target profile enables them (`cosmoos/profiles.md`) |
 | `struct S` | `typedef struct nvT_S nvT_S;` then `struct nvT_S { … }` with fields `f_<name>` in declaration order, structs emitted after the structs they contain. Each struct is followed by `_Static_assert`s on `sizeof`, `_Alignof` and every field's `offsetof`, against `TypeTable.LayoutOf`. An empty struct gets a `uint8_t nv_empty` member (C has no empty structs). `@repr(C)` is the default in v0; field reordering is an M9 opt-in (`@repr(auto)`) |
+| `Result<T, E>` (M3a) | like an enum, named `nvR_<T><E>` with the element codes below (`Result<Res, Code>` → `nvR_S3ResE4Code`, `void` → `v`). Its drop glue is `nvD_R<T><E>`. `e!` on `Err` calls `nova_panic(NV_PANIC_UNWRAP, loc)` |
 | `enum E { A, B(T) }` | `struct { uint32_t tag; union { T B; } u; }`. The tag width is the smallest unsigned that fits, unless `@repr(u8)` etc. |
 | `T?` | `T*`-niche for `Box`/references, else `struct { bool has; T value; }` |
 | `borrow T` | `const T *`. `borrow mut T` → `T *` (`restrict` only where the borrow checker proves exclusivity *and* M9 enables it). `Ref(k, p)` is `&p`, a deref place is `(*r)`, and reference locals are zero-initialised to `NULL` (never read before assignment) |

@@ -129,15 +129,19 @@ public sealed class EnumVariant
 
 public sealed class EnumDefinition
 {
-    internal EnumDefinition(EnumDecl syntax, SourceText source)
+    internal EnumDefinition(EnumDecl? syntax, SourceText? source)
     {
         Syntax = syntax;
         Source = source;
     }
 
-    public EnumDecl Syntax { get; }
+    /// <summary>The declaration; null for the built-in <c>Result&lt;T, E&gt;</c>.</summary>
+    public EnumDecl? Syntax { get; }
 
-    public SourceText Source { get; }
+    public SourceText? Source { get; }
+
+    /// <summary>For <c>Result&lt;T, E&gt;</c> (type-system.md §17): T and E. Null for user enums.</summary>
+    public (NovaType Ok, NovaType Err)? ResultTypes { get; internal set; }
 
     public List<EnumVariant> Variants { get; } = [];
 
@@ -367,6 +371,35 @@ public sealed class TypeTable
     /// <summary><c>Slice&lt;T&gt;</c> or <c>SliceMut&lt;T&gt;</c>.</summary>
     public NovaType SliceOf(NovaType element, bool isMutable) => ReferenceTo(ArrayOf(element, -1), isMutable);
 
+    private readonly Dictionary<(NovaType, NovaType), NovaType> _results = [];
+
+    /// <summary>
+    /// The unique <c>Result&lt;ok, err&gt;</c>: a built-in enum with variants <c>Ok(ok)</c> (no payload for
+    /// <c>void</c>) and <c>Err(err)</c> (type-system.md §17.1). The caller supplies the interned names.
+    /// </summary>
+    public NovaType ResultOf(NovaType ok, NovaType err, Symbol okName, Symbol errName, Symbol payloadName)
+    {
+        ArgumentNullException.ThrowIfNull(ok);
+        ArgumentNullException.ThrowIfNull(err);
+        if (!_results.TryGetValue((ok, err), out var result))
+        {
+            var definition = new EnumDefinition(null, null) { ResultTypes = (ok, err) };
+            var okVariant = new EnumVariant(okName, 0, default);
+            if (ok.Kind != TypeKind.Void)
+            {
+                okVariant.Payload.Add(new StructField(payloadName, ok, 0, default));
+            }
+            var errVariant = new EnumVariant(errName, 1, default);
+            errVariant.Payload.Add(new StructField(payloadName, err, 0, default));
+            definition.Variants.Add(okVariant);
+            definition.Variants.Add(errVariant);
+            result = new NovaType($"Result<{ok.Name}, {err.Name}>", definition);
+            _results.Add((ok, err), result);
+            _composites.Add(result);
+        }
+        return result;
+    }
+
     /// <summary>The unique reference type to <paramref name="pointee"/> (types are compared by reference).</summary>
     public NovaType ReferenceTo(NovaType pointee, bool isMutable)
     {
@@ -500,6 +533,7 @@ public sealed class TypeTable
         return type.Kind switch
         {
             TypeKind.Struct => type.Struct!.IsCopy,
+            TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => IsCopy(ok) && IsCopy(err),
             TypeKind.Enum => type.Enum!.IsCopy,
             TypeKind.Reference => !type.IsMutableReference,
             _ => true,
@@ -509,6 +543,10 @@ public sealed class TypeTable
     public static bool NeedsDrop(NovaType type)
     {
         ArgumentNullException.ThrowIfNull(type);
+        if (type.Enum?.ResultTypes is var (ok, err))
+        {
+            return NeedsDrop(ok) || NeedsDrop(err); // T and E may be declared later than the Result is named
+        }
         return type.Struct is { NeedsDrop: true } || type.Enum is { NeedsDrop: true };
     }
 

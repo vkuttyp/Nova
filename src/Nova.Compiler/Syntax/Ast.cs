@@ -268,4 +268,10 @@ public sealed record IndexExpr(Expr Target, Expr Index, TextSpan Span) : Expr(Sp
 /// <summary><c>a[lo..hi]</c>; either bound may be absent (type-system.md §16.3).</summary>
 public sealed record SliceExpr(Expr Target, Expr? Low, Expr? High, TextSpan Span) : Expr(Span);
 
+/// <summary><c>e?</c>: propagate an <c>Err</c> (type-system.md §17.4).</summary>
+public sealed record TryExpr(Expr Operand, TextSpan Span) : Expr(Span);
+
+/// <summary><c>e!</c>: unwrap an <c>Ok</c> or panic.</summary>
+public sealed record UnwrapExpr(Expr Operand, TextSpan Span) : Expr(Span);
+
 public sealed record FieldInit(Identifier Name, Expr Value, TextSpan Span) : SyntaxNode(Span);

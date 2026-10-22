@@ -1,0 +1,32 @@
+// Discarded values and the temporaries of unfinished statements are destroyed exactly once (O4).
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+enum Holder { One(Res), Nothing }
+fn make(id: i32) -> Res => Res { id: id };
+fn hold(id: i32) -> Holder => Holder.One(Res { id: id });
+
+fn returnsInArm() -> i32 {
+    match (hold(1)) {
+        _ => { return 1; }
+    }
+}
+
+fn main() {
+    make(0); // discarded: destroyed at the end of the statement
+    Console.writeLine("after discard");
+    returnsInArm();
+    var i = 0;
+    while (i < 2) {
+        i += 1;
+        match (hold(10 + i)) {
+            Holder.One(_) => { if (i == 1) { continue; } break; }
+            Holder.Nothing => { }
+        }
+    }
+    Console.writeLine("end");
+}
+// expect-stdout: drop 0
+// expect-stdout: after discard
+// expect-stdout: drop 1
+// expect-stdout: drop 11
+// expect-stdout: drop 12
+// expect-stdout: end

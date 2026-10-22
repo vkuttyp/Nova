@@ -20,6 +20,11 @@ public sealed class NirBuilder
     /// <summary>Open scopes; each entry is a local (ends with StorageDead) or a deferred statement (type-system.md §14.7).</summary>
     private readonly List<List<object>> _scopes = [];
     private List<NirLocal>? _statementTemps;
+    /// <summary>
+    /// Temporaries of statements still being lowered, innermost last, with the index of the scope they
+    /// belong to. An early exit (return, break, continue, `?`) ends them with that scope.
+    /// </summary>
+    private readonly List<(List<NirLocal> Temps, int Scope)> _openTemps = [];
     private NirBlock? _current;
     private TextSpan _span;
 
@@ -119,6 +124,18 @@ public sealed class NirBuilder
         var top = _scopes.Count - 1;
         for (var i = top; i >= depth; i--)
         {
+            // Temporaries of unfinished statements in this scope end before its locals.
+            for (var k = _openTemps.Count - 1; k >= 0 && _current is not null; k--)
+            {
+                if (_openTemps[k].Scope == i)
+                {
+                    var temps = _openTemps[k].Temps;
+                    for (var t = temps.Count - 1; t >= 0; t--)
+                    {
+                        Emit(new NirStorageDead(temps[t]));
+                    }
+                }
+            }
             var scope = _scopes[i];
             for (var j = scope.Count - 1; j >= 0 && _current is not null; j--)
             {
@@ -144,7 +161,9 @@ public sealed class NirBuilder
     {
         var saved = _statementTemps;
         _statementTemps = [];
+        _openTemps.Add((_statementTemps, _scopes.Count - 1));
         lower();
+        _openTemps.RemoveAt(_openTemps.Count - 1);
         if (_current is not null)
         {
             for (var i = _statementTemps.Count - 1; i >= 0; i--)
@@ -153,6 +172,27 @@ public sealed class NirBuilder
             }
         }
         _statementTemps = saved;
+    }
+
+    /// <summary>
+    /// Returns from the function: the value goes into a local that no scope owns, then every open
+    /// statement's temporaries and every scope end (drops and deferred statements), then the return.
+    /// </summary>
+    private void EmitReturn(NirRvalue? value)
+    {
+        NirOperand? result = null;
+        if (value is not null)
+        {
+            var local = new NirLocal(_locals.Count, value.Type, null);
+            _locals.Add(local);
+            Emit(new NirAssign(new NirPlace(local), value));
+            result = Read(new NirPlace(local));
+        }
+        EmitStorageDead(0);
+        if (_current is not null)
+        {
+            Terminate(new NirReturn(result));
+        }
     }
 
     // ---- Statements ----
@@ -264,32 +304,17 @@ public sealed class NirBuilder
             {
                 // The value is computed first and moved into a local that no scope owns; then the
                 // statement's temporaries end, then every scope (drops and defers), then the return.
-                NirOperand? value = null;
                 var saved = _statementTemps;
                 _statementTemps = [];
-                if (ret.Value is not null)
+                _openTemps.Add((_statementTemps, _scopes.Count - 1));
+                var computed = ret.Value is null ? null : LowerOperand(ret.Value);
+                if (ret.Value is null || computed is not null)
                 {
-                    if (LowerOperand(ret.Value) is not { } computed)
-                    {
-                        _statementTemps = saved;
-                        break; // the value never completes
-                    }
-                    var result = new NirLocal(_locals.Count, computed.Type, null);
-                    _locals.Add(result);
-                    Emit(new NirAssign(new NirPlace(result), new NirUse(computed)));
-                    value = Read(new NirPlace(result));
+                    _span = ret.Span;
+                    EmitReturn(computed is null ? null : new NirUse(computed));
                 }
-                for (var i = _statementTemps.Count - 1; i >= 0; i--)
-                {
-                    Emit(new NirStorageDead(_statementTemps[i]));
-                }
+                _openTemps.RemoveAt(_openTemps.Count - 1);
                 _statementTemps = saved;
-                _span = ret.Span;
-                EmitStorageDead(0);
-                if (_current is not null)
-                {
-                    Terminate(new NirReturn(value));
-                }
                 break;
             }
             case HirDefer defer:
@@ -297,6 +322,13 @@ public sealed class NirBuilder
                 break;
             case HirMatch match:
                 WithStatementTemps(() => LowerMatch(match));
+                break;
+            case HirExprStmt { Expression: HirTry or HirUnwrap } resultStmt when resultStmt.Expression.Type.Kind == TypeKind.Void:
+                WithStatementTemps(() => LowerResultAccess(resultStmt.Expression));
+                break;
+            case HirExprStmt exprStmt when TypeTable.NeedsDrop(exprStmt.Expression.Type):
+                // A discarded value that needs drop is a temporary: destroyed at the end of the statement (§17.5).
+                WithStatementTemps(() => AssignRvalue(new NirPlace(NewTemp(exprStmt.Expression.Type)), exprStmt.Expression));
                 break;
             case HirExprStmt exprStmt:
                 WithStatementTemps(() =>
@@ -675,6 +707,16 @@ public sealed class NirBuilder
                 return LowerPlace(move.Place) is { } moved ? new NirPlaceOperand(moved, IsMove: true) : null;
             case HirIndex index:
                 return LowerPlace(index) is { } element ? Read(element) : null;
+            case HirTry or HirUnwrap:
+            {
+                // The Ok payload, moved (or copied) out of the result: the result is consumed (§17.4).
+                if (LowerResultAccess(expr) is not { } result)
+                {
+                    return null;
+                }
+                var ok = result.Type.Enum!.Variants[0];
+                return Read(result.Project(Projection.Downcast(ok)).Field(ok.Payload[0]));
+            }
             case HirFieldAccess field:
             {
                 // A field of a place is itself a place; a field of any other value reads from a temporary.
@@ -763,7 +805,7 @@ public sealed class NirBuilder
                 }
                 return new NirRef(reborrow.IsMutable, reference.Place.Deref(), reborrow.Type);
             }
-            case HirFieldAccess or HirDeref or HirIndex:
+            case HirFieldAccess or HirDeref or HirIndex or HirTry or HirUnwrap:
             {
                 var operand = LowerOperand(expr);
                 return operand is null ? null : new NirUse(operand);
@@ -893,8 +935,49 @@ public sealed class NirBuilder
         HirSlice s => s.Base.Projections.Any(p => p.Index is HirExpr index && ContainsCall(index))
                       || (s.Low is not null && ContainsCall(s.Low)) || (s.High is not null && ContainsCall(s.High)),
         HirSliceLength l => ContainsCall(l.Slice),
+        HirTry t => ContainsCall(t.Operand),
+        HirUnwrap u => ContainsCall(u.Operand),
         _ => false,
     };
+
+    /// <summary>
+    /// <c>e?</c> / <c>e!</c> (type-system.md §17.4): moves the result into a temporary and switches on its
+    /// tag. On <c>Err</c>, <c>?</c> returns <c>Err(payload)</c> (with every open temporary and scope ended)
+    /// and <c>!</c> panics. Returns the temporary, in the <c>Ok</c> block; null if the operand never completes.
+    /// </summary>
+    private NirPlace? LowerResultAccess(HirExpr expr)
+    {
+        var (operandExpr, propagate) = expr is HirTry t ? (t.Operand, true) : (((HirUnwrap)expr).Operand, false);
+        if (LowerOperand(operandExpr) is not { } operand)
+        {
+            return null;
+        }
+        _span = expr.Span;
+        var result = new NirPlace(NewTemp(operand.Type));
+        Emit(new NirAssign(result, new NirUse(operand)));
+        var tag = NewTemp(_types.U32);
+        Emit(new NirAssign(new NirPlace(tag), new NirDiscriminant(result, _types.U32)));
+        var okBlock = NewBlock();
+        var errBlock = NewBlock();
+        Terminate(new NirSwitch(new NirPlaceOperand(tag), [(0, okBlock)], errBlock));
+
+        _current = errBlock;
+        if (propagate)
+        {
+            var err = operand.Type.Enum!.Variants[1];
+            var payload = Read(result.Project(Projection.Downcast(err)).Field(err.Payload[0]));
+            var returnType = _function.ReturnType;
+            EmitReturn(new NirEnumAggregate(returnType.Enum!.Variants[1], [payload], returnType));
+        }
+        else
+        {
+            Terminate(new NirPanic(NirPanicKind.Unwrap));
+        }
+
+        _current = okBlock;
+        _span = expr.Span;
+        return result;
+    }
 
     /// <summary>
     /// <c>a[lo..hi]</c>: the base place, then the bounds left to right, then the range check

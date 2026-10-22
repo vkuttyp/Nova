@@ -1,0 +1,27 @@
+enum ParseError { Empty, BadDigit(u8) }
+
+fn digit(c: u8) -> Result<u32, ParseError> {
+    if (c < 48u8) { return Err(ParseError.BadDigit(c)); }
+    return Ok((c - 48u8) as u32);
+}
+
+fn both(a: u8, b: u8) -> Result<u32, ParseError> => Ok(digit(a)? + digit(b)?);
+
+fn fails() -> Result<void, AllocError> {
+    let r: Result<void, AllocError> = Err(AllocError.OutOfMemory);
+    return r;
+}
+
+fn nothing() -> Result<void, AllocError> {
+    fails()?;
+    return Ok();
+}
+
+fn main() {
+    let x = both(49u8, 50u8)!;
+    let nested: Result<Result<i32, ParseError>, AllocError> = Ok(Ok(3));
+    match (nested) {
+        Ok(inner) => { let v = inner!; }
+        Err(_) => { }
+    }
+}

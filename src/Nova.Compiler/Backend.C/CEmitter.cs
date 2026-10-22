@@ -84,7 +84,7 @@ public sealed class CEmitter
     /// </summary>
     private void EmitStructs()
     {
-        var aggregates = _program.Structs.Concat(_types.Composites).ToList();
+        var aggregates = Aggregates.ToList();
         if (aggregates.Count == 0)
         {
             return;
@@ -210,12 +210,19 @@ public sealed class CEmitter
 
     private string FieldName(StructField field) => "f_" + _symbols.GetName(field.Name);
 
-    /// <summary>The drop glue of a struct that needs drop: its drop block, then its fields in declaration order.</summary>
-    private static string DropGlueName(NovaType type) => $"nvD_{type.Name.Length}{type.Name}";
+    /// <summary>
+    /// The drop glue of a type that needs drop: <c>nvD_&lt;length&gt;&lt;Name&gt;</c> for user structs and enums,
+    /// <c>nvD_&lt;mangled&gt;</c> for built-in instantiations (which start with a letter, so they cannot collide).
+    /// </summary>
+    private static string DropGlueName(NovaType type) =>
+        type.Enum?.ResultTypes is not null ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
+
+    /// <summary>User structs and enums, then the built-in instantiations, in a deterministic order.</summary>
+    private IEnumerable<NovaType> Aggregates => _program.Structs.Concat(_types.Composites);
 
     private void EmitDropGluePrototypes()
     {
-        foreach (var type in _program.Structs.Where(TypeTable.NeedsDrop))
+        foreach (var type in Aggregates.Where(TypeTable.NeedsDrop))
         {
             Line($"static NV_UNUSED void {DropGlueName(type)}({CTypeName(type)} *);");
         }
@@ -223,7 +230,7 @@ public sealed class CEmitter
 
     private void EmitDropGlue()
     {
-        foreach (var type in _program.Structs.Where(TypeTable.NeedsDrop))
+        foreach (var type in Aggregates.Where(TypeTable.NeedsDrop))
         {
             if (type.Enum is { } enumDefinition)
             {
@@ -405,6 +412,9 @@ public sealed class CEmitter
             case NirExit exit:
                 Line($"    nova_exit({Operand(exit.Code)});");
                 break;
+            case NirPanic:
+                Line($"    nova_panic(NV_PANIC_UNWRAP, {Location(function.Source.Source, terminator.Span)});");
+                break;
             case NirUnreachable:
                 Line($"    nova_panic(NV_PANIC_UNREACHABLE, {Location(function.Source.Source, function.Source.Syntax.Name.Span)});");
                 break;
@@ -581,6 +591,7 @@ public sealed class CEmitter
         TypeKind.Void => "void",
         TypeKind.Integer => $"{(type.IsSigned ? "int" : "uint")}{type.Bits}_t",
         TypeKind.Struct => $"nvT_{type.Name}",
+        TypeKind.Enum when type.Enum!.ResultTypes is not null => $"nvR_{Mangle(type)[1..]}",
         TypeKind.Enum => $"nvE_{type.Name}",
         TypeKind.Reference when type.IsSlice => $"nvS{(type.IsMutableReference ? "m" : "l")}_{Mangle(type.Pointee!.Element!)}",
         TypeKind.Reference => type.IsMutableReference ? $"{CTypeName(type.Pointee!)} *" : $"const {CTypeName(type.Pointee!)} *",
@@ -589,14 +600,18 @@ public sealed class CEmitter
     };
 
     /// <summary>
-    /// An element type in an array or slice type name. Struct and enum names carry their length, so
-    /// the names cannot collide: <c>[[i32; 3]; 2]</c> is <c>nvA2_A3_i32</c>, <c>Slice&lt;Point&gt;</c> is <c>nvSl_S5Point</c>.
+    /// A type inside the name of an array, slice or result type. Struct and enum names carry their
+    /// length and every other code is prefix-free, so concatenations cannot collide:
+    /// <c>[[i32; 3]; 2]</c> is <c>nvA2_A3_i32</c>, <c>Slice&lt;Point&gt;</c> is <c>nvSl_S5Point</c>,
+    /// <c>Result&lt;void, E&gt;</c> is <c>nvR_vE1E</c>.
     /// </summary>
     private static string Mangle(NovaType type) => type.Kind switch
     {
         TypeKind.Struct => $"S{type.Name.Length}{type.Name}",
+        TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => $"R{Mangle(ok)}{Mangle(err)}",
         TypeKind.Enum => $"E{type.Name.Length}{type.Name}",
         TypeKind.Array => $"A{type.ArrayLength}_{Mangle(type.Element!)}",
+        TypeKind.Void => "v",
         _ => type.Name,
     };
 

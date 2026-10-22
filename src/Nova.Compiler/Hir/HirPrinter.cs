@@ -194,6 +194,8 @@ public sealed class HirPrinter
         HirIndex i => $"(index {Expr(i.Target)} {Expr(i.Index)}):{i.Type}",
         HirSlice s => $"({(s.IsMutable ? "slice-mut" : "slice")} {Place(s.Base)} {(s.Low is null ? "_" : Expr(s.Low))} {(s.High is null ? "_" : Expr(s.High))}):{s.Type}",
         HirSliceLength l => $"(length {Expr(l.Slice)}):{l.Type}",
+        HirTry t => $"(try {Expr(t.Operand)}):{t.Type}",
+        HirUnwrap u => $"(unwrap {Expr(u.Operand)}):{u.Type}",
         HirError => "<error>",
         _ => throw new InvalidOperationException($"unknown HIR expression {expr.GetType().Name}"),
     };

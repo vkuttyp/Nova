@@ -272,5 +272,14 @@ public sealed record HirSlice(bool IsMutable, HirPlace Base, HirExpr? Low, HirEx
 /// <summary>The length of the slice <see cref="Slice"/> (an array's length is a constant).</summary>
 public sealed record HirSliceLength(HirExpr Slice, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
 
+/// <summary>
+/// <c>e?</c> (type-system.md §17.4): the <c>Ok</c> payload of <see cref="Operand"/>, or an early return of
+/// its <c>Err</c>. <see cref="HirExpr.Type"/> is the payload type (<c>void</c> for <c>Result&lt;void, E&gt;</c>).
+/// </summary>
+public sealed record HirTry(HirExpr Operand, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary><c>e!</c>: the <c>Ok</c> payload of <see cref="Operand"/>, or a panic.</summary>
+public sealed record HirUnwrap(HirExpr Operand, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
 /// <summary>Stands in for an expression that produced a diagnostic.</summary>
 public sealed record HirError(NovaType Type, TextSpan Span) : HirExpr(Type, Span);

@@ -6,3 +6,6 @@ fn f() {
     let e = * 2; // error[N0102]
     let ok = 1;
 }
+fn postfix() {
+    let a = ?x; // error[N0102]
+}

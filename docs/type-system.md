@@ -475,3 +475,141 @@ struct literal.
 
 Diagnostics: N0259 (an element type that is not Copy, an invalid length, or a too-large array).
 The other errors reuse N0205, N0211, N0216, N0230, N0246, N0247 and N0248 (`diagnostics.md`).
+
+## 17. Results and error propagation (M3a)
+
+```nova
+enum ParseError { Empty, BadDigit(u8), Overflow }
+
+fn digit(c: u8) -> Result<u32, ParseError> {
+    if (c < 48u8 || c > 57u8) { return Err(ParseError.BadDigit(c)); }
+    return Ok((c - 48u8) as u32);
+}
+
+fn twoDigits(a: u8, b: u8) -> Result<u32, ParseError> {
+    return Ok(digit(a)? * 10 + digit(b)?);
+}
+```
+
+`Result`, `Ok`, `Err` and `AllocError` are built in (ADR 0003). User generics come in M6; the
+names below then become library items with the same meaning.
+
+### 17.1 Types
+- `Result<T, E>` is a built-in enum with two variants, in this order: `Ok` with payload `T`, and
+  `Err` with payload `E`. Everything in §15.1 applies: layout, Copy iff `T` and `E` are Copy,
+  needs drop iff either does, and only the active variant's payload is destroyed.
+- `T` may be `void`, in which case `Ok` has no payload. `E` must not be `void`. Neither may be a
+  reference or slice (N0246, E3); arrays, structs, enums and results are fine.
+- A type contains `T` and `E` by value: `struct S { r: Result<S, i32>; }` is recursive (N0227).
+- `AllocError` is a built-in enum `{ OutOfMemory }` (Copy). The names `Result`, `Ok`, `Err` and
+  `AllocError` cannot be redeclared as items (N0201).
+- Two `Result` types are equal iff their `T` and their `E` are equal.
+
+### 17.2 Values
+- `Ok(e)`, `Ok()` (for `T = void`) and `Err(e)` need an **expected `Result` type** that fixes
+  `T` and `E`. That type comes from a declared variable type, a parameter type, a return
+  type (`return Ok(x);`), or a field or payload type. Without one, it is N0260 ("write the
+  type").
+- The payload is checked against `T` or `E` like a call argument against its parameter (§5).
+
+### 17.3 Matching
+- Patterns `Ok(x)`, `Ok(_)`, `Ok` (for `T = void`), `Err(x)` and `Err(_)` are written without a
+  type prefix. The bindings and exhaustiveness rules of §15.2 apply unchanged: a non-Copy payload
+  is bound by matching on `borrow r` (N0258 otherwise).
+
+### 17.4 `e?` and `e!`
+```text
+Postfix = Primary ( … | '?' | '!' )*      -- '!' is postfix only when it follows an operand
+```
+- **`e?` (propagate).**
+  - `e` must have a `Result<T, E>` type (N0262). The enclosing function must return
+    `Result<U, E>` with the same `E` (N0261); `From` conversions come in M6.
+  - If `e` is `Ok(v)`, the value of `e?` is `v` (of type `T`; `void` if `T` is `void`).
+  - If `e` is `Err(x)`, the function returns `Err(x)` at once, exactly like a `return`
+    statement. The statement's temporaries end, then every scope is left (drops and deferred
+    statements), innermost first. Like `return`, `?` is not allowed in a deferred statement
+    (N0254).
+- **`e!` (unwrap).** `e` must have a `Result<T, E>` type (N0262). The value is `v` for `Ok(v)`;
+  `Err(_)` **panics** with "unwrapped an Err value". Panic is abort, so nothing is destroyed.
+- In both cases `e` is evaluated once and consumed. The payload moves out of it (or is copied);
+  nothing else of `e` remains to be destroyed.
+- As an expression statement: `f()?;` and `f()!;` are allowed when the operand is a call, like
+  calls themselves (N0225 otherwise).
+- Precedence: postfix, like a call or member access: `parse(a)?.value` and `-x?` work as
+  expected (`-` applies to `x?`). `!` directly followed by `=` lexes as `!=`. Write `r! == 1`
+  with a space.
+
+### 17.5 Discarded values (correction to §14.5)
+- An expression statement whose value needs drop (for example a call `make();` returning a
+  `Res`) destroys the value at the end of the statement, like any other temporary. Before M3a
+  the value was never destroyed: an O4 violation, found while specifying 3a.
+
+Diagnostics: N0260 (no expected `Result` type for `Ok`/`Err`), N0261 (`?` in a function whose
+return type is not a `Result` with the same error type), N0262 (`?` or `!` on a non-`Result`).
+
+## 18. Boxes and allocators (M3b)
+
+```nova
+struct Account {
+    id: u64;
+    balance: i64;
+    fn deposit(borrow mut this, amount: i64) { this.balance += amount; }
+}
+
+fn open(id: u64) -> Result<Box<Account>, AllocError> {
+    return Box.create(Account { id: id, balance: 0 });
+}
+
+fn main() -> i32 {
+    var acct = open(7)!;
+    acct.deposit(100);       // through the box
+    return 0;
+}                            // the box is dropped: Account destroyed, memory freed
+```
+
+`Box`, `SystemHeap` and `FailingAllocator` are built in (ADR 0003).
+
+### 18.1 Allocator types
+- `SystemHeap` and `FailingAllocator` are built-in, field-less, Copy structs. They are the only
+  **allocator types** in M3; user allocators come with interfaces in M6 (`memory-model.md` §3.2).
+  Their values are written as struct literals: `SystemHeap {}`.
+- `SystemHeap` is the platform heap (`malloc`/`free` in hosted and CosmoOS userland builds).
+- `FailingAllocator` allocates from the platform heap, but can be told to fail, for testing
+  error paths in the language itself:
+  - `FailingAllocator.failAfter(n: u64)`: the next `n` allocations through `FailingAllocator`
+    succeed, and every later one fails;
+  - `FailingAllocator.reset()`: allocations never fail (the initial state).
+  The countdown is process-wide; frees are never affected.
+- Their names, and `Box`, cannot be declared as items (N0201).
+
+### 18.2 `Box<T, A>`
+- `Box<T, A>` owns exactly one value of type `T` in memory obtained from allocator type `A`
+  (H1). `Box<T>` means `Box<T, SystemHeap>`. `A` must be an allocator type (N0263). `T` is any
+  value type except `void` and references or slices (N0246).
+- A box is a **move type** that needs drop, and is one pointer wide (8 bytes on LP64).
+  Destroying it destroys `T` (its drop glue), then returns the memory to `A`.
+- A type does **not** contain the target of a `Box` by value, so recursive types are built with
+  boxes: `enum List { Nil, Cons(i32, Box<List>) }` is allowed (no N0227).
+- **Creation** (built-in functions):
+  - `Box.create(v)`: `Result<Box<T>, AllocError>`;
+  - `Box.createIn(a, v)` with `a` a value of allocator type `A`: `Result<Box<T, A>, AllocError>`.
+  `T` is the type of `v`. An expected type `Result<Box<X, _>, _>` provides the type hint for `v`
+  (so `Box.create(5)` can make a `Box<u8>`). `v` is moved into the call. If the allocation
+  fails, `v` is destroyed and the result is `Err(AllocError.OutOfMemory)`.
+- **Access through a box** works like access through a reference (§13.3), with the box's own
+  mutability:
+  - fields `b.f`, elements `b[i]` and method calls `b.m()` reach `T` (auto-deref);
+  - the contents are mutable iff the box is: the box variable is `var`, or the box itself is
+    reached through `borrow mut` or another mutable place. `b.f = 1` needs a `var b`;
+  - a `Box<T>` argument for a `borrow T` parameter borrows the contents, and `mut b` lends them
+    for a `borrow mut T` parameter;
+  - where a Copy `T` is expected, a `Box<T>` is read through (auto-deref);
+  - `borrow b` borrows the box itself (`borrow Box<T>`).
+- **Borrowing rules:** a place inside a box is part of the box. Moving, overwriting or dropping
+  the box while a loan of its contents is live is rejected (N0240, N0243), as for any place and
+  its fields. (Unlike a reference going out of scope, a box going out of scope destroys what it
+  points to.)
+- **Moving out of a box's contents** is not allowed in M3b (N0251); M3c relaxes this.
+- No null boxes exist. A `Box` is never Copy and has no `==`.
+
+Diagnostics: N0263 (an allocator argument that is not an allocator type).

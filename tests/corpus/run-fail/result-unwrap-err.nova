@@ -1,0 +1,59 @@
+enum ParseError { Empty, BadDigit(u8), Overflow }
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+
+fn digit(c: u8) -> Result<u32, ParseError> {
+    if (c < 48u8 || c > 57u8) { return Err(ParseError.BadDigit(c)); }
+    return Ok((c - 48u8) as u32);
+}
+
+fn twoDigits(a: u8, b: u8) -> Result<u32, ParseError> {
+    return Ok(digit(a)? * 10 + digit(b)?);
+}
+
+fn makeRes(id: i32, fail: bool) -> Result<Res, AllocError> {
+    if (fail) { return Err(AllocError.OutOfMemory); }
+    return Ok(Res { id: id });
+}
+
+fn pair(fail: bool) -> Result<void, AllocError> {
+    let a = makeRes(1, false)?;
+    let b = makeRes(2, fail)?;
+    Console.writeLine("pair ok");
+    return Ok();
+}
+
+fn main() {
+    match (twoDigits(52u8, 50u8)) {
+        Ok(v) => { Console.writeLine(v); }
+        Err(_) => { Console.writeLine("error"); }
+    }
+    match (twoDigits(52u8, 120u8)) {
+        Ok(v) => { Console.writeLine(v); }
+        Err(e) => {
+            match (e) {
+                ParseError.BadDigit(c) => { Console.write("bad digit "); Console.writeLine(c); }
+                _ => { }
+            }
+        }
+    }
+    pair(false)!;
+    match (pair(true)) {
+        Ok => { }
+        Err(_) => { Console.writeLine("pair failed"); }
+    }
+    let r = makeRes(7, false)!;
+    Console.writeLine(r.id);
+    makeRes(8, false);
+    Console.writeLine(digit(57u8)!);
+    let bad = digit(1u8)!; // expect-panic: unwrapped an Err value
+}
+// expect-stdout: 42
+// expect-stdout: bad digit 120
+// expect-stdout: pair ok
+// expect-stdout: drop 2
+// expect-stdout: drop 1
+// expect-stdout: drop 1
+// expect-stdout: pair failed
+// expect-stdout: 7
+// expect-stdout: drop 8
+// expect-stdout: 9

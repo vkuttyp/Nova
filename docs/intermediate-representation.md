@@ -53,6 +53,7 @@ terminator= Goto(bb) | Branch(operand, then_bb, else_bb) | Return(operand?)
           | Switch(operand, [(value, bb)], otherwise_bb)    -- match (M2d)
           | Exit(operand)                          -- Process.exit
           | Unreachable                            -- after a call of type never
+          | Panic(kind)                            -- `e!` on Err (M3a); aborts
 ```
 
 Lowering rules (HIR → NIR, `NirBuilder`):
@@ -119,6 +120,20 @@ Lowering rules (HIR → NIR, `NirBuilder`):
     the loop exits. A `usize` counter is compared with the end at the head. The body binds the
     variable in its own scope; `continue` jumps to the counter's increment, and `break` to the
     exit, which ends the header's locals.
+
+- **Results (M3a).**
+  - `e?` and `e!` move `e` into a temporary, switch on its tag, and in the `Ok` block read
+    the payload `t as Ok .0`.
+  - On `Err`, `?` builds `Err(t as Err .0)` of the function's return type and returns through the
+    same path as `return`; `!` ends in `Panic`.
+  - Moving a variant payload out of a local (only these lowerings do that) uninitialises the whole
+    local in the move dataflow, so the consumed result is not destroyed again.
+  - **Open temporaries.** The builder records the temporaries of every statement still being
+    lowered, with the scope they belong to. An early exit (`return`, `break`, `continue`, `?`)
+    ends them together with that scope, before its locals. Before M3a the temporaries of an
+    enclosing statement, such as a `match` scrutinee, were never ended on such paths.
+  - An expression statement whose value needs drop assigns it to a statement temporary, which is
+    destroyed at the end of the statement (type-system.md §17.5).
 
 Printed by `novac build --dump-nir`.
 

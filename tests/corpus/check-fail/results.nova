@@ -1,0 +1,61 @@
+// Results, `?` and `!` (type-system.md §17).
+enum E { A }
+enum F { B }
+struct Res { id: i32; drop { } }
+struct Result { x: i32; } // error[N0201]
+fn Ok() { } // error[N0201]
+enum AllocError { Other } // error[N0201]
+struct Loop { r: Result<Loop, i32>; } // error[N0227]
+
+fn refs(a: Result<borrow i32, E>) { } // error[N0246]
+fn voidErr(a: Result<i32, void>) { } // error[N0226]
+fn arity(a: Result<i32>) { } // error[N0204]
+fn give() -> Result<i32, E> => Ok(1);
+fn other() -> Result<i32, F> => Ok(1);
+fn none() -> Result<void, E> => Ok();
+
+fn values(n: i32) -> Result<i32, E> {
+    let a = Ok(1); // error[N0260]
+    let b: i32 = Err(E.A); // error[N0260]
+    let c: Result<i32, E> = Ok(true); // error[N0205]
+    let d: Result<i32, E> = Err(F.B); // error[N0205]
+    let e: Result<void, E> = Ok(1); // error[N0209]
+    let f: Result<i32, E> = Ok(); // error[N0209]
+    let g = n?; // error[N0262]
+    let h = n!; // error[N0262]
+    let i = other()?; // error[N0261]
+    let r = give();
+    let j = (borrow r)?; // error[N0262]
+    return Ok(0);
+}
+
+fn notResult() -> i32 {
+    let a = give()?; // error[N0261]
+    return a;
+}
+
+fn inDefer() -> Result<void, E> {
+    defer give()?; // error[N0254]
+    return Ok();
+}
+
+fn patterns(r: Result<i32, E>, p: Result<Res, E>, q: borrow Result<Res, E>) {
+    match (r) { // error[N0256]
+        Ok(v) => { }
+    }
+    match (r) {
+        Result.Ok(v) => { } // error[N0205]
+        _ => { }
+    }
+    match (p) {
+        Ok(res) => { } // error[N0258]
+        Err(_) => { }
+    }
+    match (q) {
+        Ok(res) => { }
+        Err(_) => { }
+    }
+    give()!;
+    none()?; // error[N0261]
+    give(); // a discarded Result is fine
+}

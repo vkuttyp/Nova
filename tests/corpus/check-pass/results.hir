@@ -1,0 +1,45 @@
+(program
+  (fn digit ((c#0: u8)) -> Result<u32, ParseError>
+    (block
+      (if (< c#0 48:u8):bool
+        (block
+          (return (Result<u32, ParseError>.Err (ParseError.BadDigit c#0)))
+        )
+      )
+      (return (Result<u32, ParseError>.Ok (as (- c#0 48:u8):u8 u32)))
+    )
+  )
+  (fn both ((a#0: u8) (b#1: u8)) -> Result<u32, ParseError>
+    (block
+      (return (Result<u32, ParseError>.Ok (+ (try (call digit a#0):Result<u32, ParseError>):u32 (try (call digit b#1):Result<u32, ParseError>):u32):u32))
+    )
+  )
+  (fn fails () -> Result<void, AllocError>
+    (block
+      (let r#0: Result<void, AllocError> = (Result<void, AllocError>.Err (AllocError.OutOfMemory)))
+      (return r#0)
+    )
+  )
+  (fn nothing () -> Result<void, AllocError>
+    (block
+      (expr (try (call fails):Result<void, AllocError>):void)
+      (return (Result<void, AllocError>.Ok))
+    )
+  )
+  (fn main () -> void
+    (block
+      (let x#0: u32 = (unwrap (call both 49:u8 50:u8):Result<u32, ParseError>):u32)
+      (let nested#1: Result<Result<i32, ParseError>, AllocError> = (Result<Result<i32, ParseError>, AllocError>.Ok (Result<i32, ParseError>.Ok 3:i32)))
+      (match nested#1
+        (arm Ok (inner#2: Result<i32, ParseError> = payload 0)
+          (block
+            (let v#3: i32 = (unwrap inner#2):i32)
+          )
+        )
+        (arm Err
+          (block)
+        )
+      )
+    )
+  )
+)

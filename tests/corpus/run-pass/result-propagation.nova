@@ -1,0 +1,73 @@
+// `?` returns early: every live local, open temporary and deferred statement is handled first.
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+enum Stage { Parse, Check }
+
+fn step(id: i32, fail: bool) -> Result<Res, Stage> {
+    if (fail) { return Err(Stage.Check); }
+    return Ok(Res { id: id });
+}
+
+fn take(a: Res, b: Res) -> i32 => a.id + b.id;
+
+fn run(failAt: i32) -> Result<i32, Stage> {
+    let first = step(1, failAt == 1)?;
+    defer Console.writeLine("deferred");
+    {
+        let inner = step(2, failAt == 2)?;
+        Console.writeLine("inner done");
+    }
+    // The first argument is a temporary when the second one fails.
+    let sum = take(step(3, false)?, step(4, failAt == 3)?);
+    return Ok(sum + first.id);
+}
+
+fn count(n: i32) -> Result<i32, Stage> {
+    var total = 0;
+    for (i in 0..n) {
+        if (i == 3) {
+            let r = step(10, true)?; // inside a loop
+        }
+        total += i;
+    }
+    return Ok(total);
+}
+
+fn report(r: Result<i32, Stage>) {
+    match (r) {
+        Ok(v) => { Console.write("ok "); Console.writeLine(v); }
+        Err(stage) => {
+            match (stage) {
+                Stage.Parse => { Console.writeLine("err parse"); }
+                Stage.Check => { Console.writeLine("err check"); }
+            }
+        }
+    }
+}
+
+fn main() {
+    report(run(0));
+    report(run(1));
+    report(run(2));
+    report(run(3));
+    report(count(3));
+    report(count(5));
+}
+// expect-stdout: inner done
+// expect-stdout: drop 2
+// expect-stdout: drop 4
+// expect-stdout: drop 3
+// expect-stdout: deferred
+// expect-stdout: drop 1
+// expect-stdout: ok 8
+// expect-stdout: err check
+// expect-stdout: deferred
+// expect-stdout: drop 1
+// expect-stdout: err check
+// expect-stdout: inner done
+// expect-stdout: drop 2
+// expect-stdout: drop 3
+// expect-stdout: deferred
+// expect-stdout: drop 1
+// expect-stdout: err check
+// expect-stdout: ok 3
+// expect-stdout: err check

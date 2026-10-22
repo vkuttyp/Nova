@@ -967,6 +967,17 @@ public sealed class Parser
                 var member = ParseIdentifier();
                 expr = new MemberExpr(expr, member, SpanFrom(start));
             }
+            else if (At(TokenKind.Question))
+            {
+                Advance();
+                expr = new TryExpr(expr, SpanFrom(start));
+            }
+            else if (At(TokenKind.Bang))
+            {
+                // After an operand, '!' can only be the postfix unwrap: prefix '!' starts an operand.
+                Advance();
+                expr = new UnwrapExpr(expr, SpanFrom(start));
+            }
             else if (At(TokenKind.OpenBracket))
             {
                 Advance();

@@ -36,7 +36,8 @@ typedef enum nv_panic_kind {
     NV_PANIC_SHIFT = 3,
     NV_PANIC_UNREACHABLE = 4,
     NV_PANIC_INDEX = 5,
-    NV_PANIC_SLICE = 6
+    NV_PANIC_SLICE = 6,
+    NV_PANIC_UNWRAP = 7
 } nv_panic_kind;
 
 /* A Nova source location; `file` points to a string in the generated program's file table. */

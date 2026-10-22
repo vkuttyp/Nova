@@ -150,9 +150,9 @@ internal sealed class DropElaborator
         };
         if (rvalue is not null)
         {
-            foreach (var moved in MoveData.MovedPlaces(rvalue).Where(p => p.IsFieldPath))
+            foreach (var moved in MoveData.MovedPlaces(rvalue).Select(_data.MovedPath).OfType<MovePath>())
             {
-                foreach (var leaf in _data.PathFor(moved).Leaves().Where(_flags.ContainsKey))
+                foreach (var leaf in moved.Leaves().Where(_flags.ContainsKey))
                 {
                     updates[_flags[leaf]] = false;
                 }

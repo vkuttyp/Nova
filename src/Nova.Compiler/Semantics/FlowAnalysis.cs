@@ -126,6 +126,8 @@ internal sealed class FlowAnalysis
         HirIndex index => Diverges(index.Target) || Diverges(index.Index),
         HirSlice slice => (slice.Low is not null && Diverges(slice.Low)) || (slice.High is not null && Diverges(slice.High)),
         HirSliceLength length => Diverges(length.Slice),
+        HirTry t => Diverges(t.Operand),
+        HirUnwrap u => Diverges(u.Operand),
         _ => false,
     };
 }

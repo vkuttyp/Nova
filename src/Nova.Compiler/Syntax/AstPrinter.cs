@@ -267,6 +267,8 @@ public sealed class AstPrinter
             : $"(new {Name(s.TypeName)} {string.Join(" ", s.Fields.Select(f => $"({Name(f.Name)} {Expr(f.Value)})"))})",
         ArrayLiteralExpr a => $"(array {string.Join(" ", a.Elements.Select(Expr))})",
         ArrayRepeatExpr a => $"(array-repeat {Expr(a.Value)} {Expr(a.Count)})",
+        TryExpr t => $"(try {Expr(t.Operand)})",
+        UnwrapExpr u => $"(unwrap {Expr(u.Operand)})",
         IndexExpr i => $"(index {Expr(i.Target)} {Expr(i.Index)})",
         SliceExpr s => $"(slice {Expr(s.Target)} {(s.Low is null ? "_" : Expr(s.Low))} {(s.High is null ? "_" : Expr(s.High))})",
         _ => throw new InvalidOperationException($"unknown expression {expr.GetType().Name}"),

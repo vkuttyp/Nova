@@ -97,9 +97,9 @@ internal sealed class MoveChecker
         foreach (var operand in MoveData.Operands(rvalue).OfType<NirPlaceOperand>())
         {
             CheckUse(operand.Place, operand.IsMove, running, span);
-            if (operand.IsMove && operand.Place.IsFieldPath)
+            if (operand.IsMove && _data.MovedPath(operand.Place) is { } moved)
             {
-                running.Uninitialize(_data.PathFor(operand.Place), moved: true);
+                running.Uninitialize(moved, moved: true);
             }
         }
     }
@@ -146,6 +146,10 @@ internal sealed class MoveChecker
         if (!isMove)
         {
             return;
+        }
+        if (hasDeref && MoveData.IsPayloadOfLocal(place))
+        {
+            return; // `?` / `!` consuming a result (type-system.md §17.4)
         }
         if (hasDeref)
         {

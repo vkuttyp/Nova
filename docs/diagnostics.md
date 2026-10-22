@@ -138,6 +138,17 @@ or a bad `for` sequence or range is N0205; writing an element of a `let` array o
 `borrow mut a[..]` of an immutable array is N0248; slicing a non-place is N0247. Slices are
 references, so the borrow checker reports their conflicts as N0240–N0245.
 
+### Results and the heap (N0260–N0269; `type-system.md` §17–§18)
+
+| Code | Meaning | Example |
+|---|---|---|
+| N0260 | `Ok(...)` / `Err(...)` without an expected `Result` type, or where another type is expected | `let a = Ok(1);` |
+| N0261 | `?` in a function that does not return a `Result` with the same error type | `?` on `Result<i32, F>` in a function returning `Result<i32, E>` |
+| N0262 | `?` or `!` on something that is not a `Result` value (a reference to one included) | `n?` with `n: i32` |
+
+`?` inside a deferred statement is N0254, and `Ok`/`Err` with the wrong number of values is
+N0209. The names `Result`, `Ok`, `Err` and `AllocError` cannot be declared (N0201).
+
 ### Build (N0300–N0399)
 
 | Code | Meaning | Example |

@@ -1,0 +1,13 @@
+(unit
+  (fn default f (params)
+    (block
+      (let a = (try (call g)))
+      (let b = (unwrap (call g)))
+      (let c = (unwrap (. (try (call h (try x))) y)))
+      (let d = (neg (try (call k))))
+      (let e = (not (unwrap (call m))))
+      (let n = (== (unwrap a) (unwrap b)))
+      (expr (try (call g)))
+    )
+  )
+)

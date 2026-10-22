@@ -103,6 +103,7 @@ public static class NirPrinter
         NirReturn { Value: null } => "return",
         NirReturn r => $"return {Operand(r.Value!, symbols)}",
         NirExit e => $"exit {Operand(e.Code, symbols)}",
+        NirPanic p => $"panic {p.Kind}",
         NirUnreachable => "unreachable",
         _ => terminator.ToString()!,
     };

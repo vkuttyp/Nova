@@ -197,6 +197,24 @@ internal sealed class MoveData
         return node;
     }
 
+    /// <summary>
+    /// The move path a move out of <paramref name="place"/> uninitialises: the path itself for a field path;
+    /// the whole local for a variant payload of a local (<c>t as Ok .0</c>), which only the lowering of
+    /// <c>?</c> and <c>!</c> moves out of, consuming the result (type-system.md §17.4); otherwise null.
+    /// </summary>
+    public MovePath? MovedPath(NirPlace place)
+    {
+        if (place.IsFieldPath)
+        {
+            return PathFor(place);
+        }
+        return place.Projections is [{ Kind: ProjectionKind.Downcast }, { Kind: ProjectionKind.Field }] ? _roots[place.Local] : null;
+    }
+
+    /// <summary>Is this a move of a variant payload out of a local (see <see cref="MovedPath"/>)?</summary>
+    public static bool IsPayloadOfLocal(NirPlace place) =>
+        place.Projections is [{ Kind: ProjectionKind.Downcast }, { Kind: ProjectionKind.Field }];
+
     /// <summary>Places whose partial state matters: assignment targets and moved operands, without derefs.</summary>
     private static IEnumerable<NirPlace> TrackedPlaces(NirStatement statement) => statement switch
     {
@@ -250,9 +268,9 @@ internal sealed class MoveData
     /// <summary>Applies the moves of an rvalue's operands.</summary>
     public void ApplyMoves(NirRvalue rvalue, InitState state)
     {
-        foreach (var place in MovedPlaces(rvalue).Where(p => p.IsFieldPath))
+        foreach (var path in MovedPlaces(rvalue).Select(MovedPath).OfType<MovePath>())
         {
-            state.Uninitialize(PathFor(place), moved: true);
+            state.Uninitialize(path, moved: true);
         }
     }
 

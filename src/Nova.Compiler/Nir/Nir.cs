@@ -246,3 +246,12 @@ public sealed record NirReturn(NirOperand? Value) : NirTerminator;
 public sealed record NirExit(NirOperand Code) : NirTerminator;
 
 public sealed record NirUnreachable : NirTerminator;
+
+public enum NirPanicKind
+{
+    /// <summary><c>e!</c> on an <c>Err</c> (type-system.md §17.4).</summary>
+    Unwrap,
+}
+
+/// <summary>Aborts with a panic message; nothing is destroyed (panic = abort).</summary>
+public sealed record NirPanic(NirPanicKind Kind) : NirTerminator;
