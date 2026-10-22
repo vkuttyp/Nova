@@ -1,0 +1,15 @@
+struct Mixed { a: u8; b: u64; c: bool; }
+struct Point { x: i32; y: i32;
+    fn sum(this) -> i32 => this.x + this.y;
+    fn origin() -> Point => Point { x: 0, y: 0 };
+}
+struct Line { from: Point; to: Point; }
+struct Empty { }
+
+fn main() -> i32 {
+    var l = Line { to: Point { x: 1, y: 2 }, from: Point.origin() };
+    l.to.x = 5;
+    let m = Mixed { a: 1, b: 2, c: true };
+    let e = Empty { };
+    return l.to.sum() + truncate<i32>(m.b);
+}

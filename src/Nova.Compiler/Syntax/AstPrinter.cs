@@ -59,29 +59,52 @@ public sealed class AstPrinter
         switch (item)
         {
             case FunctionDecl fn:
-            {
-                var parameters = string.Join(" ", fn.Parameters.Select(p => $"({Name(p.Name)} {Type(p.Type)})"));
-                var returns = fn.ReturnType is null ? "" : $" (returns {Type(fn.ReturnType)})";
-                Line($"(fn {visibility} {Name(fn.Name)} (params{(parameters.Length > 0 ? " " + parameters : "")}){returns}");
+                PrintFunction(fn);
+                break;
+            case StructDecl s:
+                Line($"(struct {visibility} {Name(s.Name)}");
                 _indent++;
-                if (fn.Body is not null)
+                foreach (var field in s.Fields)
                 {
-                    PrintStmt(fn.Body);
+                    Line($"(field {field.Visibility.ToString().ToLowerInvariant()} {Name(field.Name)} {Type(field.Type)})");
                 }
-                else if (fn.ExpressionBody is not null)
+                foreach (var function in s.Functions)
                 {
-                    Line($"(=> {Expr(fn.ExpressionBody)})");
+                    PrintFunction(function);
                 }
                 _indent--;
                 Line(")");
                 break;
-            }
             case ConstDecl c:
                 Line($"(const {visibility} {Name(c.Name)} {Type(c.Type)} {Expr(c.Value)})");
                 break;
             default:
                 throw new InvalidOperationException($"unknown item {item.GetType().Name}");
         }
+    }
+
+    private void PrintFunction(FunctionDecl fn)
+    {
+        var visibility = fn.Visibility.ToString().ToLowerInvariant();
+        var parts = fn.Parameters.Select(p => $"({Name(p.Name)} {Type(p.Type)})");
+        if (fn.Receiver is not null)
+        {
+            parts = parts.Prepend("this");
+        }
+        var parameters = string.Join(" ", parts);
+        var returns = fn.ReturnType is null ? "" : $" (returns {Type(fn.ReturnType)})";
+        Line($"(fn {visibility} {Name(fn.Name)} (params{(parameters.Length > 0 ? " " + parameters : "")}){returns}");
+        _indent++;
+        if (fn.Body is not null)
+        {
+            PrintStmt(fn.Body);
+        }
+        else if (fn.ExpressionBody is not null)
+        {
+            Line($"(=> {Expr(fn.ExpressionBody)})");
+        }
+        _indent--;
+        Line(")");
     }
 
     private void PrintStmt(Stmt stmt)
@@ -184,6 +207,10 @@ public sealed class AstPrinter
             : $"(call {Expr(c.Callee)} {string.Join(" ", c.Arguments.Select(Expr))})",
         MemberExpr m => $"(. {Expr(m.Target)} {_symbols.GetName(m.Member.Name)})",
         ErrorExpr => "<error>",
+        ThisExpr => "this",
+        StructLiteralExpr s => s.Fields.IsEmpty
+            ? $"(new {Name(s.TypeName)})"
+            : $"(new {Name(s.TypeName)} {string.Join(" ", s.Fields.Select(f => $"({Name(f.Name)} {Expr(f.Value)})"))})",
         _ => throw new InvalidOperationException($"unknown expression {expr.GetType().Name}"),
     };
 

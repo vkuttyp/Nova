@@ -28,6 +28,13 @@ internal sealed class TypeChecker
         public ConstState State { get; set; }
     }
 
+    private sealed class StructEntry(StructDecl decl, SourceText source, NovaType type)
+    {
+        public StructDecl Decl { get; } = decl;
+        public SourceText Source { get; } = source;
+        public NovaType Type { get; } = type;
+    }
+
     private enum Builtin
     {
         Console,
@@ -44,6 +51,8 @@ internal sealed class TypeChecker
     private readonly Dictionary<Symbol, Builtin> _builtins;
     private readonly List<HirFunction> _functions = [];
     private readonly List<ConstEntry> _constants = [];
+    private readonly List<StructEntry> _structs = [];
+    private readonly Symbol _thisSymbol;
 
     // Context of the body or constant currently being checked.
     private SourceText _source = null!;
@@ -63,18 +72,33 @@ internal sealed class TypeChecker
             [symbols.Intern("Process")] = Builtin.Process,
             [symbols.Intern("truncate")] = Builtin.Truncate,
         };
+        _thisSymbol = symbols.Intern("this");
     }
 
     public HirProgram Check()
     {
+        // Struct names first, so every signature and field can refer to any struct.
         foreach (var unit in _units)
         {
             _source = unit.Source;
-            foreach (var item in unit.Items)
+            foreach (var item in unit.Items.OfType<StructDecl>())
+            {
+                DeclareStruct(item);
+            }
+        }
+        foreach (var unit in _units)
+        {
+            _source = unit.Source;
+            foreach (var item in unit.Items.Where(i => i is not StructDecl))
             {
                 Declare(item);
             }
         }
+        foreach (var entry in _structs)
+        {
+            ResolveStructMembers(entry);
+        }
+        CheckStructRecursion();
 
         foreach (var constant in _constants)
         {
@@ -87,7 +111,7 @@ internal sealed class TypeChecker
         }
 
         CheckMain();
-        return new HirProgram([.. _functions], [.. _constants.Select(c => c.Hir)]);
+        return new HirProgram([.. _functions], [.. _constants.Select(c => c.Hir)], [.. _structs.Select(s => s.Type)]);
     }
 
     private string Name(Symbol symbol) => _symbols.GetName(symbol);
@@ -111,31 +135,141 @@ internal sealed class TypeChecker
         {
             case FunctionDecl fn:
             {
-                var returnType = fn.ReturnType is null ? _types.Void : ResolveType(fn.ReturnType, allowVoid: true);
-                var hir = new HirFunction(_functions.Count, name, returnType, _source, fn);
-                var seen = new HashSet<Symbol>();
-                foreach (var parameter in fn.Parameters)
+                if (fn.Receiver is not null)
                 {
-                    var type = ResolveType(parameter.Type, allowVoid: false);
-                    if (!seen.Add(parameter.Name.Name))
-                    {
-                        Error(DiagnosticCodes.DuplicateParameter, parameter.Name.Span,
-                            $"parameter '{Name(parameter.Name.Name)}' is declared more than once");
-                    }
-                    hir.AddLocal(parameter.Name.Name, type, isMutable: false, isParameter: true, parameter.Name.Span);
+                    Error(DiagnosticCodes.ThisOutsideMethod, fn.Receiver.Span,
+                        "'this' parameters are only allowed in functions declared inside a struct");
                 }
-                hir.Parameters = [.. hir.Locals];
-                _items.Add(name, hir);
-                _functions.Add(hir);
+                _items.Add(name, DeclareFunction(fn, owner: null));
                 break;
             }
             case ConstDecl c:
             {
                 var type = ResolveType(c.Type, allowVoid: false);
+                if (type.Kind == TypeKind.Struct)
+                {
+                    Error(DiagnosticCodes.Unsupported, c.Type.Span, "constants of struct type are not supported yet");
+                    type = _types.Error;
+                }
                 var entry = new ConstEntry(c, _source, new HirConst(name, type, _source, c.Span));
                 _items.Add(name, entry);
                 _constants.Add(entry);
                 break;
+            }
+        }
+    }
+
+    /// <summary>Creates the HIR function for a top-level function or a struct member, resolving its signature.</summary>
+    private HirFunction DeclareFunction(FunctionDecl fn, NovaType? owner)
+    {
+        var returnType = fn.ReturnType is null ? _types.Void : ResolveType(fn.ReturnType, allowVoid: true);
+        var hir = new HirFunction(_functions.Count, fn.Name.Name, returnType, _source, fn, owner);
+        if (owner is not null && fn.Receiver is not null)
+        {
+            // `this` is an immutable by-value binding of the struct type (type-system.md §12).
+            hir.AddLocal(_thisSymbol, owner, isMutable: false, isParameter: true, fn.Receiver.Span);
+        }
+        var seen = new HashSet<Symbol>();
+        foreach (var parameter in fn.Parameters)
+        {
+            var type = ResolveType(parameter.Type, allowVoid: false);
+            if (!seen.Add(parameter.Name.Name))
+            {
+                Error(DiagnosticCodes.DuplicateParameter, parameter.Name.Span,
+                    $"parameter '{Name(parameter.Name.Name)}' is declared more than once");
+            }
+            hir.AddLocal(parameter.Name.Name, type, isMutable: false, isParameter: true, parameter.Name.Span);
+        }
+        hir.Parameters = [.. hir.Locals];
+        _functions.Add(hir);
+        return hir;
+    }
+
+    private void DeclareStruct(StructDecl decl)
+    {
+        var name = decl.Name.Name;
+        var text = Name(name);
+        if (_types.Lookup(text) is not null)
+        {
+            Error(DiagnosticCodes.DuplicateItem, decl.Name.Span, $"'{text}' is the name of a built-in type");
+            return;
+        }
+        if (_items.ContainsKey(name))
+        {
+            Error(DiagnosticCodes.DuplicateItem, decl.Name.Span, $"'{text}' is already defined");
+            return;
+        }
+        var entry = new StructEntry(decl, _source, TypeTable.CreateStruct(text, decl, _source));
+        _items.Add(name, entry);
+        _structs.Add(entry);
+    }
+
+    private void ResolveStructMembers(StructEntry entry)
+    {
+        _source = entry.Source;
+        var definition = entry.Type.Struct!;
+        var memberNames = new HashSet<Symbol>();
+        foreach (var field in entry.Decl.Fields)
+        {
+            var type = ResolveType(field.Type, allowVoid: false);
+            if (!memberNames.Add(field.Name.Name))
+            {
+                Error(DiagnosticCodes.DuplicateMember, field.Name.Span,
+                    $"'{entry.Type}' already has a member named '{Name(field.Name.Name)}'");
+                continue;
+            }
+            definition.AddField(field.Name.Name, type, field.Name.Span);
+        }
+        foreach (var function in entry.Decl.Functions)
+        {
+            if (!memberNames.Add(function.Name.Name))
+            {
+                Error(DiagnosticCodes.DuplicateMember, function.Name.Span,
+                    $"'{entry.Type}' already has a member named '{Name(function.Name.Name)}'");
+                continue;
+            }
+            definition.Functions.Add(function.Name.Name, DeclareFunction(function, entry.Type));
+        }
+    }
+
+    /// <summary>A struct may not contain itself by value, directly or indirectly (N0227).</summary>
+    private void CheckStructRecursion()
+    {
+        var state = new Dictionary<NovaType, int>(); // 1 = on the DFS stack, 2 = finished
+        var stack = new List<NovaType>();
+
+        void Visit(NovaType type)
+        {
+            state[type] = 1;
+            stack.Add(type);
+            foreach (var field in type.Struct!.Fields.Where(f => f.Type.Kind == TypeKind.Struct))
+            {
+                switch (state.GetValueOrDefault(field.Type))
+                {
+                    case 0:
+                        Visit(field.Type);
+                        break;
+                    case 1:
+                        // Every struct on the cycle is recursive; report at the one that closes it.
+                        foreach (var member in stack.Skip(stack.IndexOf(field.Type)))
+                        {
+                            member.Struct!.IsRecursive = true;
+                        }
+                        _source = type.Struct!.Source;
+                        Error(DiagnosticCodes.RecursiveStruct, field.Span,
+                            $"'{type}' contains '{field.Type}' by value, which contains '{type}': the struct would have infinite size");
+                        break;
+                }
+            }
+            stack.RemoveAt(stack.Count - 1);
+            state[type] = 2;
+        }
+
+        foreach (var entry in _structs)
+        {
+            if (state.GetValueOrDefault(entry.Type) == 0)
+            {
+                Visit(entry.Type);
             }
         }
     }
@@ -153,7 +287,8 @@ internal sealed class TypeChecker
         }
 
         var text = Name(named.Name.Parts[0].Name);
-        var type = _types.Lookup(text);
+        var type = _types.Lookup(text)
+            ?? (_items.GetValueOrDefault(named.Name.Parts[0].Name) as StructEntry)?.Type;
         if (type is null)
         {
             Error(DiagnosticCodes.UnknownType, named.Span, $"unknown type '{text}'");
@@ -494,31 +629,94 @@ internal sealed class TypeChecker
         return new HirAssign(target, op, value, assign.Span);
     }
 
-    private HirLocal? ResolveAssignmentTarget(Expr target)
+    /// <summary>Resolves an assignment target to a place: a local or a field path rooted at one (type-system.md §12).</summary>
+    private HirPlace? ResolveAssignmentTarget(Expr target)
     {
-        if (target is not NameExpr name)
+        var fieldNames = new List<Identifier>();
+        var root = target;
+        while (root is MemberExpr member)
         {
-            Error(DiagnosticCodes.Unsupported, target.Span, "only local variables can be assigned in M1");
+            fieldNames.Insert(0, member.Member);
+            root = member.Target;
+        }
+
+        HirLocal local;
+        string rootName;
+        switch (root)
+        {
+            case ThisExpr thisExpr:
+                if (LookupLocal(_thisSymbol) is not { } receiver)
+                {
+                    Error(DiagnosticCodes.ThisOutsideMethod, thisExpr.Span, "'this' can only be used inside a method");
+                    return null;
+                }
+                local = receiver;
+                rootName = "this";
+                break;
+            case NameExpr name:
+                rootName = Name(name.Name.Name);
+                switch (Lookup(name.Name.Name))
+                {
+                    case HirLocal found:
+                        local = found;
+                        break;
+                    case null:
+                        Error(DiagnosticCodes.UndefinedName, name.Span, $"cannot find '{rootName}' in this scope");
+                        return null;
+                    default:
+                        Error(DiagnosticCodes.AssignToImmutable, target.Span, $"cannot assign to '{rootName}': it is not a variable");
+                        return null;
+                }
+                break;
+            default:
+                Error(DiagnosticCodes.Unsupported, target.Span, "only variables and their fields can be assigned");
+                return null;
+        }
+
+        if (!local.IsMutable)
+        {
+            var what = fieldNames.Count == 0 ? $"'{rootName}'" : $"a field of '{rootName}'";
+            var why = local.Name == _thisSymbol ? "'this' is immutable in a by-value method"
+                : local.IsParameter ? "parameters are immutable"
+                : $"'{rootName}' was declared with 'let'; use 'var' for a mutable variable";
+            Error(DiagnosticCodes.AssignToImmutable, target.Span, $"cannot assign to {what}: {why}");
             return null;
         }
 
-        var symbol = name.Name.Name;
-        switch (Lookup(symbol))
+        var type = local.Type;
+        var path = ImmutableArray.CreateBuilder<StructField>(fieldNames.Count);
+        foreach (var fieldName in fieldNames)
         {
-            case HirLocal local when local.IsMutable:
-                return local;
-            case HirLocal local:
-                Error(DiagnosticCodes.AssignToImmutable, target.Span, local.IsParameter
-                    ? $"cannot assign to parameter '{Name(symbol)}'; parameters are immutable"
-                    : $"cannot assign to '{Name(symbol)}': it was declared with 'let'; use 'var' for a mutable variable");
+            if (ResolveField(type, fieldName) is not { } field)
+            {
                 return null;
-            case null:
-                Error(DiagnosticCodes.UndefinedName, target.Span, $"cannot find '{Name(symbol)}' in this scope");
-                return null;
-            default:
-                Error(DiagnosticCodes.AssignToImmutable, target.Span, $"cannot assign to '{Name(symbol)}': it is not a variable");
-                return null;
+            }
+            path.Add(field);
+            type = field.Type;
         }
+        return new HirPlace(local, path.MoveToImmutable(), type);
+    }
+
+    /// <summary>The field <paramref name="name"/> of a value of <paramref name="type"/>, or null after reporting N0230/N0234.</summary>
+    private StructField? ResolveField(NovaType type, Identifier name)
+    {
+        if (type.IsBottom)
+        {
+            return null;
+        }
+        if (type.Struct is not { } definition)
+        {
+            Error(DiagnosticCodes.NotAStruct, name.Span, $"type '{type}' has no fields; '{Name(name.Name)}' cannot be accessed");
+            return null;
+        }
+        if (definition.FindField(name.Name) is { } field)
+        {
+            return field;
+        }
+        Error(DiagnosticCodes.UnknownField, name.Span, definition.Functions.ContainsKey(name.Name)
+            ? $"'{type}.{Name(name.Name)}' is a function; call it with '(...)'"
+            : $"'{type}' has no field named '{Name(name.Name)}'");
+        return null;
     }
 
     private HirIf CheckIf(IfStmt ifStmt)
@@ -611,6 +809,15 @@ internal sealed class TypeChecker
                 return ErrorResult(expr.Span);
             case ParenExpr paren:
                 return Synth(paren.Inner, expected) with { Span = paren.Span };
+            case ThisExpr:
+                if (LookupLocal(_thisSymbol) is { } receiver)
+                {
+                    return new HirLocalRef(receiver, expr.Span);
+                }
+                Error(DiagnosticCodes.ThisOutsideMethod, expr.Span, "'this' can only be used inside a method");
+                return ErrorResult(expr.Span);
+            case StructLiteralExpr literal:
+                return SynthStructLiteral(literal);
             case NameExpr name:
                 return SynthName(name);
             case UnaryExpr unary:
@@ -622,21 +829,75 @@ internal sealed class TypeChecker
             case CallExpr call:
                 return SynthCall(call);
             case MemberExpr member:
-                if (member.Target is NameExpr target && Lookup(target.Name.Name) is Builtin)
-                {
-                    Error(DiagnosticCodes.NotCallable, member.Span,
-                        $"'{Name(target.Name.Name)}.{Name(member.Member.Name)}' is not a value; call it with '(...)'");
-                }
-                else
-                {
-                    Error(DiagnosticCodes.Unsupported, member.Span, "member access is not supported in M1");
-                }
-                return ErrorResult(expr.Span);
+                return SynthMember(member);
             case ErrorExpr:
                 return ErrorResult(expr.Span);
             default:
                 throw new InvalidOperationException($"unexpected expression {expr.GetType().Name}");
         }
+    }
+
+    private HirExpr SynthMember(MemberExpr member)
+    {
+        // `Console.writeLine` or `Point.origin` without a call.
+        if (member.Target is NameExpr { TypeArguments.IsEmpty: true } target && Lookup(target.Name.Name) is Builtin or StructEntry)
+        {
+            Error(DiagnosticCodes.NotCallable, member.Span,
+                $"'{Name(target.Name.Name)}.{Name(member.Member.Name)}' is not a value; call it with '(...)'");
+            return ErrorResult(member.Span);
+        }
+        var value = Synth(member.Target, null);
+        return ResolveField(value.Type, member.Member) is { } field
+            ? new HirFieldAccess(value, field, member.Span)
+            : ErrorResult(member.Span);
+    }
+
+    private HirExpr SynthStructLiteral(StructLiteralExpr literal)
+    {
+        var typeName = Name(literal.TypeName.Name);
+        if (_items.GetValueOrDefault(literal.TypeName.Name) is not StructEntry entry)
+        {
+            Error(_types.Lookup(typeName) is null && Lookup(literal.TypeName.Name) is null ? DiagnosticCodes.UnknownType : DiagnosticCodes.NotAStruct,
+                literal.TypeName.Span, $"'{typeName}' is not a struct type");
+            foreach (var init in literal.Fields)
+            {
+                Synth(init.Value, null);
+            }
+            return ErrorResult(literal.Span);
+        }
+
+        var type = entry.Type;
+        var definition = type.Struct!;
+        var fields = ImmutableArray.CreateBuilder<(StructField, HirExpr)>(literal.Fields.Length);
+        var seen = new HashSet<StructField>();
+        var ok = true;
+        foreach (var init in literal.Fields)
+        {
+            var field = definition.FindField(init.Name.Name);
+            if (field is null)
+            {
+                Error(DiagnosticCodes.UnknownField, init.Name.Span, $"'{typeName}' has no field named '{Name(init.Name.Name)}'");
+                Synth(init.Value, null);
+                ok = false;
+                continue;
+            }
+            if (!seen.Add(field))
+            {
+                Error(DiagnosticCodes.DuplicateFieldInit, init.Name.Span, $"field '{Name(field.Name)}' is initialized more than once");
+                ok = false;
+                continue;
+            }
+            fields.Add((field, CheckExpr(init.Value, field.Type)));
+        }
+
+        var missing = definition.Fields.Where(f => !seen.Contains(f)).Select(f => $"'{Name(f.Name)}'").ToList();
+        if (missing.Count > 0 && ok)
+        {
+            Error(DiagnosticCodes.MissingField, literal.TypeName.Span,
+                $"missing {(missing.Count == 1 ? "field" : "fields")} {string.Join(", ", missing)} in '{typeName}' literal");
+            ok = false;
+        }
+        return ok ? new HirStructLiteral(fields.ToImmutable(), type, literal.Span) : ErrorResult(literal.Span);
     }
 
     private HirExpr CheckIntLiteral(IntLiteralExpr literal, bool negative, NovaType? expected, TextSpan span)
@@ -680,6 +941,9 @@ internal sealed class TypeChecker
             case HirFunction:
                 Error(DiagnosticCodes.NotCallable, name.Span,
                     $"function '{Name(symbol)}' cannot be used as a value; call it with '(...)'");
+                return ErrorResult(name.Span);
+            case StructEntry:
+                Error(DiagnosticCodes.NotCallable, name.Span, $"'{Name(symbol)}' is a type, not a value");
                 return ErrorResult(name.Span);
             case Builtin:
                 Error(DiagnosticCodes.NotCallable, name.Span, $"'{Name(symbol)}' is not a value");
@@ -896,6 +1160,11 @@ internal sealed class TypeChecker
             case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
                 when Lookup(target.Name.Name) is Builtin builtin and (Builtin.Console or Builtin.Process):
                 return CheckBuiltinMemberCall(call, builtin, target, member);
+            case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
+                when Lookup(target.Name.Name) is StructEntry entry:
+                return CheckStaticCall(call, entry, member);
+            case MemberExpr member:
+                return CheckMethodCall(call, member);
         }
 
         Error(DiagnosticCodes.NotCallable, call.Callee.Span, "this expression cannot be called");
@@ -914,22 +1183,86 @@ internal sealed class TypeChecker
         }
     }
 
-    private HirExpr CheckUserCall(CallExpr call, HirFunction function)
+    /// <summary>
+    /// Checks a call of a package function. For a method, <paramref name="receiver"/> is the
+    /// already-checked `this` argument, which comes before the explicit arguments.
+    /// </summary>
+    private HirExpr CheckUserCall(CallExpr call, HirFunction function, HirExpr? receiver = null)
     {
-        var parameters = function.Parameters;
+        var parameters = receiver is null ? function.Parameters : function.Parameters[1..];
+        var displayName = function.Owner is null ? Name(function.Name) : $"{function.Owner}.{Name(function.Name)}";
         if (call.Arguments.Length != parameters.Length)
         {
             Error(DiagnosticCodes.ArgumentCount, call.Span,
-                $"'{Name(function.Name)}' takes {parameters.Length} argument(s) but {call.Arguments.Length} were supplied");
+                $"'{displayName}' takes {parameters.Length} argument(s) but {call.Arguments.Length} were supplied");
         }
-        var arguments = ImmutableArray.CreateBuilder<HirExpr>(call.Arguments.Length);
+        var arguments = ImmutableArray.CreateBuilder<HirExpr>(call.Arguments.Length + 1);
+        if (receiver is not null)
+        {
+            arguments.Add(receiver);
+        }
         for (var i = 0; i < call.Arguments.Length; i++)
         {
             arguments.Add(CheckExpr(call.Arguments[i], i < parameters.Length ? parameters[i].Type : null));
         }
         return call.Arguments.Length == parameters.Length
-            ? new HirCall(function, arguments.MoveToImmutable(), function.ReturnType, call.Span)
+            ? new HirCall(function, arguments.ToImmutable(), function.ReturnType, call.Span)
             : ErrorResult(call.Span);
+    }
+
+    /// <summary><c>S.f(args)</c>: a static function of struct S (type-system.md §12).</summary>
+    private HirExpr CheckStaticCall(CallExpr call, StructEntry entry, MemberExpr member)
+    {
+        var definition = entry.Type.Struct!;
+        if (!definition.Functions.TryGetValue(member.Member.Name, out var function))
+        {
+            Error(DiagnosticCodes.UndefinedName, member.Member.Span,
+                $"'{entry.Type}' has no function named '{Name(member.Member.Name)}'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (function.IsMethod)
+        {
+            Error(DiagnosticCodes.MethodCallKind, member.Span,
+                $"'{entry.Type}.{Name(function.Name)}' is a method; call it on a value: value.{Name(function.Name)}(...)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        return CheckUserCall(call, function);
+    }
+
+    /// <summary><c>e.m(args)</c>: a method call; <c>e</c> is evaluated first and passed as `this`.</summary>
+    private HirExpr CheckMethodCall(CallExpr call, MemberExpr member)
+    {
+        var receiver = Synth(member.Target, null);
+        if (receiver.Type.IsBottom)
+        {
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (receiver.Type.Struct is not { } definition)
+        {
+            Error(DiagnosticCodes.NotAStruct, member.Member.Span,
+                $"type '{receiver.Type}' has no methods; '{Name(member.Member.Name)}' cannot be called on it");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (!definition.Functions.TryGetValue(member.Member.Name, out var function))
+        {
+            Error(DiagnosticCodes.UndefinedName, member.Member.Span, definition.FindField(member.Member.Name) is not null
+                ? $"'{receiver.Type}.{Name(member.Member.Name)}' is a field, not a function"
+                : $"'{receiver.Type}' has no method named '{Name(member.Member.Name)}'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (!function.IsMethod)
+        {
+            Error(DiagnosticCodes.MethodCallKind, member.Member.Span,
+                $"'{receiver.Type}.{Name(function.Name)}' is a static function; call it as {receiver.Type}.{Name(function.Name)}(...)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        return CheckUserCall(call, function, receiver);
     }
 
     private HirExpr CheckTruncate(CallExpr call, NameExpr name)

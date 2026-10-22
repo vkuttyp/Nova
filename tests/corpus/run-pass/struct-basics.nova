@@ -1,0 +1,20 @@
+struct Point {
+    x: i64;
+    y: i64;
+}
+
+fn main() {
+    var p = Point { x: 3, y: 4 };
+    Console.writeLine(p.x * p.x + p.y * p.y);
+    p.x = -7;
+    p.y += 10;
+    Console.writeLine(p.x);
+    Console.writeLine(p.y);
+    let q = p;
+    p.x = 100;
+    Console.writeLine(q.x);
+}
+// expect-stdout: 25
+// expect-stdout: -7
+// expect-stdout: 14
+// expect-stdout: -7

@@ -39,7 +39,8 @@ public sealed class HirPrinter
         foreach (var function in program.Functions)
         {
             var parameters = string.Join(" ", function.Parameters.Select(p => $"({Local(p)}: {p.Type})"));
-            Line($"(fn {_symbols.GetName(function.Name)} ({parameters}) -> {function.ReturnType}");
+            var owner = function.Owner is null ? "" : $"{function.Owner}.";
+            Line($"(fn {owner}{_symbols.GetName(function.Name)} ({parameters}) -> {function.ReturnType}");
             _indent++;
             if (function.Body is not null)
             {
@@ -53,6 +54,9 @@ public sealed class HirPrinter
     }
 
     private string Local(HirLocal local) => $"{_symbols.GetName(local.Name)}#{local.Id}";
+
+    private string Place(HirPlace place) =>
+        Local(place.Root) + string.Concat(place.Path.Select(f => "." + _symbols.GetName(f.Name)));
 
     private void Nested(string head, params HirStmt?[] children)
     {
@@ -84,7 +88,7 @@ public sealed class HirPrinter
                      (decl.Initializer is null ? ")" : $" = {Expr(decl.Initializer)})"));
                 break;
             case HirAssign assign:
-                Line($"({(assign.Op is null ? "=" : OpText(assign.Op.Value) + "=")} {Local(assign.Target)} {Expr(assign.Value)})");
+                Line($"({(assign.Op is null ? "=" : OpText(assign.Op.Value) + "=")} {Place(assign.Target)} {Expr(assign.Value)})");
                 break;
             case HirIf ifStmt when ifStmt.Else is null:
                 Nested($"if {Expr(ifStmt.Condition)}", ifStmt.Then);
@@ -131,8 +135,12 @@ public sealed class HirPrinter
         HirBinary b => $"({OpText(b.Op)} {Expr(b.Left)} {Expr(b.Right)}):{b.Type}",
         HirCast c => $"(as {Expr(c.Operand)} {c.Type})",
         HirTruncate t => $"(truncate {t.Type} {Expr(t.Operand)})",
-        HirCall c => $"(call {_symbols.GetName(c.Callee.Name)}{Args(c.Arguments)}):{c.Type}",
+        HirCall c => $"(call {(c.Callee.Owner is { } owner ? owner + "." : "")}{_symbols.GetName(c.Callee.Name)}{Args(c.Arguments)}):{c.Type}",
         HirBuiltinCall c => $"({BuiltinName(c.Function)}{Args(c.Arguments)})",
+        HirFieldAccess f => $"(. {Expr(f.Target)} {_symbols.GetName(f.Field.Name)}):{f.Type}",
+        HirStructLiteral s => s.Fields.IsEmpty
+            ? $"(new {s.Type})"
+            : $"(new {s.Type} {string.Join(" ", s.Fields.Select(f => $"({_symbols.GetName(f.Field.Name)} {Expr(f.Value)})"))})",
         HirError => "<error>",
         _ => throw new InvalidOperationException($"unknown HIR expression {expr.GetType().Name}"),
     };

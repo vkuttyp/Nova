@@ -38,9 +38,12 @@ public static class NirPrinter
     private static string Local(NirLocal local, SymbolTable symbols) =>
         local.Name is { } name ? $"_{local.Id}({symbols.GetName(name)})" : $"_{local.Id}";
 
+    private static string Place(NirPlace place, SymbolTable symbols) =>
+        Local(place.Local, symbols) + string.Concat(place.Path.Select(f => "." + symbols.GetName(f.Name)));
+
     private static string Operand(NirOperand operand, SymbolTable symbols) => operand switch
     {
-        NirLocalOperand l => Local(l.Local, symbols),
+        NirPlaceOperand p => Place(p.Place, symbols),
         NirConst c => $"const {c.Value.ToString(CultureInfo.InvariantCulture)}_{c.Type}",
         NirString s => $"const \"{s.Value}\"",
         _ => operand.ToString(),
@@ -54,13 +57,14 @@ public static class NirPrinter
         NirCast c => $"{Operand(c.Operand, symbols)} as {c.Type}",
         NirTruncate t => $"truncate<{t.Type}>({Operand(t.Operand, symbols)})",
         NirCall c => $"{symbols.GetName(c.Callee.Name)}({string.Join(", ", c.Arguments.Select(a => Operand(a, symbols)))})",
+        NirAggregate a => $"{a.Type} {{ {string.Join(", ", a.Fields.Select(f => Operand(f, symbols)))} }}",
         NirBuiltin b => $"{b.Function}({string.Join(", ", b.Arguments.Select(a => Operand(a, symbols)))})",
         _ => rvalue.ToString(),
     };
 
     private static string Statement(NirStatement statement, SymbolTable symbols) => statement switch
     {
-        NirAssign a => $"{Local(a.Target, symbols)} = {Rvalue(a.Value, symbols)}",
+        NirAssign a => $"{Place(a.Target, symbols)} = {Rvalue(a.Value, symbols)}",
         NirEval e => Rvalue(e.Value, symbols),
         _ => statement.ToString()!,
     };

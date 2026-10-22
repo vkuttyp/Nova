@@ -45,7 +45,7 @@ Status: Milestone 0 proposal. Applies from M1. CosmoOS-specific flags are covere
 | `bool` | `bool` (`_Bool`) |
 | `char` | `uint32_t` |
 | `f32`/`f64` | `float`/`double` (`_Static_assert(sizeof(double)==8)`); **kernel profile forbids floats** unless the target profile enables them (`cosmoos/profiles.md`) |
-| `struct S` | `typedef struct S { ... } S;` in declaration order. `@repr(C)` is the default in v0; field reordering is an M9 opt-in (`@repr(auto)`) |
+| `struct S` | `typedef struct nvT_S nvT_S;` then `struct nvT_S { … }` with fields `f_<name>` in declaration order, structs emitted after the structs they contain. Each struct is followed by `_Static_assert`s on `sizeof`, `_Alignof` and every field's `offsetof`, against `TypeTable.LayoutOf`. An empty struct gets a `uint8_t nv_empty` member (C has no empty structs). `@repr(C)` is the default in v0; field reordering is an M9 opt-in (`@repr(auto)`) |
 | `enum E { A, B(T) }` | `struct { uint32_t tag; union { T B; } u; }`. The tag width is the smallest unsigned that fits, unless `@repr(u8)` etc. |
 | `T?` | `T*`-niche for `Box`/references, else `struct { bool has; T value; }` |
 | `borrow T` | `const T*`. `borrow mut T` → `T*` (`restrict` only where the borrow checker proves exclusivity *and* M9 enables it) |
@@ -54,9 +54,17 @@ Status: Milestone 0 proposal. Applies from M1. CosmoOS-specific flags are covere
 | Arrays `[T; N]` | wrapped in a struct `struct { T e[N]; }`, so assignment and return by value work |
 | Function pointers | C function pointer types via typedef |
 
-Names: the deterministic mangling `nv_<pkg>_<ns>_<name>` plus a type-argument
-hash for monomorphised instances, using a stable hash over canonical type
-strings (not .NET `GetHashCode`). `@export("sym")` overrides the name.
+Names (as implemented in M2a):
+- functions: `nv_<name>`;
+- struct members: `nvM_<length><Struct>_<name>`, where the length prefix makes the boundary
+  unambiguous;
+- struct types: `nvT_<name>`;
+- fields: `f_<name>`;
+- locals: `v_<name>_<id>` and `t_<id>`.
+
+The prefixes keep the namespaces apart and avoid C keywords. Planned: package/namespace
+qualification, plus a stable hash of the type arguments for monomorphised instances (not .NET
+`GetHashCode`). `@export("sym")` overrides the name.
 
 Layout verification: for every emitted struct the backend emits
 `_Static_assert(sizeof(S) == N && _Alignof(S) == A, "...")` and `offsetof`

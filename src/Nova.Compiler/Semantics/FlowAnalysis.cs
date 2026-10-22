@@ -76,11 +76,16 @@ internal sealed class FlowAnalysis
                 state = Expr(assign.Value, state);
                 if (state is not null)
                 {
-                    if (assign.Op is not null)
+                    var target = assign.Target;
+                    // `x += 1` reads x; `p.f = e` needs p fully assigned (no partial initialisation in M2a).
+                    if (assign.Op is not null || !target.Path.IsEmpty)
                     {
-                        Read(assign.Target, assign.Span, state); // `x += 1` reads x
+                        Read(target.Root, assign.Span, state);
                     }
-                    state.Set(assign.Target.Id, true);
+                    if (target.Path.IsEmpty)
+                    {
+                        state.Set(target.Root.Id, true);
+                    }
                 }
                 return state;
             case HirIf ifStmt:
@@ -174,6 +179,10 @@ internal sealed class FlowAnalysis
             }
             case HirCast cast:
                 return Expr(cast.Operand, state);
+            case HirFieldAccess field:
+                return Expr(field.Target, state);
+            case HirStructLiteral literal:
+                return Arguments(literal.Fields.Select(f => f.Value), state, literal.Type);
             case HirTruncate truncate:
                 return Expr(truncate.Operand, state);
             case HirCall call:

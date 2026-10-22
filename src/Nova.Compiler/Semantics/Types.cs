@@ -1,4 +1,5 @@
 using System.Numerics;
+using Nova.Compiler.Hir;
 using Nova.Compiler.Syntax;
 
 namespace Nova.Compiler.Semantics;
@@ -25,11 +26,74 @@ public enum TypeKind
     StringLiteral,
     /// <summary>The type of an expression that already produced a diagnostic; suppresses cascades.</summary>
     Error,
+    /// <summary>A user-defined struct (type-system.md §12); see <see cref="NovaType.Struct"/>.</summary>
+    Struct,
+}
+
+public sealed class StructField
+{
+    internal StructField(Symbol name, NovaType type, int index, TextSpan span)
+    {
+        Name = name;
+        Type = type;
+        Index = index;
+        Span = span;
+    }
+
+    public Symbol Name { get; }
+
+    public NovaType Type { get; }
+
+    /// <summary>Declaration order; also the C layout order.</summary>
+    public int Index { get; }
+
+    public TextSpan Span { get; }
+
+    /// <summary>Byte offset in the target layout (set by <see cref="TypeTable.LayoutOf"/>).</summary>
+    public int Offset { get; internal set; }
+}
+
+/// <summary>The members of a struct type. Filled in by the type checker after all items are declared.</summary>
+public sealed class StructDefinition
+{
+    private readonly List<StructField> _fields = [];
+
+    internal StructDefinition(StructDecl syntax, SourceText source)
+    {
+        Syntax = syntax;
+        Source = source;
+    }
+
+    public StructDecl Syntax { get; }
+
+    public SourceText Source { get; }
+
+    public IReadOnlyList<StructField> Fields => _fields;
+
+    /// <summary>Methods and static functions, by name.</summary>
+    public Dictionary<Symbol, HirFunction> Functions { get; } = [];
+
+    /// <summary>Set if the struct contains itself by value (N0227); such a struct has no layout.</summary>
+    public bool IsRecursive { get; internal set; }
+
+    internal (int Size, int Align)? Layout { get; set; }
+
+    public StructField? FindField(Symbol name) => _fields.Find(f => f.Name == name);
+
+    internal StructField AddField(Symbol name, NovaType type, TextSpan span)
+    {
+        var field = new StructField(name, type, _fields.Count, span);
+        _fields.Add(field);
+        return field;
+    }
 }
 
 /// <summary>A Nova type. Types are compared by reference: each exists once per <see cref="TypeTable"/>.</summary>
 public sealed class NovaType
 {
+    internal NovaType(string name, StructDefinition definition)
+        : this(TypeKind.Struct, name) => Struct = definition;
+
     internal NovaType(TypeKind kind, string name, int bits = 0, bool isSigned = false)
     {
         Kind = kind;
@@ -44,6 +108,9 @@ public sealed class NovaType
     }
 
     public TypeKind Kind { get; }
+
+    /// <summary>The definition of a struct type; null for every other kind.</summary>
+    public StructDefinition? Struct { get; }
 
     public string Name { get; }
 
@@ -117,6 +184,52 @@ public sealed class TypeTable
     public NovaType Never { get; }
     public NovaType StringLiteral { get; }
     public NovaType Error { get; }
+
+    public static NovaType CreateStruct(string name, StructDecl syntax, SourceText source) =>
+        new(name, new StructDefinition(syntax, source));
+
+    /// <summary>
+    /// Size and alignment for the target, by C's rules (type-system.md §12). Struct field offsets are
+    /// stored on the fields. An empty struct is given one byte, because the C backend emits a placeholder
+    /// member: C has no empty structs.
+    /// </summary>
+    public static (int Size, int Align) LayoutOf(NovaType type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        switch (type.Kind)
+        {
+            case TypeKind.Integer:
+                return (type.Bits / 8, type.Bits / 8);
+            case TypeKind.Bool:
+                return (1, 1);
+            case TypeKind.Struct:
+            {
+                var definition = type.Struct!;
+                if (definition.Layout is { } cached)
+                {
+                    return cached;
+                }
+                if (definition.IsRecursive)
+                {
+                    throw new InvalidOperationException($"recursive struct '{type}' has no layout");
+                }
+                int offset = 0, align = 1;
+                foreach (var field in definition.Fields)
+                {
+                    var (fieldSize, fieldAlign) = LayoutOf(field.Type);
+                    offset = (offset + fieldAlign - 1) / fieldAlign * fieldAlign;
+                    field.Offset = offset;
+                    offset += fieldSize;
+                    align = Math.Max(align, fieldAlign);
+                }
+                var size = definition.Fields.Count == 0 ? 1 : (offset + align - 1) / align * align;
+                definition.Layout = (size, align);
+                return (size, align);
+            }
+            default:
+                throw new InvalidOperationException($"type '{type}' has no layout");
+        }
+    }
 
     /// <summary>Looks up a nameable built-in type (type-system.md §1).</summary>
     public NovaType? Lookup(string name) => _byName.GetValueOrDefault(name);

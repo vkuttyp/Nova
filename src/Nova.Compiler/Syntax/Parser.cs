@@ -135,7 +135,7 @@ public sealed class Parser
             else
             {
                 Error(DiagnosticCodes.ExpectedItem, Current.Span,
-                    $"expected 'fn' or 'const', found {TokenFacts.Describe(Current.Kind)}");
+                    $"expected 'fn', 'const' or 'struct', found {TokenFacts.Describe(Current.Kind)}");
                 Advance();
             }
 
@@ -158,7 +158,7 @@ public sealed class Parser
     }
 
     private static bool IsItemStart(TokenKind kind) => kind is TokenKind.FnKeyword or TokenKind.ConstKeyword
-        or TokenKind.PublicKeyword or TokenKind.InternalKeyword or TokenKind.PrivateKeyword;
+        or TokenKind.StructKeyword or TokenKind.PublicKeyword or TokenKind.InternalKeyword or TokenKind.PrivateKeyword;
 
     /// <summary>Keywords that begin a declaration in some milestone; top-level recovery stops at them.</summary>
     private static bool IsDeclarationKeyword(TokenKind kind) => IsItemStart(kind) || kind is TokenKind.NamespaceKeyword
@@ -217,9 +217,13 @@ public sealed class Parser
         {
             return ParseConst(visibility, start);
         }
+        if (At(TokenKind.StructKeyword))
+        {
+            return ParseStruct(visibility, start);
+        }
 
         Error(DiagnosticCodes.ExpectedItem, Current.Span,
-            $"expected 'fn' or 'const', found {TokenFacts.Describe(Current.Kind)}");
+            $"expected 'fn', 'const' or 'struct', found {TokenFacts.Describe(Current.Kind)}");
         // Consume the offender: recovery stops at declaration keywords, so leaving e.g. `let` would re-report it.
         Advance();
         return null;
@@ -231,8 +235,15 @@ public sealed class Parser
         var name = ParseIdentifier();
 
         Expect(TokenKind.OpenParen);
+        Receiver? receiver = null;
+        var moreParameters = true;
+        if (At(TokenKind.ThisKeyword))
+        {
+            receiver = new Receiver(Advance().Span);
+            moreParameters = Eat(TokenKind.Comma);
+        }
         var parameters = ImmutableArray.CreateBuilder<Parameter>();
-        while (!At(TokenKind.CloseParen) && !At(TokenKind.EndOfFile) && !At(TokenKind.OpenBrace))
+        while (moreParameters && !At(TokenKind.CloseParen) && !At(TokenKind.EndOfFile) && !At(TokenKind.OpenBrace))
         {
             var paramStart = Current.Span.Start;
             var paramName = ParseIdentifier();
@@ -266,7 +277,106 @@ public sealed class Parser
             expressionBody = new ErrorExpr(new TextSpan(Current.Span.Start, 0));
         }
 
-        return new FunctionDecl(visibility, name, parameters.ToImmutable(), returnType, body, expressionBody, SpanFrom(start));
+        return new FunctionDecl(visibility, name, receiver, parameters.ToImmutable(), returnType, body, expressionBody, SpanFrom(start));
+    }
+
+    private Visibility ParseVisibility()
+    {
+        var visibility = Current.Kind switch
+        {
+            TokenKind.PublicKeyword => Visibility.Public,
+            TokenKind.InternalKeyword => Visibility.Internal,
+            TokenKind.PrivateKeyword => Visibility.Private,
+            _ => Visibility.Default,
+        };
+        if (visibility != Visibility.Default)
+        {
+            Advance();
+        }
+        return visibility;
+    }
+
+    private StructDecl ParseStruct(Visibility visibility, int start)
+    {
+        Expect(TokenKind.StructKeyword);
+        var name = ParseIdentifier();
+        var fields = ImmutableArray.CreateBuilder<FieldDecl>();
+        var functions = ImmutableArray.CreateBuilder<FunctionDecl>();
+        if (!At(TokenKind.OpenBrace))
+        {
+            Expect(TokenKind.OpenBrace);
+            return new StructDecl(visibility, name, [], [], SpanFrom(start));
+        }
+        Advance();
+
+        while (!At(TokenKind.CloseBrace) && !At(TokenKind.EndOfFile))
+        {
+            var startPos = _pos;
+            var memberStart = Current.Span.Start;
+            var memberVisibility = ParseVisibility();
+            if (At(TokenKind.FnKeyword))
+            {
+                functions.Add(ParseFunction(memberVisibility, memberStart));
+            }
+            else if (At(TokenKind.Identifier))
+            {
+                var fieldName = ParseIdentifier();
+                Expect(TokenKind.Colon);
+                var type = ParseType();
+                Expect(TokenKind.Semicolon);
+                fields.Add(new FieldDecl(memberVisibility, fieldName, type, SpanFrom(memberStart)));
+            }
+            else
+            {
+                Error(DiagnosticCodes.ExpectedMember, Current.Span,
+                    $"expected a field or 'fn' in struct, found {TokenFacts.Describe(Current.Kind)}");
+                Advance();
+            }
+            SynchronizeMember();
+            if (_pos == startPos)
+            {
+                Advance();
+            }
+        }
+        Expect(TokenKind.CloseBrace);
+        return new StructDecl(visibility, name, fields.ToImmutable(), functions.ToImmutable(), SpanFrom(start));
+    }
+
+    /// <summary>Recovery inside a struct body (grammar.md §3): skip to the next member start or the closing brace.</summary>
+    private void SynchronizeMember()
+    {
+        if (!_recovering)
+        {
+            return;
+        }
+        if (Previous.Kind is not (TokenKind.Semicolon or TokenKind.CloseBrace))
+        {
+            var depth = 0;
+            while (!At(TokenKind.EndOfFile))
+            {
+                var kind = Current.Kind;
+                var memberStart = kind is TokenKind.FnKeyword or TokenKind.PublicKeyword or TokenKind.InternalKeyword
+                    or TokenKind.PrivateKeyword || (kind == TokenKind.Identifier && Peek(1).Kind == TokenKind.Colon);
+                if (depth == 0 && (memberStart || kind == TokenKind.CloseBrace))
+                {
+                    break;
+                }
+                Advance();
+                if (kind == TokenKind.OpenBrace)
+                {
+                    depth++;
+                }
+                else if (kind == TokenKind.CloseBrace)
+                {
+                    depth--;
+                }
+                else if (kind == TokenKind.Semicolon && depth == 0)
+                {
+                    break;
+                }
+            }
+        }
+        _recovering = false;
     }
 
     private ConstDecl ParseConst(Visibility visibility, int start)
@@ -689,8 +799,15 @@ public sealed class Parser
             {
                 var name = ParseIdentifier();
                 var typeArguments = IsGenericArgumentListAhead() ? ParseGenericArguments() : [];
+                if (typeArguments.IsEmpty && At(TokenKind.OpenBrace))
+                {
+                    return ParseStructLiteral(name, token.Span.Start);
+                }
                 return new NameExpr(name, typeArguments, SpanFrom(token.Span.Start));
             }
+            case TokenKind.ThisKeyword:
+                Advance();
+                return new ThisExpr(token.Span);
             case TokenKind.OpenParen:
             {
                 Advance();
@@ -710,6 +827,46 @@ public sealed class Parser
                 Advance();
                 return new ErrorExpr(token.Span);
         }
+    }
+
+    /// <summary>A struct literal after its type name: <c>{ f: e, ... }</c> (grammar.md §2.1).</summary>
+    private StructLiteralExpr ParseStructLiteral(Identifier typeName, int start)
+    {
+        Expect(TokenKind.OpenBrace);
+        var fields = ImmutableArray.CreateBuilder<FieldInit>();
+        while (!At(TokenKind.CloseBrace) && !At(TokenKind.EndOfFile))
+        {
+            var fieldStart = Current.Span.Start;
+            var fieldName = ParseIdentifier();
+            Expect(TokenKind.Colon);
+            var value = ParseExpr();
+            fields.Add(new FieldInit(fieldName, value, SpanFrom(fieldStart)));
+            if (!Eat(TokenKind.Comma))
+            {
+                break;
+            }
+        }
+        if (!At(TokenKind.CloseBrace))
+        {
+            // Recover inside the literal: its own '}' must not be taken for the end of the enclosing block.
+            Expect(TokenKind.CloseBrace);
+            var depth = 0;
+            while (!At(TokenKind.EndOfFile) && !(depth == 0 && At(TokenKind.Semicolon)))
+            {
+                var kind = Advance().Kind;
+                if (kind == TokenKind.OpenBrace)
+                {
+                    depth++;
+                }
+                else if (kind == TokenKind.CloseBrace && depth-- == 0)
+                {
+                    break;
+                }
+            }
+            return new StructLiteralExpr(typeName, fields.ToImmutable(), SpanFrom(start));
+        }
+        Advance();
+        return new StructLiteralExpr(typeName, fields.ToImmutable(), SpanFrom(start));
     }
 
     /// <summary>

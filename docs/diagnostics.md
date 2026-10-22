@@ -53,6 +53,7 @@ diagnostics, so any cascade fails the test.
 | N0104 | Invalid assignment target | `1 = 2;`, `f() = 3;` |
 | N0105 | Expected a type | `fn f(x: ) {}` |
 | N0106 | Namespace declaration not first in the file | `fn a() {}` then `namespace X;` |
+| N0107 | Expected a field or `fn` inside a struct body | `struct A { 42; }` |
 
 ### Names, types and flow (N0200–N0299)
 
@@ -86,6 +87,14 @@ Semantic checks run only when every file parsed without errors.
 | N0224 | Value of type `void` used as a value | `let d = nothing();` |
 | N0225 | Expression statement that is not a call | `1 + 2;` |
 | N0226 | `void` used other than as a return type | `var e: void;` |
+| N0227 | Struct contains itself by value (infinite size); reported at the field that closes the cycle | `struct Node { next: Node; }` |
+| N0228 | Duplicate member (field or function) in a struct | `struct D { a: i32; a: i64; }` |
+| N0229 | Struct literal does not initialise every field | `Point { x: 1 }` |
+| N0230 | Unknown field (in a literal or an access), or a function named where a field was expected | `p.z`, `p.sum` |
+| N0231 | Field initialised twice in a literal | `Point { x: 1, x: 2, y: 3 }` |
+| N0232 | `this` outside a method, or a `this` parameter outside a struct | `fn f() -> i32 => this;` |
+| N0233 | Method called as a static function, or a static function called on a value | `Point.sum()`, `p.origin()` |
+| N0234 | Field access, method call or literal on something that is not a struct | `n.x` with `n: i32` |
 
 ### Build (N0300–N0399)
 

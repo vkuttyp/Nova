@@ -1,0 +1,14 @@
+struct A {
+    x i32; // error[N0100]
+    y: i32;
+    42; // error[N0107]
+    fn f(this) { }
+}
+struct B {
+    a: i32 // error[N0100]
+    b: i32;
+}
+fn literals() {
+    let p = A { x: 1 y: 2 }; // error[N0100]
+    let q = A { x: , y: 2 }; // error[N0102]
+}

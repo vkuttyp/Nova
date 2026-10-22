@@ -1,0 +1,13 @@
+struct Acc {
+    total: u8;
+    fn add(this, v: u8) -> Acc => Acc { total: this.total + v }; // expect-panic: integer overflow
+}
+
+fn main() {
+    var a = Acc { total: 200 };
+    a = a.add(50);
+    Console.writeLine(a.total);
+    a = a.add(10);
+    Console.writeLine(a.total);
+}
+// expect-stdout: 250

@@ -1,0 +1,26 @@
+(unit
+  (struct default Point
+    (field default x i64)
+    (field public y i64)
+    (fn default sum (params this) (returns i64)
+      (=> (+ (. this x) (. this y)))
+    )
+    (fn public scaled (params this (k i64)) (returns Point)
+      (=> (new Point (x (* (. this x) k)) (y (* (. this y) k))))
+    )
+    (fn default origin (params) (returns Point)
+      (=> (new Point (x 0) (y 0)))
+    )
+  )
+  (struct public Empty
+  )
+  (fn default use (params (p Point)) (returns i64)
+    (block
+      (var q = (new Point (y 1) (x (. p x))))
+      (= (. q x) (. q y))
+      (+= (. q y) (call (. (call (. Point origin)) sum)))
+      (let e = (new Empty))
+      (return (call (. (call (. q scaled) 2) sum)))
+    )
+  )
+)

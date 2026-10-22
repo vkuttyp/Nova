@@ -148,3 +148,46 @@ flexible literal is typed as `u32`. Other mismatches are N0207.
 
 If a function named `main` exists, it must take no parameters and return `i32` or
 `void` (N0219). Whether `main` is *required* is decided by `novac build` (increment 1c).
+
+## 12. Structs (M2a)
+
+```nova
+struct Point {
+    x: i64;
+    y: i64;
+
+    fn sum(this) -> i64 => this.x + this.y;                    // method: `this` by value
+    fn origin() -> Point => Point { x: 0, y: 0 };             // static function
+}
+```
+
+- **Declaration.** Top level only. Field names and member names (fields and functions) are unique
+  within the struct (N0228). Field types are any non-`void` M1 type or another struct. A struct
+  must not contain itself by value, directly or through other structs (N0227: infinite size).
+  Recursive data needs indirection (`Box`, M3). Empty structs are allowed.
+- **Names.** A struct name is a package item (unique with functions and constants, N0201) and a
+  type name. In expressions, `S.f(...)` calls the static function `f` of `S`.
+- **Copy.** In M2a every struct is a Copy type: its fields are Copy and `drop` does not exist yet.
+  Assignment, argument passing and return copy the value. OD-7's rule ("Copy iff all fields Copy
+  and no `drop`") takes effect in 2c.
+- **Literals.** `S { f1: e1, …, fn: en }` must initialise **every** field exactly once (missing:
+  N0229, unknown: N0230, duplicate: N0231), in any order. Each `ei` is checked against the field's
+  type. Initialisers are **evaluated in source order** (`intermediate-representation.md`), not in
+  declaration order.
+- **Field access.** `e.f` where `e` has struct type `S` and `f` is a field of `S` has `f`'s type
+  (unknown field: N0230; `e` is not a struct: N0234). An access chain `a.b.c` is a *place* if `a`
+  is a local or `this`.
+- **Field assignment.** `a.f = e` and `a.f op= e` require the root local `a` to be a `var` (N0211).
+  `this` is immutable in a by-value method. The root must be definitely assigned *as a whole*
+  first (N0212): M2a has no partial initialisation.
+- **Methods.** A function in a struct whose first parameter is `this` is a method. `this` has the
+  struct's type and is an immutable binding (a copy for Copy structs). It is called as `e.m(args)`,
+  where `e` is evaluated first and passed as `this`. A static function (no `this`) is called as
+  `S.f(args)`. Calling a method as `S.m()`, or a static function as `e.f()`, is N0233. `this`
+  anywhere other than a method's receiver position or body is N0232.
+- **Operators.** No operator applies to struct values in M2a (`==` included: N0207).
+  `Console.write` cannot print structs (N0207).
+- **Layout.** Fields are laid out in declaration order with C's rules (`@repr(C)` by default,
+  `memory-model.md` §2). The compiler computes size, alignment and field offsets from `TargetInfo`.
+  The generated C checks them with `_Static_assert` (`c-backend.md` §2), so a disagreement with the
+  real C compiler fails the build instead of miscompiling.

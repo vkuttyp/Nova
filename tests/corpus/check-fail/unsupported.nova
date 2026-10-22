@@ -2,7 +2,7 @@ fn f(n: i32) {
     let a = 1.5; // error[N0216]
     let b = 'c'; // error[N0216]
     let c = "text"; // error[N0216]
-    let d = n.field; // error[N0216]
+    let d = n.field; // error[N0234]
     let e = truncate(n); // error[N0216]
     let g = f<i32>(n); // error[N0216]
 }

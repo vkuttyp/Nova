@@ -1,0 +1,49 @@
+struct Point { x: i64; y: i64; fn sum(this) -> i64 => this.x + this.y; fn origin() -> Point => Point { x: 0, y: 0 }; }
+struct Node { value: i32; next: Node; } // error[N0227]
+struct Left { right: Right; }
+struct Right { left: Left; } // error[N0227]
+struct Dup { a: i32; a: i64; } // error[N0228]
+struct DupFn { a: i32; fn a() { } } // error[N0228]
+struct i32 { } // error[N0201]
+struct Point { } // error[N0201]
+const ORIGIN: Point = Point.origin(); // error[N0216] // error[N0217]
+fn literals() {
+    let a = Point { x: 1 }; // error[N0229]
+    let b = Point { x: 1, y: 2, z: 3 }; // error[N0230]
+    let c = Point { x: 1, x: 2, y: 3 }; // error[N0231]
+    let d = Nothing { x: 1 }; // error[N0204]
+    let e = literals { }; // error[N0234]
+}
+fn fields(p: Point, n: i32) {
+    let a = p.z; // error[N0230]
+    let b = n.x; // error[N0234]
+    let c = p.sum; // error[N0230]
+    let d = Point.origin; // error[N0210]
+    let e = Point; // error[N0210]
+}
+fn calls(p: Point, n: i32) {
+    let a = Point.sum(); // error[N0233]
+    let b = p.origin(); // error[N0233]
+    let c = p.nothing(); // error[N0200]
+    let d = Point.nothing(); // error[N0200]
+    let e = n.sum(); // error[N0234]
+    let f = p.x(); // error[N0200]
+    let g = p.sum(1); // error[N0209]
+}
+fn mutation(p: Point) {
+    let fixed = Point { x: 1, y: 2 };
+    fixed.x = 3; // error[N0211]
+    p.y = 4; // error[N0211]
+    var q: Point;
+    q.x = 1; // error[N0212]
+}
+struct Mutator {
+    v: i32;
+    fn set(this) { this.v = 1; } // error[N0211]
+}
+fn thisOutside() -> i32 => this; // error[N0232]
+fn receiverOutside(this) { } // error[N0232]
+fn operators(p: Point, q: Point) {
+    let a = p == q; // error[N0207]
+    Console.writeLine(p); // error[N0207]
+}

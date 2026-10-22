@@ -1,0 +1,31 @@
+(program
+  (fn area ((r#0: Rect)) -> i64
+    (block
+      (return (* (- (. (. r#0 max):Point x):i64 (. (. r#0 min):Point x):i64):i64 (- (. (. r#0 max):Point y):i64 (. (. r#0 min):Point y):i64):i64):i64)
+    )
+  )
+  (fn update ((start#0: Rect)) -> i64
+    (block
+      (var r#1: Rect = start#0)
+      (= r#1.max.x 10:i64)
+      (+= r#1.max.y 1:i64)
+      (let corner#2: Point = (call Point.scaled (. r#1 max):Point 2:i64):Point)
+      (return (+ (+ (call area r#1):i64 (call Point.sum corner#2):i64):i64 (call Point.sum (call Point.origin):Point):i64):i64)
+    )
+  )
+  (fn Point.sum ((this#0: Point)) -> i64
+    (block
+      (return (+ (. this#0 x):i64 (. this#0 y):i64):i64)
+    )
+  )
+  (fn Point.scaled ((this#0: Point) (k#1: i64)) -> Point
+    (block
+      (return (new Point (y (* (. this#0 y):i64 k#1):i64) (x (* (. this#0 x):i64 k#1):i64)))
+    )
+  )
+  (fn Point.origin () -> Point
+    (block
+      (return (new Point (x 0:i64) (y 0:i64)))
+    )
+  )
+)

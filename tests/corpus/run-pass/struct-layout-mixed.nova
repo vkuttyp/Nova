@@ -1,0 +1,22 @@
+// Mixed field sizes exercise padding; the generated C asserts Nova's layout.
+struct Mixed { a: u8; b: u64; c: u16; d: bool; e: i32; f: i8; }
+struct Outer { tag: u8; inner: Mixed; tail: u8; }
+struct Empty { }
+
+fn total(m: Mixed) -> u64 {
+    var t = m.a as u64 + m.b + m.c as u64 + truncate<u64>(m.e) + truncate<u64>(m.f);
+    if (m.d) { t += 1000; }
+    return t;
+}
+
+fn main() {
+    let m = Mixed { a: 1, b: 2, c: 3, d: true, e: 4, f: 5 };
+    var o = Outer { tag: 9, inner: m, tail: 7 };
+    o.inner.b = 20;
+    Console.writeLine(total(o.inner));
+    Console.writeLine(o.tag as u32 + o.tail as u32);
+    let e = Empty { };
+    let f = e;
+}
+// expect-stdout: 1033
+// expect-stdout: 16

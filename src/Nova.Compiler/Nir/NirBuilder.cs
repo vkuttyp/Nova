@@ -36,7 +36,7 @@ public sealed class NirBuilder
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(types);
-        return new NirProgram([.. program.Functions.Select(f => new NirBuilder(f, types).BuildFunction())]);
+        return new NirProgram([.. program.Functions.Select(f => new NirBuilder(f, types).BuildFunction())], program.Structs);
     }
 
     private NirFunction BuildFunction()
@@ -123,20 +123,20 @@ public sealed class NirBuilder
                 }
                 break;
             case HirLocalDecl decl when decl.Initializer is not null:
-                AssignRvalue(_locals[decl.Local.Id], decl.Initializer);
+                AssignRvalue(new NirPlace(_locals[decl.Local.Id]), decl.Initializer);
                 break;
             case HirLocalDecl:
                 break;
             case HirAssign { Op: null } assign:
-                AssignRvalue(_locals[assign.Target.Id], assign.Value);
+                AssignRvalue(ToPlace(assign.Target), assign.Value);
                 break;
             case HirAssign assign:
             {
-                var target = _locals[assign.Target.Id];
+                var target = ToPlace(assign.Target);
                 var right = LowerOperand(assign.Value);
                 if (right is not null)
                 {
-                    Emit(new NirAssign(target, new NirBinary(assign.Op!.Value, new NirLocalOperand(target), right,
+                    Emit(new NirAssign(target, new NirBinary(assign.Op!.Value, new NirPlaceOperand(target), right,
                         target.Type, _function.Source, assign.Span)));
                 }
                 break;
@@ -251,7 +251,9 @@ public sealed class NirBuilder
         _current = joinReached ? join : null;
     }
 
-    private void AssignRvalue(NirLocal target, HirExpr value)
+    private NirPlace ToPlace(HirPlace place) => new(_locals[place.Root.Id], place.Path);
+
+    private void AssignRvalue(NirPlace target, HirExpr value)
     {
         var rvalue = LowerRvalue(value);
         if (rvalue is not null)
@@ -274,7 +276,16 @@ public sealed class NirBuilder
             case HirStringConst s:
                 return new NirString(s.Value, s.Type);
             case HirLocalRef l:
-                return new NirLocalOperand(_locals[l.Local.Id]);
+                return new NirPlaceOperand(_locals[l.Local.Id]);
+            case HirFieldAccess field:
+            {
+                // A field of a place is itself a place; a field of any other value reads from a temporary.
+                if (LowerOperand(field.Target) is not NirPlaceOperand target)
+                {
+                    return null;
+                }
+                return new NirPlaceOperand(target.Place.Field(field.Field));
+            }
         }
 
         var rvalue = LowerRvalue(expr);
@@ -283,8 +294,8 @@ public sealed class NirBuilder
             return null;
         }
         var temp = NewTemp(expr.Type);
-        Emit(new NirAssign(temp, rvalue));
-        return new NirLocalOperand(temp);
+        Emit(new NirAssign(new NirPlace(temp), rvalue));
+        return new NirPlaceOperand(temp);
     }
 
     private NirRvalue? LowerRvalue(HirExpr expr)
@@ -293,6 +304,26 @@ public sealed class NirBuilder
         {
             case HirIntConst or HirBoolConst or HirLocalRef or HirStringConst:
                 return new NirUse(LowerOperand(expr)!);
+            case HirFieldAccess:
+            {
+                var operand = LowerOperand(expr);
+                return operand is null ? null : new NirUse(operand);
+            }
+            case HirStructLiteral literal:
+            {
+                // Evaluate in source order, then place the values in declaration order.
+                var values = LowerOperands([.. literal.Fields.Select(f => f.Value)]);
+                if (values.IsDefault)
+                {
+                    return null;
+                }
+                var ordered = new NirOperand[literal.Fields.Length];
+                for (var i = 0; i < literal.Fields.Length; i++)
+                {
+                    ordered[literal.Fields[i].Field.Index] = values[i];
+                }
+                return new NirAggregate([.. ordered], literal.Type);
+            }
             case HirUnary unary:
             {
                 var operand = LowerOperand(unary.Operand);
@@ -356,11 +387,11 @@ public sealed class NirBuilder
             {
                 return default;
             }
-            if (operand is NirLocalOperand { Local.Name: not null } && exprs.Skip(i + 1).Any(ContainsCall))
+            if (operand is NirPlaceOperand { Place.Local.Name: not null } && exprs.Skip(i + 1).Any(ContainsCall))
             {
                 var temp = NewTemp(operand.Type);
-                Emit(new NirAssign(temp, new NirUse(operand)));
-                operand = new NirLocalOperand(temp);
+                Emit(new NirAssign(new NirPlace(temp), new NirUse(operand)));
+                operand = new NirPlaceOperand(temp);
             }
             result.Add(operand);
         }
@@ -374,6 +405,8 @@ public sealed class NirBuilder
         HirBinary b => ContainsCall(b.Left) || ContainsCall(b.Right),
         HirCast c => ContainsCall(c.Operand),
         HirTruncate t => ContainsCall(t.Operand),
+        HirFieldAccess f => ContainsCall(f.Target),
+        HirStructLiteral s => s.Fields.Any(f => ContainsCall(f.Value)),
         _ => false,
     };
 
@@ -392,18 +425,18 @@ public sealed class NirBuilder
         Terminate(isAnd ? new NirBranch(left, evaluateRight, shortCircuit) : new NirBranch(left, shortCircuit, evaluateRight));
 
         _current = shortCircuit;
-        Emit(new NirAssign(result, new NirUse(new NirConst(isAnd ? 0 : 1, _types.Bool))));
+        Emit(new NirAssign(new NirPlace(result), new NirUse(new NirConst(isAnd ? 0 : 1, _types.Bool))));
         Terminate(new NirGoto(join));
 
         _current = evaluateRight;
         var right = LowerOperand(logical.Right);
         if (_current is not null)
         {
-            Emit(new NirAssign(result, new NirUse(right!)));
+            Emit(new NirAssign(new NirPlace(result), new NirUse(right!)));
             Terminate(new NirGoto(join));
         }
 
         _current = join;
-        return new NirUse(new NirLocalOperand(result));
+        return new NirUse(new NirPlaceOperand(result));
     }
 }

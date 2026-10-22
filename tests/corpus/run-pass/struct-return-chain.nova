@@ -1,0 +1,16 @@
+struct V { x: i64; y: i64;
+    fn add(this, o: V) -> V => V { x: this.x + o.x, y: this.y + o.y };
+    fn dot(this, o: V) -> i64 => this.x * o.x + this.y * o.y;
+    fn unit() -> V => V { x: 1, y: 1 };
+}
+
+fn make(n: i64) -> V => V { x: n, y: -n };
+
+fn main() {
+    Console.writeLine(make(3).add(V.unit()).add(make(10)).dot(V.unit()));
+    Console.writeLine(make(4).x);
+    Console.writeLine(V.unit().add(V.unit()).y);
+}
+// expect-stdout: 2
+// expect-stdout: 4
+// expect-stdout: 2

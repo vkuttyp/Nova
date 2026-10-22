@@ -1,0 +1,18 @@
+struct Point {
+    x: i64;
+    public y: i64;
+
+    fn sum(this) -> i64 => this.x + this.y;
+    public fn scaled(this, k: i64,) -> Point => Point { x: this.x * k, y: this.y * k };
+    fn origin() -> Point => Point { x: 0, y: 0, };
+}
+
+public struct Empty { }
+
+fn use(p: Point) -> i64 {
+    var q = Point { y: 1, x: p.x };
+    q.x = q.y;
+    q.y += Point.origin().sum();
+    let e = Empty { };
+    return q.scaled(2).sum();
+}

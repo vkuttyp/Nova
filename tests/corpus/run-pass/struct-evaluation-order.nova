@@ -1,0 +1,17 @@
+struct Pair { a: i32; b: i32; }
+
+fn trace(v: i32) -> i32 {
+    Console.write(v);
+    Console.write(" ");
+    return v;
+}
+
+fn main() {
+    let p = Pair { b: trace(1), a: trace(2) };
+    Console.writeLine(p.a * 10 + p.b);
+    var q = Pair { a: 5, b: 6 };
+    let r = Pair { a: q.a, b: trace(q.b) };
+    Console.writeLine(r.a);
+}
+// expect-stdout: 1 2 21
+// expect-stdout: 6 5

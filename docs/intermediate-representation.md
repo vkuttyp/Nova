@@ -28,16 +28,18 @@ function  = locals: [local]          -- _0.._(n-1) are the parameters, in order
             blocks: [block]          -- bb0 is the entry block
 local     = id, type, name?          -- name is null for compiler temporaries
 block     = id, statements: [stmt], terminator
-stmt      = Assign(local, rvalue)
+place     = local ('.' field)*              -- M2a: field projections of struct values
+stmt      = Assign(place, rvalue)
           | Eval(rvalue)             -- for calls whose result is unused (void)
 rvalue    = Use(operand)
           | Binary(op, operand, operand, span)     -- op semantics: type-system.md §6 (may panic)
           | Unary(op, operand, span)
           | Cast(operand, type)                    -- lossless `as`
           | Truncate(operand, type)
+          | Aggregate(struct, [operand])           -- field values in declaration order (M2a)
           | Call(function, [operand])
           | Builtin(kind, [operand])               -- Console.write/writeLine
-operand   = Local(id) | Const(value, type) | String(text)
+operand   = Place(place) | Const(value, type) | String(text)
 terminator= Goto(bb) | Branch(operand, then_bb, else_bb) | Return(operand?)
           | Exit(operand)                          -- Process.exit
           | Unreachable                            -- after a call of type never
@@ -51,7 +53,12 @@ Lowering rules (HIR → NIR, `NirBuilder`):
   left-to-right semantics when calls can mutate state (M2+).
 - `&&` and `||` become branches into a boolean temporary. The right operand is evaluated
   only when needed.
-- `x op= e` becomes `x = Binary(op, x, e)`.
+- `x op= e` becomes `x = Binary(op, x, e)`; the same applies with a place such as `p.a.b`.
+- A struct literal evaluates its initialisers **in source order** into operands, then builds an
+  `Aggregate` with them in declaration order.
+- A field read of a place is a place operand (`_3.a.b`). A field read of any other value (a call
+  result) first spills the value into a temporary. A method call passes the receiver as the first
+  argument, evaluated before the explicit arguments.
 - `while` becomes `cond → body → cond`, and `loop` becomes `body → body`. `break` and `continue`
   jump to the innermost loop's exit or head.
 - Statements after a `return`, `break`, `continue`, `Process.exit` or never-typed call are

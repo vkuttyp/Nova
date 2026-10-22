@@ -34,15 +34,31 @@ public enum Visibility
 
 public abstract record Item(Visibility Visibility, Identifier Name, TextSpan Span) : SyntaxNode(Span);
 
-/// <summary>A function. Exactly one of <see cref="Body"/> and <see cref="ExpressionBody"/> is set.</summary>
+/// <summary>
+/// A function. Exactly one of <see cref="Body"/> and <see cref="ExpressionBody"/> is set.
+/// <see cref="Receiver"/> is set for a method's <c>this</c> parameter (type-system.md §12).
+/// </summary>
 public sealed record FunctionDecl(
     Visibility Visibility,
     Identifier Name,
+    Receiver? Receiver,
     ImmutableArray<Parameter> Parameters,
     TypeSyntax? ReturnType,
     BlockStmt? Body,
     Expr? ExpressionBody,
     TextSpan Span) : Item(Visibility, Name, Span);
+
+/// <summary>The <c>this</c> receiver of a method. M2a: by value only.</summary>
+public sealed record Receiver(TextSpan Span) : SyntaxNode(Span);
+
+public sealed record StructDecl(
+    Visibility Visibility,
+    Identifier Name,
+    ImmutableArray<FieldDecl> Fields,
+    ImmutableArray<FunctionDecl> Functions,
+    TextSpan Span) : Item(Visibility, Name, Span);
+
+public sealed record FieldDecl(Visibility Visibility, Identifier Name, TypeSyntax Type, TextSpan Span) : SyntaxNode(Span);
 
 public sealed record ConstDecl(
     Visibility Visibility,
@@ -164,3 +180,10 @@ public sealed record CallExpr(Expr Callee, ImmutableArray<Expr> Arguments, TextS
 public sealed record MemberExpr(Expr Target, Identifier Member, TextSpan Span) : Expr(Span);
 
 public sealed record ErrorExpr(TextSpan Span) : Expr(Span);
+
+public sealed record ThisExpr(TextSpan Span) : Expr(Span);
+
+/// <summary><c>S { f: e, ... }</c>; initialisers in source order.</summary>
+public sealed record StructLiteralExpr(Identifier TypeName, ImmutableArray<FieldInit> Fields, TextSpan Span) : Expr(Span);
+
+public sealed record FieldInit(Identifier Name, Expr Value, TextSpan Span) : SyntaxNode(Span);

@@ -9,9 +9,16 @@ namespace Nova.Compiler.Nir;
 
 public sealed class NirProgram
 {
-    internal NirProgram(ImmutableArray<NirFunction> functions) => Functions = functions;
+    internal NirProgram(ImmutableArray<NirFunction> functions, ImmutableArray<NovaType> structs)
+    {
+        Functions = functions;
+        Structs = structs;
+    }
 
     public ImmutableArray<NirFunction> Functions { get; }
+
+    /// <summary>Struct types in declaration order.</summary>
+    public ImmutableArray<NovaType> Structs { get; }
 }
 
 public sealed class NirLocal
@@ -71,7 +78,27 @@ public sealed class NirBlock
 
 public abstract record NirOperand(NovaType Type);
 
-public sealed record NirLocalOperand(NirLocal Local) : NirOperand(Local.Type);
+/// <summary>A local or a field path rooted at one: <c>_3</c>, <c>_3.a.b</c>.</summary>
+public sealed record NirPlace(NirLocal Local, ImmutableArray<StructField> Path)
+{
+    public NirPlace(NirLocal local)
+        : this(local, [])
+    {
+    }
+
+    public NovaType Type => Path.IsEmpty ? Local.Type : Path[^1].Type;
+
+    public NirPlace Field(StructField field) => new(Local, Path.Add(field));
+}
+
+/// <summary>Reads (copies) the value in a place.</summary>
+public sealed record NirPlaceOperand(NirPlace Place) : NirOperand(Place.Type)
+{
+    public NirPlaceOperand(NirLocal local)
+        : this(new NirPlace(local))
+    {
+    }
+}
 
 /// <summary>An integer or bool constant (bools use 0/1).</summary>
 public sealed record NirConst(Int128 Value, NovaType Type) : NirOperand(Type);
@@ -94,6 +121,9 @@ public sealed record NirCast(NirOperand Operand, NovaType Type) : NirRvalue(Type
 
 public sealed record NirTruncate(NirOperand Operand, NovaType Type) : NirRvalue(Type);
 
+/// <summary>A struct value built from its field values, given in declaration order.</summary>
+public sealed record NirAggregate(ImmutableArray<NirOperand> Fields, NovaType Type) : NirRvalue(Type);
+
 public sealed record NirCall(HirFunction Callee, ImmutableArray<NirOperand> Arguments, NovaType Type) : NirRvalue(Type);
 
 public sealed record NirBuiltin(BuiltinFunction Function, ImmutableArray<NirOperand> Arguments, NovaType Type) : NirRvalue(Type);
@@ -102,7 +132,7 @@ public sealed record NirBuiltin(BuiltinFunction Function, ImmutableArray<NirOper
 
 public abstract record NirStatement;
 
-public sealed record NirAssign(NirLocal Target, NirRvalue Value) : NirStatement;
+public sealed record NirAssign(NirPlace Target, NirRvalue Value) : NirStatement;
 
 /// <summary>Evaluates an rvalue for its effect (a call whose result is unused).</summary>
 public sealed record NirEval(NirRvalue Value) : NirStatement;

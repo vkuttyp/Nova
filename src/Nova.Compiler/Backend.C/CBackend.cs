@@ -49,7 +49,7 @@ public static class CBackend
             throw new InvalidOperationException("cannot generate code for a compilation with errors");
         }
 
-        var hasMain = compilation.Hir.Functions.Any(f => compilation.Symbols.GetName(f.Name) == "main");
+        var hasMain = compilation.Hir.Functions.Any(f => f.Owner is null && compilation.Symbols.GetName(f.Name) == "main");
         if (requireMain && !hasMain)
         {
             var source = compilation.Units[0].Source;

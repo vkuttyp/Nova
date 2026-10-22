@@ -1,0 +1,21 @@
+struct Counter {
+    count: u32;
+    step: u32;
+
+    fn next(this) -> Counter => Counter { count: this.count + this.step, step: this.step };
+    fn value(this) -> u32 => this.count;
+    fn start(step: u32) -> Counter => Counter { count: 0, step: step };
+}
+
+fn main() {
+    var c = Counter.start(5);
+    var i = 0;
+    while (i < 4) {
+        c = c.next();
+        i += 1;
+    }
+    Console.writeLine(c.value());
+    Console.writeLine(Counter.start(3).next().next().value());
+}
+// expect-stdout: 20
+// expect-stdout: 6

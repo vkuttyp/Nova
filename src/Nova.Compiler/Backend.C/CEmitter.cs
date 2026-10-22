@@ -58,6 +58,8 @@ public sealed class CEmitter
         }
         Line();
 
+        EmitStructs();
+
         foreach (var function in _program.Functions)
         {
             Line($"static NV_UNUSED {Signature(function, withNames: false)};");
@@ -73,7 +75,73 @@ public sealed class CEmitter
         EmitMainWrapper();
     }
 
-    private string FunctionName(NirFunction function) => "nv_" + _symbols.GetName(function.Name);
+    /// <summary>
+    /// Struct definitions, each after the structs it contains by value, with static assertions that
+    /// the C compiler's layout matches Nova's (type-system.md §12).
+    /// </summary>
+    private void EmitStructs()
+    {
+        if (_program.Structs.IsEmpty)
+        {
+            return;
+        }
+        foreach (var type in _program.Structs)
+        {
+            Line($"typedef struct {CTypeName(type)} {CTypeName(type)};");
+        }
+        Line();
+
+        var emitted = new HashSet<NovaType>();
+        void Emit(NovaType type)
+        {
+            if (!emitted.Add(type))
+            {
+                return;
+            }
+            var definition = type.Struct!;
+            foreach (var field in definition.Fields.Where(f => f.Type.Kind == TypeKind.Struct))
+            {
+                Emit(field.Type);
+            }
+
+            var name = CTypeName(type);
+            var (size, align) = TypeTable.LayoutOf(type);
+            Line($"struct {name} {{");
+            if (definition.Fields.Count == 0)
+            {
+                Line("    uint8_t nv_empty; /* C has no empty structs */");
+            }
+            foreach (var field in definition.Fields)
+            {
+                Line($"    {CType(field.Type)} {FieldName(field)};");
+            }
+            Line("};");
+            Line($"_Static_assert(sizeof({name}) == {size}, \"novac layout: sizeof({type})\");");
+            Line($"_Static_assert(_Alignof({name}) == {align}, \"novac layout: alignof({type})\");");
+            foreach (var field in definition.Fields)
+            {
+                Line($"_Static_assert(offsetof({name}, {FieldName(field)}) == {field.Offset}, \"novac layout: {type}.{_symbols.GetName(field.Name)}\");");
+            }
+            Line();
+        }
+
+        foreach (var type in _program.Structs)
+        {
+            Emit(type);
+        }
+    }
+
+    private string FieldName(StructField field) => "f_" + _symbols.GetName(field.Name);
+
+    private string FunctionName(NirFunction function) => FunctionName(function.Source);
+
+    /// <summary>
+    /// Top-level functions are <c>nv_name</c>; struct members are <c>nvM_&lt;length&gt;&lt;Struct&gt;_name</c>.
+    /// The length prefix makes the struct/member boundary unambiguous, so the names cannot collide.
+    /// </summary>
+    private string FunctionName(HirFunction function) => function.Owner is { } owner
+        ? $"nvM_{owner.Name.Length}{owner.Name}_{_symbols.GetName(function.Name)}"
+        : "nv_" + _symbols.GetName(function.Name);
 
     private string Signature(NirFunction function, bool withNames)
     {
@@ -90,7 +158,7 @@ public sealed class CEmitter
         foreach (var local in function.Locals.Skip(function.ParameterCount))
         {
             // Zero-initialised: Nova's definite assignment already forbids reading it first.
-            var zero = local.Type.Kind == TypeKind.Bool ? "false" : "0";
+            var zero = local.Type.Kind switch { TypeKind.Bool => "false", TypeKind.Struct => "{0}", _ => "0" };
             Line($"    NV_UNUSED {CType(local.Type)} {LocalName(local)} = {zero};");
         }
 
@@ -124,7 +192,7 @@ public sealed class CEmitter
         switch (statement)
         {
             case NirAssign assign:
-                Line($"    {LocalName(assign.Target)} = {Rvalue(assign.Value)};");
+                Line($"    {Place(assign.Target)} = {Rvalue(assign.Value)};");
                 break;
             case NirEval { Value: NirBuiltin builtin }:
                 EmitBuiltin(builtin);
@@ -190,7 +258,8 @@ public sealed class CEmitter
         NirUnary negate => $"nv_neg_{Suffix(negate.Type)}({Operand(negate.Operand)}, {Location(negate.Source, negate.Span)})",
         NirCast cast => $"({CType(cast.Type)}){Operand(cast.Operand)}",
         NirTruncate truncate => Truncate(truncate),
-        NirCall call => $"nv_{_symbols.GetName(call.Callee.Name)}({string.Join(", ", call.Arguments.Select(Operand))})",
+        NirCall call => $"{FunctionName(call.Callee)}({string.Join(", ", call.Arguments.Select(Operand))})",
+        NirAggregate aggregate => Aggregate(aggregate),
         _ => throw new InvalidOperationException($"cannot emit rvalue {rvalue}"),
     };
 
@@ -244,7 +313,7 @@ public sealed class CEmitter
 
     private string Operand(NirOperand? operand) => operand switch
     {
-        NirLocalOperand local => LocalName(local.Local),
+        NirPlaceOperand place => Place(place.Place),
         NirConst c => Constant(c.Value, c.Type),
         _ => throw new InvalidOperationException($"cannot emit operand {operand}"),
     };
@@ -275,6 +344,20 @@ public sealed class CEmitter
         return $"NV_LOC(nv_file_{_fileIds[source]}, {position.Line}u, {position.Column}u)";
     }
 
+    private string Place(NirPlace place) =>
+        LocalName(place.Local) + string.Concat(place.Path.Select(f => "." + FieldName(f)));
+
+    private string Aggregate(NirAggregate aggregate)
+    {
+        var fields = aggregate.Type.Struct!.Fields;
+        if (fields.Count == 0)
+        {
+            return $"(({CTypeName(aggregate.Type)}){{ .nv_empty = 0 }})";
+        }
+        var inits = fields.Select((f, i) => $".{FieldName(f)} = {Operand(aggregate.Fields[i])}");
+        return $"(({CTypeName(aggregate.Type)}){{ {string.Join(", ", inits)} }})";
+    }
+
     private string LocalName(NirLocal local) =>
         local.Name is { } name ? $"v_{_symbols.GetName(name)}_{local.Id}" : $"t_{local.Id}";
 
@@ -285,6 +368,7 @@ public sealed class CEmitter
         TypeKind.Bool => "bool",
         TypeKind.Void => "void",
         TypeKind.Integer => $"{(type.IsSigned ? "int" : "uint")}{type.Bits}_t",
+        TypeKind.Struct => $"nvT_{type.Name}",
         _ => throw new InvalidOperationException($"type '{type}' has no C representation"),
     };
 
@@ -293,7 +377,7 @@ public sealed class CEmitter
 
     private void EmitMainWrapper()
     {
-        var main = _program.Functions.FirstOrDefault(f => _symbols.GetName(f.Name) == "main");
+        var main = _program.Functions.FirstOrDefault(f => f.Source.Owner is null && _symbols.GetName(f.Name) == "main");
         if (main is null)
         {
             return;

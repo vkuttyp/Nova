@@ -85,12 +85,17 @@ CompilationUnit = NamespaceDecl? Item* EOF
 NamespaceDecl   = 'namespace' QualifiedName ';'
 QualifiedName   = Identifier ('.' Identifier)*
 
-Item       = Visibility? (FunctionDecl | ConstDecl)
+Item       = Visibility? (FunctionDecl | ConstDecl | StructDecl)
 Visibility = 'public' | 'internal' | 'private'
 
 FunctionDecl = 'fn' Identifier '(' ParamList? ')' ('->' Type)? FunctionBody
-ParamList    = Param (',' Param)* ','?
+ParamList    = (Receiver | Param) (',' Param)* ','?
+Receiver     = 'this'                     (* M2a: by value. M2b adds 'borrow' 'mut'? 'this' *)
 Param        = Identifier ':' Type
+
+StructDecl   = 'struct' Identifier '{' Member* '}'          (* M2a *)
+Member       = Visibility? (FieldDecl | FunctionDecl)
+FieldDecl    = Identifier ':' Type ';'
 FunctionBody = Block | '=>' Expr ';'
 
 ConstDecl = 'const' Identifier ':' Type '=' Expr ';'
@@ -146,7 +151,10 @@ The ordering puts bitwise operators **above** comparisons (as in Rust and Swift)
 
 ```
 Primary = IntLiteral | FloatLiteral | StringLiteral | CharLiteral | 'true' | 'false'
-        | Identifier GenericArgs? | '(' Expr ')'
+        | Identifier GenericArgs? | '(' Expr ')' | 'this'
+        | Identifier '{' FieldInits? '}'                    (* struct literal, M2a *)
+FieldInits = FieldInit (',' FieldInit)* ','?
+FieldInit  = Identifier ':' Expr
 GenericArgs = '<' Type (',' Type)* '>'      (* only when followed by '(' — see below *)
 Postfix = Primary ( '(' ArgList? ')' | '.' Identifier )*
 ArgList = Expr (',' Expr)* ','?
@@ -157,6 +165,14 @@ identifier, if the tokens form `'<' QualifiedName (',' QualifiedName)* '>' '('`,
 they are parsed as generic arguments. Otherwise `<` is the less-than operator.
 `f<T>(x)` is always a generic call. Write `(f < T) > (x)` to mean the comparison.
 
+**Struct literals** (M2a): in expression position, an identifier *immediately followed by `{`* is
+a struct literal. This is unambiguous in Nova because every `{` that opens a block follows a
+keyword (`else`, `loop`), a `)` (conditions are parenthesised) or a type (`-> T {`), never an
+expression.
+
+A `Receiver` (`this`) is only meaningful as the first parameter of a function declared inside a
+`struct`. The parser accepts it as any first parameter; the checker rejects it elsewhere (N0232).
+
 ## 3. Error recovery (normative for diagnostics tests)
 
 - Expected-token errors (N0100) are reported at the current token. When the missing
@@ -166,6 +182,8 @@ they are parsed as generic arguments. Otherwise `<` is the less-than operator.
   - in a block: at the next `;` (consumed), `}` (not consumed), or statement keyword
     (`let var if while loop return break continue`). Balanced `{ }` groups are skipped
     whole. An item keyword (`fn`, visibility) ends the block, which reports the missing `}`;
+  - inside a `struct` body: at the next member start (identifier followed by `:`, `fn`, or a
+    visibility keyword) or the closing `}`;
   - at the top level: at the next declaration keyword (`fn const public internal private
     namespace struct class enum interface impl let var static extern import using type`)
     outside any skipped `{ }` group, or at EOF. Each misplaced declaration is therefore reported

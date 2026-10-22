@@ -10,11 +10,15 @@ namespace Nova.Compiler.Hir;
 
 public sealed class HirProgram
 {
-    internal HirProgram(ImmutableArray<HirFunction> functions, ImmutableArray<HirConst> constants)
+    internal HirProgram(ImmutableArray<HirFunction> functions, ImmutableArray<HirConst> constants, ImmutableArray<NovaType> structs)
     {
         Functions = functions;
         Constants = constants;
+        Structs = structs;
     }
+
+    /// <summary>Struct types in declaration order.</summary>
+    public ImmutableArray<NovaType> Structs { get; }
 
     /// <summary>Functions in declaration order (file order, then position).</summary>
     public ImmutableArray<HirFunction> Functions { get; }
@@ -74,14 +78,21 @@ public sealed class HirFunction
 {
     private readonly List<HirLocal> _locals = [];
 
-    internal HirFunction(int id, Symbol name, NovaType returnType, SourceText source, FunctionDecl syntax)
+    internal HirFunction(int id, Symbol name, NovaType returnType, SourceText source, FunctionDecl syntax, NovaType? owner = null)
     {
         Id = id;
         Name = name;
         ReturnType = returnType;
         Source = source;
         Syntax = syntax;
+        Owner = owner;
     }
+
+    /// <summary>The struct this function is declared in, or null for a top-level function.</summary>
+    public NovaType? Owner { get; }
+
+    /// <summary>True for a method: its first parameter is the <c>this</c> receiver (type-system.md §12).</summary>
+    public bool IsMethod => Syntax.Receiver is not null && Owner is not null;
 
     public int Id { get; }
 
@@ -116,8 +127,11 @@ public sealed record HirBlock(ImmutableArray<HirStmt> Statements, TextSpan Span)
 
 public sealed record HirLocalDecl(HirLocal Local, HirExpr? Initializer, TextSpan Span) : HirStmt(Span);
 
-/// <summary>Assignment to a local. <see cref="Op"/> is null for plain '=', else the compound operator.</summary>
-public sealed record HirAssign(HirLocal Target, BinaryOp? Op, HirExpr Value, TextSpan Span) : HirStmt(Span);
+/// <summary>A local or a field path rooted at a local: <c>p</c>, <c>p.a.b</c>.</summary>
+public sealed record HirPlace(HirLocal Root, ImmutableArray<StructField> Path, NovaType Type);
+
+/// <summary>Assignment to a place. <see cref="Op"/> is null for plain '=', else the compound operator.</summary>
+public sealed record HirAssign(HirPlace Target, BinaryOp? Op, HirExpr Value, TextSpan Span) : HirStmt(Span);
 
 public sealed record HirIf(HirExpr Condition, HirBlock Then, HirStmt? Else, TextSpan Span) : HirStmt(Span);
 
@@ -169,6 +183,12 @@ public enum BuiltinFunction
 }
 
 public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<HirExpr> Arguments, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary>Reads field <see cref="Field"/> of a struct value.</summary>
+public sealed record HirFieldAccess(HirExpr Target, StructField Field, TextSpan Span) : HirExpr(Field.Type, Span);
+
+/// <summary>A struct literal. <see cref="Fields"/> is in source order, which is also evaluation order.</summary>
+public sealed record HirStructLiteral(ImmutableArray<(StructField Field, HirExpr Value)> Fields, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
 
 /// <summary>Stands in for an expression that produced a diagnostic.</summary>
 public sealed record HirError(NovaType Type, TextSpan Span) : HirExpr(Type, Span);

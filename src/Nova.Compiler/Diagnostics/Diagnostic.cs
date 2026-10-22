@@ -31,6 +31,7 @@ public static class DiagnosticCodes
     public const string InvalidAssignmentTarget = "N0104";
     public const string ExpectedType = "N0105";
     public const string MisplacedNamespace = "N0106";
+    public const string ExpectedMember = "N0107";
 
     // Names, types and flow: N0200-N0299
     public const string UndefinedName = "N0200";
@@ -59,6 +60,14 @@ public static class DiagnosticCodes
     public const string VoidValue = "N0224";
     public const string StatementNotCall = "N0225";
     public const string VoidNotAllowed = "N0226";
+    public const string RecursiveStruct = "N0227";
+    public const string DuplicateMember = "N0228";
+    public const string MissingField = "N0229";
+    public const string UnknownField = "N0230";
+    public const string DuplicateFieldInit = "N0231";
+    public const string ThisOutsideMethod = "N0232";
+    public const string MethodCallKind = "N0233";
+    public const string NotAStruct = "N0234";
 
     // Build: N0300-N0399
     public const string MissingMain = "N0300";

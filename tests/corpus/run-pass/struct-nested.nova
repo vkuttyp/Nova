@@ -1,0 +1,27 @@
+struct Point { x: i32; y: i32; }
+struct Segment { from: Point; to: Point; }
+struct Path { first: Segment; second: Segment; }
+
+fn length(s: Segment) -> i32 {
+    var dx = s.to.x - s.from.x;
+    var dy = s.to.y - s.from.y;
+    if (dx < 0) { dx = -dx; }
+    if (dy < 0) { dy = -dy; }
+    return dx + dy;
+}
+
+fn main() {
+    var path = Path {
+        first: Segment { from: Point { x: 0, y: 0 }, to: Point { x: 3, y: 4 } },
+        second: Segment { from: Point { x: 3, y: 4 }, to: Point { x: -2, y: 10 } },
+    };
+    Console.writeLine(length(path.first) + length(path.second));
+    path.second.to.y = 4;
+    Console.writeLine(length(path.second));
+    let copy = path.first;
+    path.first.to.x = 1000;
+    Console.writeLine(copy.to.x);
+}
+// expect-stdout: 18
+// expect-stdout: 5
+// expect-stdout: 3
