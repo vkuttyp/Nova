@@ -1,0 +1,43 @@
+// Near-misses for R1: uses of allocations that the rules accept.
+struct Point { x: i32; y: i32; }
+
+fn twice(arena: borrow Arena) -> Result<i32, AllocError> {
+    let a = arena.alloc(1)?;
+    let b = arena.alloc(2)?;          // a second allocation while the first is live
+    a = 10;                            // both are writable: disjoint fresh memory
+    b = 20;
+    return Ok(a + b);
+}
+
+fn fromArena(arena: borrow Arena) -> Result<borrow mut Point, AllocError> =>
+    arena.alloc(Point { x: 0, y: 0 });
+
+fn resetAfterLastUse() -> Result<i32, AllocError> {
+    var arena = Arena.create(SystemHeap {}, 128u64);
+    let p = arena.alloc(3)?;
+    let copy: i32 = p;                 // the allocation is dead after this read
+    arena.reset();                     // so the arena may be reset
+    let q = fromArena(borrow arena)?;
+    q.x = copy;
+    return Ok(q.x);
+}
+
+fn matchOnAllocation(arena: borrow Arena) -> i32 {
+    match (arena.alloc(5)) {
+        Ok(r) => { r += 1; return r; }
+        Err(_) => { return 0; }
+    }
+}
+
+fn movedAfterUse() -> Arena {
+    let arena = Arena.create(SystemHeap {}, 64u64);
+    let s = arena.allocArray(2usize, 1u8)!;
+    s[1] = 2u8;
+    return arena;                      // no allocation is live any more
+}
+
+fn main() {
+    let arena = movedAfterUse();
+    let n = twice(borrow arena)!;
+    let m = matchOnAllocation(borrow arena);
+}

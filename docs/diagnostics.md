@@ -110,7 +110,7 @@ errors carry notes ("borrowed here", "the borrow is used later here").
 | N0243 | A place or temporary goes out of scope while borrowed | `let r = same(five()); use(r)` |
 | N0244 | Returning a reference to a local or temporary (E1) | `return borrow x;` with `x` local |
 | N0245 | Return-source errors (E2): missing or invalid `borrow(...)` list, or a result derived from an unlisted parameter | `fn f(a: borrow T, b: borrow T) -> borrow T` |
-| N0246 | Reference in a disallowed position: struct field, constant, `var` local, reference to reference, source list outside a return type | `struct S { r: borrow i64; }` |
+| N0246 | Reference in a disallowed position: struct field, constant, `var` local, reference to reference, source list outside a return type. Since M4a this covers every scoped type, scoped results included (`type-system.md` §19.1) | `struct S { r: borrow i64; }` |
 | N0247 | `borrow` of something that is not a place | `borrow 5`, `take(mut five())` |
 | N0248 | `borrow mut` (or a `borrow mut this` call) on an immutable place | `borrow mut param`, `shared.grow()` |
 | N0249 | `mut` argument marker missing or misplaced | `take(x)` for `borrow mut`, `look(mut x)` for `borrow` |
@@ -146,6 +146,7 @@ references, so the borrow checker reports their conflicts as N0240–N0245.
 | N0261 | `?` in a function that does not return a `Result` with the same error type | `?` on `Result<i32, F>` in a function returning `Result<i32, E>` |
 | N0262 | `?` or `!` on something that is not a `Result` value (a reference to one included) | `n?` with `n: i32` |
 | N0263 | An allocator argument that is not an allocator type (`SystemHeap`, `FailingAllocator`) | `Box<i32, Point>`, `Box.createIn(point, 1)` |
+| N0264 | A type a region cannot hold (R2): one that needs drop, a scoped type, or a non-Copy fill value for `allocArray` | `arena.alloc(Res { id: 1 })`, `arena.alloc(someReference)` |
 
 `?` inside a deferred statement is N0254, and `Ok`/`Err` with the wrong number of values is
 N0209. The names `Result`, `Ok`, `Err`, `AllocError`, `Box`, `SystemHeap` and `FailingAllocator`

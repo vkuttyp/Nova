@@ -1,0 +1,10 @@
+struct Point { x: i32; y: i32; }
+
+fn main() -> i32 {
+    var arena = Arena.create(SystemHeap {}, 1024u64);
+    let p = arena.alloc(Point { x: 1, y: 2 })!;
+    let s = arena.allocArray(3usize, 7u16)!;
+    let v = p.x + (s[2] as i32);
+    arena.reset();
+    return v;
+}

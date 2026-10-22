@@ -48,6 +48,7 @@ internal sealed class TypeChecker
         Process,
         Truncate,
         Box,
+        Arena,
     }
 
     private readonly IReadOnlyList<CompilationUnit> _units;
@@ -94,6 +95,7 @@ internal sealed class TypeChecker
             [symbols.Intern("Process")] = Builtin.Process,
             [symbols.Intern("truncate")] = Builtin.Truncate,
             [symbols.Intern("Box")] = Builtin.Box,
+            [symbols.Intern("Arena")] = Builtin.Arena,
         };
         _thisSymbol = symbols.Intern("this");
     }
@@ -243,7 +245,7 @@ internal sealed class TypeChecker
                     Error(DiagnosticCodes.Unsupported, c.Type.Span, $"constants of {(type.Kind == TypeKind.Array ? "array" : "struct")} type are not supported yet");
                     type = _types.Error;
                 }
-                else if (type.IsReference)
+                else if (TypeTable.IsScoped(type))
                 {
                     Error(DiagnosticCodes.ReferenceNotAllowed, c.Type.Span, "constants cannot be references");
                     type = _types.Error;
@@ -284,7 +286,7 @@ internal sealed class TypeChecker
             hir.AddLocal(parameter.Name.Name, type, isMutable: false, isParameter: true, parameter.Name.Span);
         }
         hir.Parameters = [.. hir.Locals];
-        if (returnType.IsReference)
+        if (TypeTable.IsScoped(returnType))
         {
             hir.ReturnSources = ResolveReturnSources(fn, hir);
         }
@@ -297,7 +299,7 @@ internal sealed class TypeChecker
     {
         // A slice return type has no source list: it uses the default rule.
         var syntax = fn.ReturnType as ReferenceType;
-        var referenceParameters = hir.Parameters.Where(p => p.Type.IsReference).ToList();
+        var referenceParameters = hir.Parameters.Where(p => TypeTable.IsScoped(p.Type)).ToList();
         if (syntax is not { HasSources: true })
         {
             if (referenceParameters.Count == 1)
@@ -320,7 +322,7 @@ internal sealed class TypeChecker
         foreach (var source in syntax.Sources)
         {
             var parameter = hir.Parameters.FirstOrDefault(p => p.Name == source.Name);
-            if (parameter is null || !parameter.Type.IsReference)
+            if (parameter is null || !TypeTable.IsScoped(parameter.Type))
             {
                 Error(DiagnosticCodes.ReturnSourceMismatch, source.Span, parameter is null
                     ? $"'{Name(source.Name)}' is not a parameter of '{Name(fn.Name.Name)}'"
@@ -397,7 +399,7 @@ internal sealed class TypeChecker
             for (var i = 0; i < variantDecl.Payload.Length; i++)
             {
                 var type = ResolveType(variantDecl.Payload[i], allowVoid: false);
-                if (type.IsReference)
+                if (TypeTable.IsScoped(type))
                 {
                     Error(DiagnosticCodes.ReferenceNotAllowed, variantDecl.Payload[i].Span,
                         "enum payloads cannot be references in v0 (they would need lifetime parameters)");
@@ -417,7 +419,7 @@ internal sealed class TypeChecker
         foreach (var field in entry.Decl.Fields)
         {
             var type = ResolveType(field.Type, allowVoid: false);
-            if (type.IsReference)
+            if (TypeTable.IsScoped(type))
             {
                 Error(DiagnosticCodes.ReferenceNotAllowed, field.Type.Span,
                     "struct fields cannot be references in v0 (they would need lifetime parameters)");
@@ -589,7 +591,7 @@ internal sealed class TypeChecker
             if (genericName == "Box" && generic.Arguments.Length is 1 or 2)
             {
                 var contents = ResolveType(generic.Arguments[0], allowVoid: false);
-                if (contents.IsReference)
+                if (TypeTable.IsScoped(contents))
                 {
                     Error(DiagnosticCodes.ReferenceNotAllowed, generic.Arguments[0].Span, "a 'Box' cannot hold a reference or slice in v0");
                     return _types.Error;
@@ -607,14 +609,7 @@ internal sealed class TypeChecker
             {
                 var ok = ResolveType(generic.Arguments[0], allowVoid: true);
                 var err = ResolveType(generic.Arguments[1], allowVoid: false);
-                foreach (var (argument, argumentSyntax) in new[] { (ok, generic.Arguments[0]), (err, generic.Arguments[1]) })
-                {
-                    if (argument.IsReference)
-                    {
-                        Error(DiagnosticCodes.ReferenceNotAllowed, argumentSyntax.Span, "'Result' cannot hold a reference or slice in v0");
-                        return _types.Error;
-                    }
-                }
+                // A result holding a reference or slice is itself scoped (§19.1).
                 return ok.IsBottom || err.IsBottom ? _types.Error : ResultOf(ok, err);
             }
             if (genericName is not ("Slice" or "SliceMut") || generic.Arguments.Length != 1)
@@ -727,9 +722,9 @@ internal sealed class TypeChecker
         {
             return ErrorResult(call.Span);
         }
-        if (value.Type.Kind is TypeKind.Void or TypeKind.Never || value.Type.IsReference)
+        if (value.Type.Kind is TypeKind.Void or TypeKind.Never || TypeTable.IsScoped(value.Type))
         {
-            Error(value.Type.IsReference ? DiagnosticCodes.ReferenceNotAllowed : DiagnosticCodes.VoidValue, valueSyntax.Span, value.Type.IsReference
+            Error(TypeTable.IsScoped(value.Type) ? DiagnosticCodes.ReferenceNotAllowed : DiagnosticCodes.VoidValue, valueSyntax.Span, TypeTable.IsScoped(value.Type)
                 ? "a 'Box' cannot hold a reference or slice in v0"
                 : $"this expression has no value (its type is '{value.Type}')");
             return ErrorResult(call.Span);
@@ -737,6 +732,116 @@ internal sealed class TypeChecker
         arguments.Add(value);
         var result = ResultOf(BoxOf(value.Type, allocator), Used(_allocError).Type);
         return new HirBuiltinCall(BuiltinFunction.BoxCreate, arguments.ToImmutable(), result, call.Span);
+    }
+
+    /// <summary><c>Arena.create(allocator, chunkSize)</c> (type-system.md §19.2): cannot fail.</summary>
+    private HirExpr CheckArenaCreate(CallExpr call, MemberExpr member)
+    {
+        if (Name(member.Member.Name) != "create" || call.Arguments.Length != 2)
+        {
+            Error(Name(member.Member.Name) != "create" ? DiagnosticCodes.UndefinedName : DiagnosticCodes.ArgumentCount, call.Span,
+                "an arena is made with 'Arena.create(allocator, chunkSize)'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var allocator = AutoDeref(Synth(call.Arguments[0], null));
+        var chunkSize = CheckExpr(call.Arguments[1], _types.U64);
+        if (allocator.Type.IsBottom)
+        {
+            return ErrorResult(call.Span);
+        }
+        if (!IsAllocatorType(allocator.Type))
+        {
+            Error(DiagnosticCodes.NotAnAllocator, call.Arguments[0].Span,
+                $"'{allocator.Type}' is not an allocator type; use 'SystemHeap {{}}' or 'FailingAllocator {{}}'");
+            return ErrorResult(call.Span);
+        }
+        return new HirBuiltinCall(BuiltinFunction.ArenaCreate, [allocator, chunkSize], _types.Arena, call.Span);
+    }
+
+    /// <summary>
+    /// A reference to the receiver of a region method (§19.2): shared for allocation, mutable for
+    /// <c>reset</c>. Null after reporting an error.
+    /// </summary>
+    private HirExpr? RegionReceiver(HirExpr receiver, NovaType regionType, bool isMutable, MemberExpr member)
+    {
+        var referenceType = _types.ReferenceTo(regionType, isMutable);
+        if (receiver.Type.IsReference)
+        {
+            if (isMutable && !receiver.Type.IsMutableReference)
+            {
+                BorrowMutThroughShared(member);
+                return null;
+            }
+            return Coerce(receiver, referenceType, member.Target.Span);
+        }
+        if (isMutable)
+        {
+            var borrowed = BorrowPlace(receiver, isMutable: true, member.Target.Span);
+            return borrowed.Type.IsBottom ? null : borrowed;
+        }
+        return ToPlace(receiver) is { } place
+            ? new HirBorrow(false, place, referenceType, member.Target.Span)
+            : new HirBorrowTemp(false, receiver, referenceType, member.Target.Span);
+    }
+
+    /// <summary>R2 (ownership.md): region memory holds no type with drop and nothing scoped (N0264).</summary>
+    private bool CheckRegionContent(NovaType type, bool needCopy, TextSpan span)
+    {
+        if (type.IsBottom)
+        {
+            return false;
+        }
+        var problem = type.Kind is TypeKind.Void or TypeKind.Never ? "it has no value"
+            : TypeTable.IsScoped(type) ? "it is scoped (a reference or slice), and region memory cannot hold loans (E3)"
+            : TypeTable.NeedsDrop(type) ? "it needs drop, and a region releases its memory without destroying values (R2)"
+            : needCopy && !TypeTable.IsCopy(type) ? "an array allocation copies its fill value, so the type must be Copy"
+            : null;
+        if (problem is not null)
+        {
+            Error(DiagnosticCodes.NotRegionContent, span, $"a region cannot hold a '{type}': {problem}");
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary><c>arena.alloc(v)</c>, <c>arena.allocArray(n, fill)</c>, <c>arena.reset()</c> (type-system.md §19.2).</summary>
+    private HirExpr CheckArenaMethod(CallExpr call, MemberExpr member, HirExpr receiver)
+    {
+        var text = Name(member.Member.Name);
+        var arity = text switch { "alloc" => 1, "allocArray" => 2, "reset" => 0, _ => -1 };
+        if (arity < 0 || call.Arguments.Length != arity)
+        {
+            Error(arity < 0 ? DiagnosticCodes.UndefinedName : DiagnosticCodes.ArgumentCount, member.Member.Span, arity < 0
+                ? $"'Arena' has no method '{text}'; it has 'alloc(v)', 'allocArray(n, fill)' and 'reset()'"
+                : $"'Arena.{text}' takes {arity} argument(s)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var arena = RegionReceiver(receiver, _types.Arena, isMutable: text == "reset", member);
+        if (arena is null)
+        {
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (text == "reset")
+        {
+            return new HirBuiltinCall(BuiltinFunction.ArenaReset, [arena], _types.Void, call.Span);
+        }
+        var count = text == "allocArray" ? CheckExpr(call.Arguments[0], _types.USize) : null;
+        var valueSyntax = call.Arguments[^1];
+        var value = Synth(valueSyntax, null);
+        value = Coerce(value, value.Type, valueSyntax.Span);
+        if (!CheckRegionContent(value.Type, needCopy: count is not null, valueSyntax.Span))
+        {
+            return ErrorResult(call.Span);
+        }
+        var allocError = Used(_allocError).Type;
+        return count is null
+            ? new HirBuiltinCall(BuiltinFunction.ArenaAlloc, [arena, value],
+                ResultOf(_types.ReferenceTo(value.Type, isMutable: true), allocError), call.Span)
+            : new HirBuiltinCall(BuiltinFunction.ArenaAllocArray, [arena, count, value],
+                ResultOf(_types.SliceOf(value.Type, isMutable: true), allocError), call.Span);
     }
 
     private NovaType ResultOf(NovaType ok, NovaType err) =>
@@ -834,7 +939,7 @@ internal sealed class TypeChecker
         {
             return false;
         }
-        if (element.IsReference)
+        if (TypeTable.IsScoped(element))
         {
             Error(DiagnosticCodes.ReferenceNotAllowed, span, "array and slice elements cannot be references in v0");
             return false;
@@ -1390,7 +1495,7 @@ internal sealed class TypeChecker
             }
         }
 
-        if (type.IsReference && decl.IsMutable)
+        if (TypeTable.IsScoped(type) && decl.IsMutable)
         {
             Error(DiagnosticCodes.ReferenceNotAllowed, decl.Name.Span,
                 "a reference variable must be declared with 'let': references cannot be re-pointed (assigning to one writes through it)");
@@ -1902,6 +2007,9 @@ internal sealed class TypeChecker
             case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } boxName } boxMember } boxCall
                 when Lookup(boxName.Name.Name) is Builtin.Box:
                 return CheckBoxCreate(boxCall, boxMember, expected);
+            case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } arenaName } arenaMember } arenaCall
+                when Lookup(arenaName.Name.Name) is Builtin.Arena:
+                return CheckArenaCreate(arenaCall, arenaMember);
             case CallExpr call:
                 return SynthCall(call);
             case TryExpr tryExpr:
@@ -2451,6 +2559,10 @@ internal sealed class TypeChecker
             receiver = AutoDeref(receiver); // the method receives the box's contents (§18.2)
         }
         var structType = receiver.Type.Pointee ?? receiver.Type;
+        if (structType.Region == RegionKind.Arena)
+        {
+            return CheckArenaMethod(call, member, receiver);
+        }
         if (structType.Struct is not { } definition)
         {
             Error(DiagnosticCodes.NotAStruct, member.Member.Span,

@@ -1,0 +1,59 @@
+(program
+  (fn twice ((arena#0: borrow Arena)) -> Result<i32, AllocError>
+    (block
+      (let a#1: borrow mut i32 = (try (Process.exit arena#0 1:i32)):borrow mut i32)
+      (let b#2: borrow mut i32 = (try (Process.exit arena#0 2:i32)):borrow mut i32)
+      (= (*a#1) 10:i32)
+      (= (*b#2) 20:i32)
+      (return (Result<i32, AllocError>.Ok (+ (deref a#1):i32 (deref b#2):i32):i32))
+    )
+  )
+  (fn fromArena ((arena#0: borrow Arena)) -> Result<borrow mut Point, AllocError>
+    (block
+      (return (Process.exit arena#0 (new Point (x 0:i32) (y 0:i32))))
+    )
+  )
+  (fn resetAfterLastUse () -> Result<i32, AllocError>
+    (block
+      (var arena#0: Arena = (Process.exit (new SystemHeap) 128:u64))
+      (let p#1: borrow mut i32 = (try (Process.exit (borrow arena#0) 3:i32)):borrow mut i32)
+      (let copy#2: i32 = (deref p#1):i32)
+      (expr (Process.exit (borrow-mut arena#0)))
+      (let q#3: borrow mut Point = (try (call fromArena (borrow arena#0)):Result<borrow mut Point, AllocError>):borrow mut Point)
+      (= (*q#3).x copy#2)
+      (return (Result<i32, AllocError>.Ok (. (deref q#3):Point x):i32))
+    )
+  )
+  (fn matchOnAllocation ((arena#0: borrow Arena)) -> i32
+    (block
+      (match-consume (Process.exit arena#0 5:i32)
+        (arm Ok (r#1: borrow mut i32 = payload 0)
+          (block
+            (+= (*r#1) 1:i32)
+            (return (deref r#1):i32)
+          )
+        )
+        (arm Err
+          (block
+            (return 0:i32)
+          )
+        )
+      )
+    )
+  )
+  (fn movedAfterUse () -> Arena
+    (block
+      (let arena#0: Arena = (Process.exit (new SystemHeap) 64:u64))
+      (let s#1: SliceMut<u8> = (unwrap (Process.exit (borrow arena#0) 2:usize 1:u8)):SliceMut<u8>)
+      (= (*s#1)[1:usize] 2:u8)
+      (return arena#0)
+    )
+  )
+  (fn main () -> void
+    (block
+      (let arena#0: Arena = (call movedAfterUse):Arena)
+      (let n#1: i32 = (unwrap (call twice (borrow arena#0)):Result<i32, AllocError>):i32)
+      (let m#2: i32 = (call matchOnAllocation (borrow arena#0)):i32)
+    )
+  )
+)

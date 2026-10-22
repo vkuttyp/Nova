@@ -1,0 +1,39 @@
+// Arenas release everything at reset and at drop; allocation failures are values (§19.2).
+struct Point { x: i64; y: i64; }
+
+fn fill(arena: borrow Arena, n: i64) -> Result<i64, AllocError> {
+    var sum = 0i64;
+    for (i in 0i64..n) {
+        let p = arena.alloc(Point { x: i, y: i * i })?;
+        let q = arena.alloc(Point { x: -i, y: 1i64 })?;
+        p.x += q.y;                       // two live mutable allocations at once
+        sum += p.x + p.y + q.x;
+    }
+    return Ok(sum);
+}
+
+fn newest(arena: borrow Arena) -> Result<borrow mut Point, AllocError> =>
+    arena.alloc(Point { x: 1i64, y: 2i64 });     // the result borrows from `arena`
+
+fn rounds() -> Result<i64, AllocError> {
+    var arena = Arena.create(SystemHeap {}, 256u64);
+    var total = 0i64;
+    for (round in 0i64..5i64) {
+        total += fill(borrow arena, 100i64)?;
+        let big = arena.allocArray(1000usize, round)?;   // larger than a chunk: its own chunk
+        total += big[999];
+        arena.reset();                                   // nothing allocated is live here
+    }
+    let last = newest(borrow arena)?;
+    last.y += 40i64;
+    return Ok(total + last.y);
+}
+
+fn main() -> i32 {
+    match (rounds()) {
+        Ok(v) => { Console.writeLine(v); }
+        Err(_) => { Console.writeLine("out of memory"); }
+    }
+    return 0;
+}
+// expect-stdout: 1642302

@@ -46,7 +46,8 @@ def host_attempts(program, work):
     gen = work / "host" / program.guest_name
     subprocess.run([c1.NOVAC, "build", "--emit", "c", "-o", gen, program.relative], cwd=program.base, check=True,
                    capture_output=True)
-    if "nova_alloc(" not in (gen / "main.c").read_text():
+    main = (gen / "main.c").read_text()
+    if not any(call in main for call in ("nova_alloc(", "nova_arena_alloc(")):  # direct or through a region (M4)
         return 0
     exe = gen / "program"
     subprocess.run([c1.NOVAC, "build", "-o", exe, program.relative], cwd=program.base, check=True, capture_output=True)

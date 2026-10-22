@@ -101,6 +101,7 @@ public static class DiagnosticCodes
     public const string TryReturnMismatch = "N0261";
     public const string NotAResult = "N0262";
     public const string NotAnAllocator = "N0263";
+    public const string NotRegionContent = "N0264";
 
     // Build: N0300-N0399
     public const string MissingMain = "N0300";

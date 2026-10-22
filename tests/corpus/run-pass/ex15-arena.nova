@@ -1,0 +1,19 @@
+// language-spec.md Ex15, adapted (ADR 0004): allocArray(n, fill), positional arguments.
+fn process(input: Slice<u8>) -> Result<u64, AllocError> {
+    using arena = Arena.create(SystemHeap {}, 65536u64);
+    let counts = arena.allocArray(256usize, 0u32)?;    // scoped to `arena`, zero-filled
+    for (b in input) { counts[b as usize] += 1u32; }
+
+    var distinct: u64 = 0;
+    for (c in counts) { if (c != 0u32) { distinct += 1; } }
+    return Ok(distinct);                               // returns a u64, not arena memory
+}                                                      // arena freed here; no live loans
+
+fn main() {
+    let text = [110u8, 111u8, 118u8, 97u8, 32u8, 110u8, 111u8, 118u8, 97u8]; // "nova nova"
+    match (process(text[..])) {
+        Ok(n) => { Console.writeLine(n); }
+        Err(_) => { Console.writeLine("out of memory"); }
+    }
+}
+// expect-stdout: 5

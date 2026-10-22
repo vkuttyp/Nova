@@ -1,0 +1,36 @@
+// R1: an arena allocation cannot outlive or escape its arena (type-system.md §19.3).
+fn use(p: borrow i32) { }
+fn take(a: Arena) { }
+
+fn returned(x: borrow i32) -> Result<borrow mut i32, AllocError> {
+    using arena = Arena.create(SystemHeap {}, 64u64);
+    let p = arena.alloc(1)?;
+    return Ok(p); // error[N0244]
+}
+
+fn returnedResult(x: borrow i32) -> Result<borrow mut i32, AllocError> {
+    let arena = Arena.create(SystemHeap {}, 64u64);
+    return arena.alloc(1); // error[N0244]
+}
+
+fn resetWhileLive() -> Result<void, AllocError> {
+    var arena = Arena.create(SystemHeap {}, 64u64);
+    let p = arena.alloc(1)?;
+    arena.reset(); // error[N0241]
+    use(p);
+    return Ok();
+}
+
+fn movedWhileLive() -> Result<void, AllocError> {
+    let arena = Arena.create(SystemHeap {}, 64u64);
+    let s = arena.allocArray(4usize, 0u8)?;
+    take(arena); // error[N0240]
+    s[0] = 1u8;
+    return Ok();
+}
+
+fn temporaryArena() -> Result<void, AllocError> {
+    let p = Arena.create(SystemHeap {}, 64u64).alloc(1)?; // error[N0243]
+    use(p);
+    return Ok();
+}

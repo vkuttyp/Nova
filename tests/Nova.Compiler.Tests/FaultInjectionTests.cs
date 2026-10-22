@@ -17,6 +17,8 @@ namespace Nova.Compiler.Tests;
 public partial class FaultInjectionTests
 {
     private const int MaxAttempts = 200;
+    /// <summary>Runtime calls that allocate: directly, or through a region (M4).</summary>
+    private static readonly string[] s_allocationCalls = ["nova_alloc(", "nova_arena_alloc("];
     private static readonly string CorpusRoot = Path.Combine(TestHelpers.RepoRoot(), "tests", "corpus");
 
     public static TheoryData<string> RunPassFiles()
@@ -39,7 +41,7 @@ public partial class FaultInjectionTests
         var program = CBackend.Generate(compilation, requireMain: true, out _);
         Assert.NotNull(program);
         var main = program.Files.Single(f => f.Key == CProgram.MainFileName).Value;
-        if (!main.Contains("nova_alloc(", StringComparison.Ordinal))
+        if (!s_allocationCalls.Any(call => main.Contains(call, StringComparison.Ordinal)))
         {
             return; // the program never allocates
         }

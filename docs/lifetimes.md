@@ -60,6 +60,17 @@ Lowering facts the checker relies on:
 Because every reference local is assigned once (§1), solving these subset constraints by
 fixpoint iteration gives the same result as a flow-sensitive analysis.
 
+**Loan-holding locals (M4a).** Since M4a, every local of a *scoped* type holds loans
+(`type-system.md` §19.1), not only reference locals. The constraints generalise:
+- **Copies and moves.** When an assignment's rvalue reads a place rooted at a loan-holding local
+  `q` (`Use`, aggregates, enum values, built-in calls), then `loans(q) ⊆ loans(t)`. This covers a
+  payload read such as `t = (q as Ok).0`.
+- **`Unpack`.** `Unpack(q, …)` gives each target `loans(q)`.
+- **Borrowing a loan holder.** `Ref(k, p)` where `p` is rooted at a loan-holding local `q` and does
+  not go through a deref: `loans(q) ⊆ loans(t)`. A reference to a scoped value keeps that
+  value's loans alive.
+- Liveness (§5) and the return check (§7) consider all loan-holding locals.
+
 ## 4. Accesses
 
 Each NIR statement and terminator performs **accesses** to places, in evaluation order:

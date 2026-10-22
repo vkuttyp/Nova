@@ -156,3 +156,58 @@ int32_t nova_rt_finish(int32_t code) {
     }
     return code;
 }
+
+/* ---- Arena (type-system.md §19.2) ---------------------------------------------------------- */
+
+#define NV_ARENA_HEADER 16u /* the previous-chunk link, padded so data starts 16-aligned */
+
+nv_arena nova_arena_create(uint32_t allocator, uint64_t chunk_size) {
+    nv_arena a = {NULL, NULL, NULL, chunk_size, allocator};
+    return a;
+}
+
+void *nova_arena_alloc(nv_arena *a, uint64_t size, uint64_t align) {
+    uintptr_t cur = (uintptr_t)a->cur;
+    uintptr_t aligned = (cur + (uintptr_t)(align - 1u)) & ~(uintptr_t)(align - 1u);
+    if (a->cur != NULL && aligned >= cur && size <= (uint64_t)((uintptr_t)a->end - aligned)) {
+        a->cur = (uint8_t *)(aligned + (uintptr_t)size);
+        return (void *)aligned;
+    }
+    /* A new chunk: the usual size, or larger for a large allocation. */
+    uint64_t need = size + NV_ARENA_HEADER;
+    if (need < size) {
+        return NULL; /* overflow */
+    }
+    uint64_t total = need > a->chunk_size ? need : a->chunk_size;
+#if SIZE_MAX < UINT64_MAX
+    if (total > (uint64_t)SIZE_MAX) {
+        return NULL;
+    }
+#endif
+    uint8_t *chunk = (uint8_t *)nova_alloc((size_t)total, (uint32_t)a->allocator);
+    if (chunk == NULL) {
+        return NULL;
+    }
+    *(void **)(void *)chunk = a->chunks;
+    a->chunks = chunk;
+    a->end = chunk + total;
+    uint8_t *data = chunk + NV_ARENA_HEADER; /* 16-aligned: malloc memory is, and align <= 16 */
+    a->cur = data + size;
+    return data;
+}
+
+void nova_arena_reset(nv_arena *a) {
+    void *chunk = a->chunks;
+    while (chunk != NULL) {
+        void *previous = *(void **)chunk;
+        nova_free(chunk, (uint32_t)a->allocator);
+        chunk = previous;
+    }
+    a->chunks = NULL;
+    a->cur = NULL;
+    a->end = NULL;
+}
+
+void nova_arena_drop(nv_arena *a) {
+    nova_arena_reset(a);
+}

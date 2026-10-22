@@ -1,0 +1,20 @@
+// R2 and the scoped-type rules for arena allocations (type-system.md §19.1-19.2).
+struct Res { id: i32; drop { } }
+struct Holder { r: borrow mut i32; } // error[N0246]
+struct Arena { x: i32; } // error[N0201]
+
+fn f(x: borrow i32, s: Slice<u8>) -> Result<void, AllocError> {
+    let arena = Arena.create(SystemHeap {}, 64u64);
+    let a = arena.alloc(Res { id: 1 }); // error[N0264]
+    let b = arena.alloc(x); // error[N0264]
+    let c = arena.allocArray(4usize, s); // error[N0264]
+    let d = arena.allocArray(4usize, Box.create(1)!); // error[N0264]
+    var e = arena.alloc(1); // error[N0246]
+    let g = Box.create(arena.alloc(1)?); // error[N0246]
+    let h = arena.make(1); // error[N0200]
+    let i = arena.alloc(); // error[N0209]
+    let j = Arena.create(5, 64u64); // error[N0263]
+    let k = Arena.open(SystemHeap {}, 64u64); // error[N0200]
+    arena.reset(); // error[N0248]
+    return Ok();
+}

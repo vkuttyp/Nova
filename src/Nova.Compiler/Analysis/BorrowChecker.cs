@@ -54,7 +54,8 @@ internal sealed class BorrowChecker
         checker.CheckReturns();
     }
 
-    private static bool IsReference(NirLocal local) => local.Type.IsReference;
+    /// <summary>A local of a scoped type: a reference, a slice, or a scoped result (type-system.md §19.1).</summary>
+    private static bool IsReference(NirLocal local) => TypeTable.IsScoped(local.Type);
 
     private HashSet<int> LoansOf(NirLocal local)
     {
@@ -87,6 +88,15 @@ internal sealed class BorrowChecker
         {
             for (var i = 0; i < block.Statements.Count; i++)
             {
+                if (block.Statements[i] is NirUnpack unpack && IsReference(unpack.Source.Local))
+                {
+                    // The payloads of a scoped result carry its loans (lifetimes.md §3, M4a).
+                    foreach (var payload in unpack.Targets.OfType<NirLocal>().Where(IsReference))
+                    {
+                        edges.Add((unpack.Source.Local, payload));
+                    }
+                    continue;
+                }
                 if (block.Statements[i] is not NirAssign { Target.IsLocal: true } assign || !IsReference(assign.Target.Local))
                 {
                     continue;
@@ -102,24 +112,33 @@ internal sealed class BorrowChecker
                         _loans.Add(loan);
                         _loanAt[(block, i)] = loan;
                         LoansOf(target).Add(loan.Id);
-                        // A reborrow through q keeps q's loans alive while the new reference lives.
-                        if (place.Projections.Any(p => p.IsDeref))
+                        // A reborrow through q, or a borrow of a scoped value of q, keeps q's loans alive
+                        // while the new reference lives.
+                        if (IsReference(place.Local) && (DerefsReference(place) || TypeTable.IsScoped(place.Type)))
                         {
                             edges.Add((place.Local, target));
                         }
                         break;
                     }
-                    case NirUse { Operand: NirPlaceOperand { Place.IsLocal: true } copy } when IsReference(copy.Place.Local):
-                        edges.Add((copy.Place.Local, target));
-                        break;
                     case NirCall call:
                         foreach (var index in call.Callee.ReturnSources)
                         {
-                            if (index < call.Arguments.Length && call.Arguments[index] is NirPlaceOperand { Place.IsLocal: true } argument
+                            if (index < call.Arguments.Length && call.Arguments[index] is NirPlaceOperand argument
                                 && IsReference(argument.Place.Local))
                             {
                                 edges.Add((argument.Place.Local, target));
                             }
+                        }
+                        break;
+                    default:
+                        // Copies, moves, payload reads, aggregates and built-in results take the loans
+                        // of every scoped value they read.
+                        // Only a value that is itself scoped (or read through a reference) carries loans:
+                        // the `Err(AllocError)` payload of a scoped result does not.
+                        foreach (var operand in MoveData.Operands(assign.Value).OfType<NirPlaceOperand>()
+                                     .Where(o => IsReference(o.Place.Local) && (TypeTable.IsScoped(o.Type) || DerefsReference(o.Place))))
+                        {
+                            edges.Add((operand.Place.Local, target));
                         }
                         break;
                 }
@@ -407,7 +426,7 @@ internal sealed class BorrowChecker
 
     private void CheckReturns()
     {
-        if (!_function.ReturnType.IsReference)
+        if (!TypeTable.IsScoped(_function.ReturnType))
         {
             return;
         }
@@ -418,7 +437,9 @@ internal sealed class BorrowChecker
             {
                 continue;
             }
-            foreach (var loan in LoansOf(value.Place.Local).Select(id => _loans[id]))
+            // A reborrow of a local reference is reported through that reference's own loans.
+            foreach (var loan in LoansOf(value.Place.Local).Select(id => _loans[id])
+                         .Where(l => l.Place is null || !(DerefsReference(l.Place) && l.Place.Local.Id >= _function.ParameterCount)))
             {
                 var parameter = loan.Place is null ? loan.ParameterIndex : DerefOfParameter(loan.Place);
                 if (parameter < 0)

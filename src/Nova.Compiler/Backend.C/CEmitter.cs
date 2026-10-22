@@ -67,6 +67,7 @@ public sealed class CEmitter
         }
         EmitDropGluePrototypes();
         EmitBoxCreatePrototypes();
+        EmitArenaHelperPrototypes();
         Line();
 
         foreach (var function in _program.Functions)
@@ -76,6 +77,7 @@ public sealed class CEmitter
         }
         EmitDropGlue();
         EmitBoxCreate();
+        EmitArenaHelpers();
 
         EmitMainWrapper();
     }
@@ -216,8 +218,8 @@ public sealed class CEmitter
     /// The drop glue of a type that needs drop: <c>nvD_&lt;length&gt;&lt;Name&gt;</c> for user structs and enums,
     /// <c>nvD_&lt;mangled&gt;</c> for built-in instantiations (which start with a letter, so they cannot collide).
     /// </summary>
-    private static string DropGlueName(NovaType type) =>
-        type.Enum?.ResultTypes is not null || type.IsBox ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
+    private static string DropGlueName(NovaType type) => type.Kind == TypeKind.Region ? "nova_arena_drop"
+        : type.Enum?.ResultTypes is not null || type.IsBox ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
 
     /// <summary>
     /// Does destroying a <paramref name="type"/> end, as its last step, in destroying a <paramref name="box"/>?
@@ -290,6 +292,73 @@ public sealed class CEmitter
         Line($"{indent}default:");
         Line($"{indent}    break;");
         Line($"{indent}}}");
+    }
+
+    /// <summary>
+    /// The <c>Result&lt;borrow mut T, AllocError&gt;</c> and <c>Result&lt;SliceMut&lt;T&gt;, AllocError&gt;</c> types
+    /// that arena allocation produces (§19.2), in creation order.
+    /// </summary>
+    private IEnumerable<NovaType> ArenaResults => _types.Composites.Where(t =>
+        t.Enum?.ResultTypes is ({ IsMutableReference: true, Pointee.Kind: not TypeKind.Region }, { Name: "AllocError" }));
+
+    private static string ArenaHelperName(NovaType result)
+    {
+        var ok = result.Enum!.ResultTypes!.Value.Ok;
+        return ok.IsSlice ? $"nvAR_{Mangle(ok.Pointee!.Element!)}" : $"nvAA_{Mangle(ok.Pointee!)}";
+    }
+
+    private static string ArenaHelperSignature(NovaType result)
+    {
+        var ok = result.Enum!.ResultTypes!.Value.Ok;
+        return ok.IsSlice
+            ? $"{CTypeName(result)} {ArenaHelperName(result)}(nv_arena *a, uint64_t n, {CType(ok.Pointee!.Element!)} fill)"
+            : $"{CTypeName(result)} {ArenaHelperName(result)}(nv_arena *a, {CType(ok.Pointee!)} v)";
+    }
+
+    private void EmitArenaHelperPrototypes()
+    {
+        foreach (var result in ArenaResults)
+        {
+            Line($"static NV_UNUSED {ArenaHelperSignature(result)};");
+        }
+    }
+
+    /// <summary>
+    /// Arena allocation (§19.2): bump-allocate, then move the value in (or fill <c>n</c> copies) and return
+    /// <c>Ok</c>; on failure return <c>Err(AllocError.OutOfMemory)</c>. Nothing needs drop (R2).
+    /// </summary>
+    private void EmitArenaHelpers()
+    {
+        foreach (var result in ArenaResults)
+        {
+            var ok = result.Enum!.ResultTypes!.Value.Ok;
+            var name = CTypeName(result);
+            var error = $"(({name}){{ .tag = 1, .u.v_Err = {{ .f__0 = (({CTypeName(result.Enum.ResultTypes.Value.Err)}){{ .tag = 0 }}) }} }})";
+            Line($"static {ArenaHelperSignature(result)} {{");
+            if (ok.IsSlice)
+            {
+                var element = CType(ok.Pointee!.Element!);
+                if (TypeTable.LayoutOf(ok.Pointee!.Element!).Size > 1)
+                {
+                    // Only for elements wider than a byte: GCC's -Wtype-limits flags `n > UINT64_MAX`.
+                    Line($"    if (n > UINT64_MAX / sizeof({element})) return {error};");
+                }
+                Line($"    {element} *p = ({element} *)nova_arena_alloc(a, n == 0u ? 1u : n * sizeof({element}), _Alignof({element}));");
+                Line($"    if (p == NULL) return {error};");
+                Line("    for (uint64_t i = 0; i < n; i++) p[i] = fill;");
+                Line($"    return (({name}){{ .tag = 0, .u.v_Ok = {{ .f__0 = (({CTypeName(ok)}){{ .ptr = p, .len = n }}) }} }});");
+            }
+            else
+            {
+                var contents = CType(ok.Pointee!);
+                Line($"    {contents} *p = ({contents} *)nova_arena_alloc(a, sizeof({contents}), _Alignof({contents}));");
+                Line($"    if (p == NULL) return {error};");
+                Line("    *p = v;");
+                Line($"    return (({name}){{ .tag = 0, .u.v_Ok = {{ .f__0 = p }} }});");
+            }
+            Line("}");
+            Line();
+        }
     }
 
     /// <summary>The runtime's id for an allocator type (nova/rt.h).</summary>
@@ -448,7 +517,7 @@ public sealed class CEmitter
             var zero = local.Type.Kind switch
             {
                 TypeKind.Bool => "false",
-                TypeKind.Struct or TypeKind.Enum or TypeKind.Array => "{0}",
+                TypeKind.Struct or TypeKind.Enum or TypeKind.Array or TypeKind.Region => "{0}",
                 TypeKind.Reference when local.Type.IsSlice => "{0}",
                 TypeKind.Reference or TypeKind.Box => "NULL",
                 _ => "0",
@@ -537,6 +606,9 @@ public sealed class CEmitter
             case BuiltinFunction.FailReset:
                 Line("    nova_fail_reset();");
                 return;
+            case BuiltinFunction.ArenaReset:
+                Line($"    nova_arena_reset({Operand(builtin.Arguments[0])});");
+                return;
         }
         foreach (var argument in builtin.Arguments)
         {
@@ -614,6 +686,11 @@ public sealed class CEmitter
         NirRef reference => $"&{Place(reference.Place)}",
         NirSlice slice => Slice(slice),
         NirLength length => $"{Place(length.Slice)}.len",
+        NirBuiltin { Function: BuiltinFunction.ArenaCreate } arena =>
+            $"nova_arena_create({AllocatorId(arena.Arguments[0].Type)}, {Operand(arena.Arguments[1])})",
+        NirBuiltin { Function: BuiltinFunction.ArenaAlloc } alloc => $"{ArenaHelperName(alloc.Type)}({Operand(alloc.Arguments[0])}, {Operand(alloc.Arguments[1])})",
+        NirBuiltin { Function: BuiltinFunction.ArenaAllocArray } alloc =>
+            $"{ArenaHelperName(alloc.Type)}({Operand(alloc.Arguments[0])}, {Operand(alloc.Arguments[1])}, {Operand(alloc.Arguments[2])})",
         NirBuiltin { Function: BuiltinFunction.BoxCreate } create => $"{BoxCreateName(create.Type)}({Operand(create.Arguments[^1])})",
         NirArray array => $"(({CTypeName(array.Type)}){{ .e = {{ {string.Join(", ", array.Elements.Select(Operand))} }} }})",
         NirDiscriminant discriminant => $"(uint32_t){Place(discriminant.Place)}.tag",
@@ -771,10 +848,13 @@ public sealed class CEmitter
         TypeKind.Enum => $"nvE_{type.Name}",
         TypeKind.Reference when type.IsSlice => $"nvS{(type.IsMutableReference ? "m" : "l")}_{Mangle(type.Pointee!.Element!)}",
         // A shared reference to a box is a pointer to a const pointer (`T *const *`), not to a const T.
+        // Region methods mutate through a shared reference (allocation is interior mutability, §19.2).
+        TypeKind.Reference when type.Pointee!.Kind == TypeKind.Region => $"{CTypeName(type.Pointee)} *",
         TypeKind.Reference when type.Pointee!.IsBox => type.IsMutableReference ? $"{CTypeName(type.Pointee)}*" : $"{CTypeName(type.Pointee)}const *",
         TypeKind.Reference => type.IsMutableReference ? $"{CTypeName(type.Pointee!)} *" : $"const {CTypeName(type.Pointee!)} *",
         TypeKind.Array => $"nvA{type.ArrayLength}_{Mangle(type.Element!)}",
         TypeKind.Box => $"{CTypeName(type.Pointee!)} *",
+        TypeKind.Region => "nv_arena",
         _ => throw new InvalidOperationException($"type '{type}' has no C representation"),
     };
 
@@ -789,8 +869,11 @@ public sealed class CEmitter
         TypeKind.Struct => $"S{type.Name.Length}{type.Name}",
         TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => $"R{Mangle(ok)}{Mangle(err)}",
         TypeKind.Enum => $"E{type.Name.Length}{type.Name}",
+        TypeKind.Array when type.IsUnsized => $"U{Mangle(type.Element!)}",
         TypeKind.Array => $"A{type.ArrayLength}_{Mangle(type.Element!)}",
         TypeKind.Box => $"X{Mangle(type.Pointee!)}{Mangle(type.Allocator!)}",
+        TypeKind.Reference => $"{(type.IsMutableReference ? "Q" : "P")}{Mangle(type.Pointee!)}",
+        TypeKind.Region => $"G{type.Name.Length}{type.Name}",
         TypeKind.Void => "v",
         _ => type.Name,
     };

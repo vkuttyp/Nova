@@ -661,3 +661,71 @@ Binding = Identifier | 'var' Identifier | '_'
   stack in proportion to the number of non-tail steps on a path (the left children in
   `{ left, right }`). Balanced trees therefore use logarithmic depth, and a left-degenerate tree
   still recurses (R-9 records this).
+
+## 19. Regions (M4)
+
+`Arena`, and in later increments `FixedBufferAllocator`, `ScratchFrame`, `Pool<T>` and
+`PoolBox<T>`, are built in (ADR 0004). The safety rules are R1–R4 (`ownership.md`): an
+allocation borrows its region.
+
+### 19.1 Scoped types (M4a)
+A type is **scoped** if a value of it may hold loans:
+- references and slices (§13, §16);
+- `Result<T, E>` whose `T` or `E` is scoped (a *scoped result*);
+- the scoped region values of §19.4–19.6.
+
+Every rule for references applies to scoped types (N0246):
+- they may appear only in parameters, `let` locals with an initialiser, and return types;
+- never in fields, payloads of user enums, array elements, box contents, constants or `var` locals.
+
+A function returning a scoped type needs return sources: the default rule (one reference
+parameter) or a `borrow(...)` list (§13.5). In this rule, "reference parameter" now means
+"parameter of a scoped type", and the receiver `this` counts when it is borrowed.
+
+The borrow checker treats every local of a scoped type as holding loans (`lifetimes.md` §3).
+Moving or copying a scoped value moves or copies its loans, as for references. A scoped
+result's loans reach the `Ok` payload through `?`, `!` and `match`.
+
+### 19.2 `Arena` (M4a)
+```nova
+fn process(input: Slice<u8>) -> Result<u64, AllocError> {
+    using arena = Arena.create(SystemHeap {}, 65536u64);
+    let counts = arena.allocArray(256usize, 0u32)?;   // SliceMut<u32>, a loan of `arena`
+    for (b in input) { counts[b as usize] += 1u32; }
+    var distinct: u64 = 0;
+    for (c in counts) { if (c != 0u32) { distinct += 1; } }
+    return Ok(distinct);                              // a u64, not arena memory
+}                                                     // the arena frees all its memory here
+```
+- `Arena` is a built-in move type that needs drop. It is not scoped: it owns its memory, which
+  it obtains from a free-standing allocator.
+- `Arena.create(a, chunkSize)`, with `a` an allocator value (`SystemHeap {}`, `FailingAllocator {}`)
+  and `chunkSize: u64`, makes an empty arena. It cannot fail: memory is obtained in chunks of
+  `chunkSize` bytes when needed. An allocation larger than a chunk gets a chunk of its own.
+- **Allocation** (R1). Both methods take `borrow this` and return a scoped result that carries a
+  **shared loan of the arena**:
+  - `arena.alloc(v)`: `Result<borrow mut T, AllocError>`, with `v` moved into fresh arena memory;
+  - `arena.allocArray(n, fill)` with `n: usize`: `Result<SliceMut<T>, AllocError>`, `n` copies
+    of `fill`. `T` must be Copy. `n` may be 0 (an empty slice); `n × size(T)` beyond the address
+    space is `Err(OutOfMemory)`.
+
+  The returned references are mutable: each allocation is fresh memory that nothing else refers to.
+- **R2:** `T` must not need drop, and must not be scoped (no references or slices in arena memory,
+  E3). Both are N0264.
+- `arena.reset()` takes `borrow mut this` and releases all memory. Because it is a mutable borrow,
+  it is rejected while any allocation is live (B1/B2). Dropping or moving the arena is likewise
+  rejected while allocations are live.
+- Destroying an arena releases all its memory at once (bulk release). Since no allocation
+  needs drop (R2), this equals destroying each allocation.
+- Failure: if a chunk cannot be obtained from the allocator, the allocation returns
+  `Err(AllocError.OutOfMemory)`; the arena stays usable.
+
+### 19.3 What cannot escape (M4a, the R1 consequences)
+- An allocation cannot be returned from the function that owns the arena: N0244, like any
+  reference to a local.
+- It cannot be stored in a box, a struct, an enum payload or an array: those cannot hold scoped
+  values (N0246).
+- It cannot outlive the arena: a `reset`, drop, move or scope end of the arena while the
+  allocation is live is N0240–N0243.
+
+Diagnostics: N0264 (a type that a region cannot hold).

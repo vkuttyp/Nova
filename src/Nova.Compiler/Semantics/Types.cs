@@ -42,6 +42,17 @@ public enum TypeKind
     /// type <see cref="NovaType.Allocator"/>. Dereferenced like a reference, but owned.
     /// </summary>
     Box,
+    /// <summary>A built-in region type (type-system.md §19): <see cref="NovaType.Region"/> says which.</summary>
+    Region,
+}
+
+/// <summary>The built-in region types (ADR 0004).</summary>
+public enum RegionKind
+{
+    /// <summary>Not a region.</summary>
+    None,
+    /// <summary><c>Arena</c> (type-system.md §19.2): owns its chunks; not scoped.</summary>
+    Arena,
 }
 
 public sealed class StructField
@@ -223,6 +234,9 @@ public sealed class NovaType
         IsMutableReference = isMutable;
     }
 
+    internal NovaType(RegionKind region, string name)
+        : this(TypeKind.Region, name) => Region = region;
+
     internal NovaType(NovaType contents, NovaType allocator, bool defaultAllocator)
         : this(TypeKind.Box, defaultAllocator ? $"Box<{contents.Name}>" : $"Box<{contents.Name}, {allocator.Name}>")
     {
@@ -278,6 +292,9 @@ public sealed class NovaType
 
     public bool IsBox => Kind == TypeKind.Box;
 
+    /// <summary>Which region type this is; <see cref="RegionKind.None"/> for every other kind.</summary>
+    public RegionKind Region { get; }
+
     /// <summary>True for <c>borrow mut T</c>.</summary>
     public bool IsMutableReference { get; }
 
@@ -330,9 +347,10 @@ public sealed class TypeTable
         Never = new NovaType(TypeKind.Never, "never");
         StringLiteral = new NovaType(TypeKind.StringLiteral, "string literal");
         Error = new NovaType(TypeKind.Error, "<error>");
+        Arena = new NovaType(RegionKind.Arena, "Arena");
 
         _byName = new Dictionary<string, NovaType>(StringComparer.Ordinal);
-        foreach (var t in new[] { I8, I16, I32, I64, ISize, U8, U16, U32, U64, USize, Bool, Void })
+        foreach (var t in new[] { I8, I16, I32, I64, ISize, U8, U16, U32, U64, USize, Bool, Void, Arena })
         {
             _byName.Add(t.Name, t);
         }
@@ -355,6 +373,7 @@ public sealed class TypeTable
     public NovaType Never { get; }
     public NovaType StringLiteral { get; }
     public NovaType Error { get; }
+    public NovaType Arena { get; }
 
     public static NovaType CreateStruct(string name, StructDecl syntax, SourceText source) =>
         new(name, new StructDefinition(syntax, source));
@@ -467,6 +486,8 @@ public sealed class TypeTable
                 return type.IsSlice ? (16, 8) : (8, 8); // a slice is (pointer, u64 length)
             case TypeKind.Box:
                 return (8, 8);
+            case TypeKind.Region:
+                return (40, 8); // nv_arena in nova/rt.h: five 8-byte fields, asserted in the generated C
             case TypeKind.Array:
             {
                 var (elementSize, elementAlign) = LayoutOf(type.Element!);
@@ -570,7 +591,7 @@ public sealed class TypeTable
             TypeKind.Enum when type.Enum!.ResultTypes is var (ok, err) => IsCopy(ok) && IsCopy(err),
             TypeKind.Enum => type.Enum!.IsCopy,
             TypeKind.Reference => !type.IsMutableReference,
-            TypeKind.Box => false,
+            TypeKind.Box or TypeKind.Region => false,
             _ => true,
         };
     }
@@ -578,7 +599,7 @@ public sealed class TypeTable
     public static bool NeedsDrop(NovaType type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        if (type.IsBox)
+        if (type.IsBox || type.Kind == TypeKind.Region)
         {
             return true;
         }
@@ -587,6 +608,16 @@ public sealed class TypeTable
             return NeedsDrop(ok) || NeedsDrop(err); // T and E may be declared later than the Result is named
         }
         return type.Struct is { NeedsDrop: true } || type.Enum is { NeedsDrop: true };
+    }
+
+    /// <summary>
+    /// May a value of this type hold loans (type-system.md §19.1)? References, slices, and results
+    /// with a scoped <c>T</c> or <c>E</c>. Scoped types follow the reference placement rules (N0246).
+    /// </summary>
+    public static bool IsScoped(NovaType type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        return type.IsReference || (type.Enum?.ResultTypes is var (ok, err) && (IsScoped(ok) || IsScoped(err)));
     }
 
     /// <summary>Is every value of <paramref name="from"/> representable in <paramref name="to"/>? (type-system.md §7)</summary>

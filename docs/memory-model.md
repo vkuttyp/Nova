@@ -153,7 +153,9 @@ fn render(n: usize) -> Result<void, AllocError> {
   **unless** the frame was created with `Scratch.enterOrHeap()`, in which case it falls back
   to the parent heap. Kernel: a fixed per-thread buffer of profile-defined size
   with explicit checks. No reliance on page faults.
-- Nested frames must be strictly LIFO, which the `using` rule enforces lexically.
+- Nested frames must be strictly LIFO. *Corrected by ADR 0004:* `using` alone does not ensure
+  this. Nested frames come from `parent.enter()`, which mutably borrows the parent, and only
+  one root frame per thread may be live (a second `Scratch.enter()` panics).
   Goose's "one growable on top" rule is **not** adopted in v0. The scratch region
   hands out fixed-size allocations only. Growable scratch arrays are a future
   extension (OD-12).

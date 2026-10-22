@@ -256,6 +256,30 @@ void nova_free(void *p, uint32_t allocator);
 /* FailingAllocator.failAfter(n) / FailingAllocator.reset(). */
 void nova_fail_after(uint64_t n);
 void nova_fail_reset(void);
+/* ---- Arena (type-system.md §19.2; runtime/core/nova_rt_core.c) ---------------------------- */
+
+/*
+ * A bump allocator over a list of chunks from a free-standing allocator. Layout fixed by Nova's
+ * TypeTable (five 8-byte fields: 40 bytes, alignment 8 on LP64).
+ */
+typedef struct nv_arena {
+    void *chunks;         /* most recent chunk; each chunk starts with the previous chunk's address */
+    uint8_t *cur;         /* next free byte in the current chunk */
+    uint8_t *end;         /* end of the current chunk */
+    uint64_t chunk_size;  /* bytes per chunk (larger allocations get their own) */
+    uint64_t allocator;   /* NV_ALLOC_* */
+} nv_arena;
+#if UINTPTR_MAX == UINT64_MAX
+_Static_assert(sizeof(nv_arena) == 40 && _Alignof(nv_arena) == 8, "nova/rt.h: nv_arena layout");
+#endif
+
+nv_arena nova_arena_create(uint32_t allocator, uint64_t chunk_size);
+/* `size` bytes aligned to `align` (a power of two ≤ 16); NULL if no chunk can be obtained. */
+void *nova_arena_alloc(nv_arena *a, uint64_t size, uint64_t align);
+/* Releases every chunk; the arena stays usable. Drop = reset. */
+void nova_arena_reset(nv_arena *a);
+void nova_arena_drop(nv_arena *a);
+
 /* Called by the generated `main`: configuration at start; the NOVA_ALLOC_REPORT line at the end. */
 void nova_rt_start(void);
 int32_t nova_rt_finish(int32_t code);
