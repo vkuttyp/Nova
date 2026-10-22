@@ -1,0 +1,15 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+
+# Build output (generated C, objects, binaries)
+out/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,148 @@
+# C Backend Design (v0)
+
+Status: Milestone 0 proposal. Applies from M1. CosmoOS-specific flags are covered in
+`cosmoos/abi.md` and `cosmoos/build-integration.md`.
+
+## 1. Target dialect
+
+- **C11** (ISO/IEC 9899:2011), compiled with `-std=c11` (or `gnu11` where the
+  host project requires it). Generated code must also compile under C17.
+- Headers used by generated code: **only** freestanding headers (`<stdint.h>`,
+  `<stddef.h>`, `<stdbool.h>`, `<stdalign.h>`, `<limits.h>`, `<stdnoreturn.h>`)
+  plus `nova/rt.h`. Everything hosted lives behind runtime functions.
+- Compiler-specific features are allowed only through macros in `nova/rt.h`
+  with a portable fallback: `__builtin_*_overflow`, `__builtin_expect`,
+  `__attribute__((noreturn, cold))`, `_Static_assert`.
+- Supported compilers: clang ≥ 15 (CosmoOS's floor; its CI uses Debian clang 19.1.7)
+  and gcc ≥ 11 for hosted builds. **CosmoOS profiles are clang/lld only**
+  (`research/cosmoos-platform-audit.md` §3). MSVC is best-effort for the hosted profile
+  (C11 mode, VS 2022), without the kernel profile.
+- The generated C must compile warning-free under
+  `-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Werror`
+  **and** under CosmoOS's own warning set (`-Wcast-qual -Wmissing-prototypes
+  -Wstrict-prototypes -Wvla -Wundef -Wimplicit-fallthrough`, `-Wframe-larger-than=2048`
+  for the kernel; see `cosmoos/abi.md`). All non-exported functions are `static`, and every
+  exported one has a prototype in the generated header.
+- Correct both with and without `-fno-strict-aliasing`. CosmoOS compiles with it,
+  but Nova does not rely on it.
+- **No compiler-rt / libgcc.** CosmoOS links no builtins library, so generated code
+  must never need one. That rules out `__int128` division, `long double` arithmetic,
+  16-byte atomics and, in AArch64 userland, outline-atomic helpers (to be verified in C1;
+  pass `-mno-outline-atomics` if needed). The runtime header supplies portable
+  fallbacks instead of builtins when a builtin would lower to a libcall.
+- `-nostdinc` builds: freestanding headers come from `-isystem $(clang
+  -print-resource-dir)/include` (CosmoOS invariant B2). Generated code must not include libc headers
+  directly; only `nova/rt*.h` does, and only in hosted and userland profiles.
+- Plain C `char` is **never** used for Nova data (`char` is signed on x86-64 and
+  unsigned on AArch64; CosmoOS's `limits.h` is also wrong about it on AArch64). Bytes are `uint8_t`.
+
+## 2. Lowering of types
+
+| Nova | C |
+|---|---|
+| `i8..i64`, `u8..u64` | `int8_t..int64_t`, `uint8_t..uint64_t` |
+| `isize`/`usize` | `intptr_t`/`uintptr_t` (`ptrdiff_t`/`size_t` used at FFI boundaries; equal widths asserted per target) |
+| `bool` | `bool` (`_Bool`) |
+| `char` | `uint32_t` |
+| `f32`/`f64` | `float`/`double` (`_Static_assert(sizeof(double)==8)`); **kernel profile forbids floats** unless the target profile enables them (`cosmoos/profiles.md`) |
+| `struct S` | `typedef struct S { ... } S;` in declaration order. `@repr(C)` is the default in v0; field reordering is an M9 opt-in (`@repr(auto)`) |
+| `enum E { A, B(T) }` | `struct { uint32_t tag; union { T B; } u; }`. The tag width is the smallest unsigned that fits, unless `@repr(u8)` etc. |
+| `T?` | `T*`-niche for `Box`/references, else `struct { bool has; T value; }` |
+| `borrow T` | `const T*`. `borrow mut T` → `T*` (`restrict` only where the borrow checker proves exclusivity *and* M9 enables it) |
+| `Slice<T>` | `struct { T* ptr; uintptr_t len; }` (pointer may be a dangling-but-aligned sentinel for `len==0`, **never NULL arithmetic**) |
+| `Box<T, A>` | `T*` when `A` is zero-sized; `struct { T* ptr; A a; }` otherwise |
+| Arrays `[T; N]` | wrapped in a struct `struct { T e[N]; }`, so assignment and return by value work |
+| Function pointers | C function pointer types via typedef |
+
+Names: the deterministic mangling `nv_<pkg>_<ns>_<name>` plus a type-argument
+hash for monomorphised instances, using a stable hash over canonical type
+strings (not .NET `GetHashCode`). `@export("sym")` overrides the name.
+
+Layout verification: for every emitted struct the backend emits
+`_Static_assert(sizeof(S) == N && _Alignof(S) == A, "...")` and `offsetof`
+assertions, where `N`/`A` come from `TargetInfo`. If the C compiler for the actual target
+disagrees with Nova's model, the build fails, and nothing miscompiles silently.
+
+## 3. Lowering of control flow and cleanup
+
+Each NIR block becomes a C label. Terminators become `goto`, `switch`
+(SwitchInt) or `return`. Structured reconstruction (`if/while`) is an optional
+readability pass (M7), not needed for correctness.
+
+```c
+int32_t nv_demo_gcd(uint64_t a, uint64_t b) {
+    uint64_t x; uint64_t y; uint64_t t;
+bb0:
+    x = a; y = b;
+    goto bb1;
+bb1:
+    if (!(y != 0u)) goto bb3;
+    goto bb2;
+bb2:
+    if (y == 0u) nova_panic_div0(NV_SRC(3, 17));   /* inserted check (statically elidable later) */
+    t = x % y; x = y; y = t;
+    goto bb1;
+bb3:
+    return x;
+}
+```
+
+Cleanup: drop elaboration has already put `Drop` calls on every exit edge,
+so early `return`, `?` and `break` need no special backend support. Drop flags are
+`bool` locals initialised to `false`. No `setjmp/longjmp` and no C++.
+
+Panics are `noreturn` calls into the runtime (`nova_panic(kind, src)`), so destructors are
+not run (panic = abort, OD-5).
+
+## 4. Evaluation order and temporaries
+
+NIR has already sequenced every side effect into separate statements, so the C
+backend never emits an expression whose meaning depends on unspecified C
+evaluation order (function-argument order, `a[i] = i++`-style). Arguments
+with side effects are always assigned to temporaries first.
+
+## 5. UB avoidance checklist (enforced by construction + tests)
+
+| Hazard | Strategy |
+|---|---|
+| Signed overflow | `nova_add_i32_chk(a,b,src)` via `__builtin_add_overflow`, with a portable fallback that computes in unsigned and compares. Wrapping ops compute in unsigned and convert back through a well-defined helper (implementation-defined conversion avoided by `memcpy`-free bit tricks verified per compiler) |
+| Division | Check for zero and `MIN/-1` before `/` and `%` |
+| Shifts | Check `0 <= n < width`. Left-shifting a negative signed value is done in unsigned |
+| Unsigned promotions | `uint8_t`/`uint16_t` arithmetic is promoted to `int`. All narrow arithmetic is performed as `uint32_t` and truncated explicitly |
+| Pointer arithmetic | Never form out-of-range pointers. Bounds checks compare indices before computing `ptr + i` |
+| Strict aliasing | No type punning. Reinterpretation (`transmute`, unsafe only) goes through `memcpy` (a builtin; supplied by the runtime in freestanding builds) |
+| Uninitialised reads | Definite-init analysis forbids them. Locals of aggregate type that are partially written via fields before a full read are zero-initialised in C to avoid indeterminate padding being copied |
+| Null | References are never null (type system). `T?` niche checks are explicit |
+| Alignment | All accesses are through properly typed lvalues. `@packed` fields are accessed via `memcpy` helpers |
+| Lifetime of compound literals / temporaries | Not used across statements. Temporaries are named locals |
+| `memcpy` overlap | Moves use `memmove` when the source and destination may alias; NIR knows when they cannot |
+| Float→int conversion out of range (UB in C) | Only via `toIntSaturating`/`checkedCast` helpers that range-check first |
+| Infinite side-effect-free loops (C11 6.8.5p6 permits assuming termination) | Loops whose controlling expression is not a constant expression and that have no side effects get a `nova_loop_barrier()` (an empty `asm volatile` / volatile access) |
+
+## 6. Runtime surface (`nova/rt.h`)
+
+- `nova_panic(kind, src)`: `noreturn`. Provided by the profile: hosted (write to
+  stderr + `abort()`), CosmoOS userland (same, through CosmoOS libc), kernel
+  (calls the kernel panic routine; C5).
+- Checked-arithmetic helpers (`static inline`).
+- `nova_mem_copy/move/set` (map to `__builtin_memcpy` etc. hosted; to the
+  kernel's own routines in the kernel profile).
+- Allocator vtable ABI for dynamic allocators (`memory-model.md` §3.2).
+- Source location encoding `NV_SRC(line, col)`. File IDs are resolved through a
+  per-package table, so absolute host paths are never embedded (reproducibility).
+
+## 7. Debugging
+
+- `#line` directives map C back to Nova source (optional, `--line-directives`;
+  on by default for debug builds). They must use package-relative paths.
+- Stable local names (`v_<name>_<n>`) so a C debugger shows recognisable variables.
+
+## 8. Validation
+
+- Golden-file tests for representative C output (mainly to review diffs).
+- Every `run-pass` test is compiled with clang and gcc (host) at `-O0` and `-O2`,
+  with and without `-fsanitize=address,undefined`. Outputs must agree
+  (differential testing).
+- M7: a Csmith-style random program generator for Nova; three-way
+  differential testing (clang/gcc × opt levels), plus a reference
+  interpreter on NIR (`novac run --interp`) as an oracle.
