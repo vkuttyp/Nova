@@ -27,4 +27,10 @@ jobs:
       - name: Build
         run: dotnet build Nova.slnx -c Release
       - name: Test
-        run: dotnet test Nova.slnx -c Release --no-build --logger "console;verbosity=normal"
+        run: |
+          # Resource log, printed below even if the job fails or is killed (diagnoses stalls).
+          (while true; do date -u +%T; free -m | sed -n 2,3p; ps -eo rss,etime,args --sort=-rss | head -6 | cut -c1-160; sleep 20; done) > "$RUNNER_TEMP/resources.log" 2>&1 &
+          dotnet test Nova.slnx -c Release --no-build --logger "console;verbosity=normal"
+      - name: Resource log
+        if: always()
+        run: tail -n 400 "$RUNNER_TEMP/resources.log" || true
