@@ -70,6 +70,7 @@ Runner: `tests/Nova.Compiler.Tests/CorpusTests.cs`, run by `dotnet test`.
 | 2026-10-22 | `dotnet test` on macOS arm64 (.NET 10.0.401): lexer and parser unit tests, 20 parse-pass and 18 parse-fail corpus files | 151 passed, 0 failed |
 | 2026-10-22 | same, plus 11 check-pass and 19 check-fail files and the checker crash test (increment 1b) | 201 passed, 0 failed |
 | 2026-10-22 | Linux CI run 39792099920 (ubuntu-24.04, clang 18.1.3, GCC 13.3.0): every corpus and run test passed under both compilers. The runtime harness failed only on GCC `-Wclobbered` (harness-only; fixed) | 379/380 |
+| 2026-10-22 | Linux CI run 39797265501 (after the `-Wclobbered` harness fix) | 380 passed, 0 failed (~10 min) |
 | 2026-10-22 | `integrations/cosmoos/c1.py --corpus` on x86-64 and AArch64 (CosmoOS `30d34b29`, QEMU TCG): nova-hello, nova-panic and all 70 run programs inside CosmoOS | all pass on both arches (`cosmoos/c1-report.md`) |
 | 2026-10-22 | increment 1c: plus 51 run-pass and 19 run-fail programs under 4 clang configurations (Apple clang 21: `-O0`, `-O2`, portable overflow, ASan+UBSan), runtime/semantics agreement harness, determinism, freestanding cross-compiles, 3 C snapshots. **No real GCC on this host**, so the GCC configurations did not run | 379 passed, 0 failed |
 
