@@ -37,7 +37,8 @@ typedef enum nv_panic_kind {
     NV_PANIC_UNREACHABLE = 4,
     NV_PANIC_INDEX = 5,
     NV_PANIC_SLICE = 6,
-    NV_PANIC_UNWRAP = 7
+    NV_PANIC_UNWRAP = 7,
+    NV_PANIC_SCRATCH = 8
 } nv_panic_kind;
 
 /* A Nova source location; `file` points to a string in the generated program's file table. */
@@ -279,6 +280,42 @@ void *nova_arena_alloc(nv_arena *a, uint64_t size, uint64_t align);
 /* Releases every chunk; the arena stays usable. Drop = reset. */
 void nova_arena_reset(nv_arena *a);
 void nova_arena_drop(nv_arena *a);
+
+/* ---- Fixed-buffer allocator and scratch frames (type-system.md §19.4-19.5) ---------------- */
+
+/* Allocation from caller-provided bytes; nothing is freed. 24 bytes on LP64. */
+typedef struct nv_fba {
+    uint8_t *base;
+    uint64_t capacity;
+    uint64_t used;
+} nv_fba;
+
+/*
+ * A scratch frame: the scratch stack's state when the frame was entered, which its drop restores.
+ * The scratch stack itself (runtime-owned heap chunks) is global; v0 is single-threaded. 32 bytes.
+ */
+typedef struct nv_scratch {
+    void *chunk;
+    uint8_t *cur;
+    uint8_t *end;
+    uint64_t depth;
+} nv_scratch;
+#if UINTPTR_MAX == UINT64_MAX
+_Static_assert(sizeof(nv_fba) == 24 && _Alignof(nv_fba) == 8, "nova/rt.h: nv_fba layout");
+_Static_assert(sizeof(nv_scratch) == 32 && _Alignof(nv_scratch) == 8, "nova/rt.h: nv_scratch layout");
+#endif
+
+nv_fba nova_fba_over(uint8_t *base, uint64_t capacity);
+/* Panics if a scratch frame is already active: nested frames come from nova_scratch_enter_child. */
+nv_scratch nova_scratch_enter_root(nv_loc loc);
+nv_scratch nova_scratch_enter_child(nv_scratch *parent);
+void nova_scratch_drop(nv_scratch *frame);
+
+/* Allocation from any region (the generated helpers' single entry point); NULL on failure. */
+#define NV_REGION_ARENA 0u
+#define NV_REGION_FBA 1u
+#define NV_REGION_SCRATCH 2u
+void *nova_region_alloc(void *region, uint32_t kind, uint64_t size, uint64_t align);
 
 /* Called by the generated `main`: configuration at start; the NOVA_ALLOC_REPORT line at the end. */
 void nova_rt_start(void);

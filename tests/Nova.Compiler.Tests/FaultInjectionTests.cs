@@ -18,7 +18,7 @@ public partial class FaultInjectionTests
 {
     private const int MaxAttempts = 200;
     /// <summary>Runtime calls that allocate: directly, or through a region (M4).</summary>
-    private static readonly string[] s_allocationCalls = ["nova_alloc(", "nova_arena_alloc("];
+    private static readonly string[] s_allocationCalls = ["nova_alloc(", "nova_region_alloc(", "nova_scratch_enter_root("];
     private static readonly string CorpusRoot = Path.Combine(TestHelpers.RepoRoot(), "tests", "corpus");
 
     public static TheoryData<string> RunPassFiles()
@@ -56,7 +56,10 @@ public partial class FaultInjectionTests
         var baseline = Run(exe, failAt: 0);
         var attempts = Report(baseline, "baseline");
         Assert.True(attempts.Live == 0, $"{relativePath}: {attempts.Live} allocation(s) leaked without fault injection");
-        Assert.True(attempts.Attempts >= 1, "the program allocates, but no attempt was counted");
+        if (attempts.Attempts == 0)
+        {
+            return; // regions over caller storage only (a fixed-buffer allocator): nothing to fail
+        }
 
         var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
         Parallel.ForEach(FailurePoints(attempts.Attempts), k =>

@@ -78,6 +78,7 @@ _Noreturn void nova_panic(nv_panic_kind kind, nv_loc loc) {
     case NV_PANIC_INDEX: reason = "index out of bounds"; break;
     case NV_PANIC_SLICE: reason = "slice range out of bounds"; break;
     case NV_PANIC_UNWRAP: reason = "unwrapped an Err value"; break;
+    case NV_PANIC_SCRATCH: reason = "a scratch frame is already active; nest with frame.enter()"; break;
     default: reason = "unknown panic"; break;
     }
     write_err_cstr("nova panic: ");
@@ -210,4 +211,94 @@ void nova_arena_reset(nv_arena *a) {
 
 void nova_arena_drop(nv_arena *a) {
     nova_arena_reset(a);
+}
+
+/* ---- Fixed-buffer allocator (type-system.md §19.4) ----------------------------------------- */
+
+nv_fba nova_fba_over(uint8_t *base, uint64_t capacity) {
+    nv_fba f = {base, capacity, 0u};
+    return f;
+}
+
+static void *fba_alloc(nv_fba *f, uint64_t size, uint64_t align) {
+    uintptr_t start = (uintptr_t)f->base + (uintptr_t)f->used;
+    uintptr_t aligned = (start + (uintptr_t)(align - 1u)) & ~(uintptr_t)(align - 1u);
+    uint64_t offset = (uint64_t)(aligned - (uintptr_t)f->base);
+    if (aligned < start || offset > f->capacity || size > f->capacity - offset) {
+        return NULL;
+    }
+    f->used = offset + size;
+    return (void *)aligned;
+}
+
+/* ---- Scratch frames (type-system.md §19.5; ADR 0004) -------------------------------------- */
+
+#define NV_SCRATCH_CHUNK 65536u
+
+static void *scratch_chunk;   /* newest chunk; each starts with the previous chunk's address */
+static uint8_t *scratch_cur;
+static uint8_t *scratch_end;
+static uint64_t scratch_depth; /* live frames */
+
+nv_scratch nova_scratch_enter_root(nv_loc loc) {
+    if (scratch_depth != 0u) {
+        nova_panic(NV_PANIC_SCRATCH, loc);
+    }
+    scratch_depth = 1u;
+    nv_scratch frame = {scratch_chunk, scratch_cur, scratch_end, 1u};
+    return frame;
+}
+
+nv_scratch nova_scratch_enter_child(nv_scratch *parent) {
+    scratch_depth = parent->depth + 1u;
+    nv_scratch frame = {scratch_chunk, scratch_cur, scratch_end, scratch_depth};
+    return frame;
+}
+
+void nova_scratch_drop(nv_scratch *frame) {
+    /* Frames are strictly LIFO (ADR 0004), so everything newer than the frame's entry state is its own. */
+    while (scratch_chunk != frame->chunk) {
+        void *previous = *(void **)scratch_chunk;
+        nova_free(scratch_chunk, NV_ALLOC_SYSTEM);
+        scratch_chunk = previous;
+    }
+    scratch_cur = frame->cur;
+    scratch_end = frame->end;
+    scratch_depth = frame->depth - 1u;
+}
+
+static void *scratch_alloc(uint64_t size, uint64_t align) {
+    uintptr_t cur = (uintptr_t)scratch_cur;
+    uintptr_t aligned = (cur + (uintptr_t)(align - 1u)) & ~(uintptr_t)(align - 1u);
+    if (scratch_cur != NULL && aligned >= cur && size <= (uint64_t)((uintptr_t)scratch_end - aligned)) {
+        scratch_cur = (uint8_t *)(aligned + (uintptr_t)size);
+        return (void *)aligned;
+    }
+    uint64_t need = size + NV_ARENA_HEADER;
+    if (need < size) {
+        return NULL;
+    }
+    uint64_t total = need > NV_SCRATCH_CHUNK ? need : NV_SCRATCH_CHUNK;
+#if SIZE_MAX < UINT64_MAX
+    if (total > (uint64_t)SIZE_MAX) {
+        return NULL;
+    }
+#endif
+    uint8_t *chunk = (uint8_t *)nova_alloc((size_t)total, NV_ALLOC_SYSTEM);
+    if (chunk == NULL) {
+        return NULL;
+    }
+    *(void **)(void *)chunk = scratch_chunk;
+    scratch_chunk = chunk;
+    scratch_end = chunk + total;
+    scratch_cur = chunk + NV_ARENA_HEADER + size;
+    return chunk + NV_ARENA_HEADER;
+}
+
+void *nova_region_alloc(void *region, uint32_t kind, uint64_t size, uint64_t align) {
+    switch (kind) {
+    case NV_REGION_ARENA: return nova_arena_alloc((nv_arena *)region, size, align);
+    case NV_REGION_FBA: return fba_alloc((nv_fba *)region, size, align);
+    default: return scratch_alloc(size, align);
+    }
 }

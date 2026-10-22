@@ -49,6 +49,8 @@ internal sealed class TypeChecker
         Truncate,
         Box,
         Arena,
+        FixedBufferAllocator,
+        Scratch,
     }
 
     private readonly IReadOnlyList<CompilationUnit> _units;
@@ -81,7 +83,7 @@ internal sealed class TypeChecker
     /// <summary>Built-in items (AllocError, the allocators): emitted only if the program uses them.</summary>
     private readonly HashSet<object> _builtinItems = [];
     private readonly HashSet<object> _usedBuiltins = [];
-    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box"];
+    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch"];
 
     public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics)
     {
@@ -96,9 +98,17 @@ internal sealed class TypeChecker
             [symbols.Intern("truncate")] = Builtin.Truncate,
             [symbols.Intern("Box")] = Builtin.Box,
             [symbols.Intern("Arena")] = Builtin.Arena,
+            [symbols.Intern("FixedBufferAllocator")] = Builtin.FixedBufferAllocator,
+            [symbols.Intern("Scratch")] = Builtin.Scratch,
         };
         _thisSymbol = symbols.Intern("this");
+        _frameMemory = new StructField(symbols.Intern("memory"), types.ScratchFrame, 0, default) { IsRegionPart = true };
+        _frameAllocation = new StructField(symbols.Intern("allocation"), types.ScratchFrame, 1, default) { IsRegionPart = true };
     }
+
+    /// <summary>The two borrow-checker parts of a scratch frame (type-system.md §19.5).</summary>
+    private readonly StructField _frameMemory;
+    private readonly StructField _frameAllocation;
 
     public HirProgram Check()
     {
@@ -805,20 +815,115 @@ internal sealed class TypeChecker
         return true;
     }
 
-    /// <summary><c>arena.alloc(v)</c>, <c>arena.allocArray(n, fill)</c>, <c>arena.reset()</c> (type-system.md §19.2).</summary>
-    private HirExpr CheckArenaMethod(CallExpr call, MemberExpr member, HirExpr receiver)
+    /// <summary>
+    /// <c>FixedBufferAllocator.over(mut storage)</c> (§19.4) and <c>Scratch.enter()</c> (§19.5).
+    /// </summary>
+    private HirExpr CheckRegionConstructor(CallExpr call, MemberExpr member, Builtin owner)
     {
         var text = Name(member.Member.Name);
-        var arity = text switch { "alloc" => 1, "allocArray" => 2, "reset" => 0, _ => -1 };
-        if (arity < 0 || call.Arguments.Length != arity)
+        if (owner == Builtin.Scratch)
         {
-            Error(arity < 0 ? DiagnosticCodes.UndefinedName : DiagnosticCodes.ArgumentCount, member.Member.Span, arity < 0
-                ? $"'Arena' has no method '{text}'; it has 'alloc(v)', 'allocArray(n, fill)' and 'reset()'"
-                : $"'Arena.{text}' takes {arity} argument(s)");
+            if (text != "enter" || call.Arguments.Length != 0)
+            {
+                Error(text != "enter" ? DiagnosticCodes.UndefinedName : DiagnosticCodes.ArgumentCount, call.Span,
+                    "a root scratch frame is made with 'Scratch.enter()'");
+                CheckArgumentsLoosely(call);
+                return ErrorResult(call.Span);
+            }
+            return new HirBuiltinCall(BuiltinFunction.ScratchEnter, [], _types.ScratchFrame, call.Span);
+        }
+        if (text != "over" || call.Arguments.Length != 1 || call.Arguments[0] is not MutArgExpr storageArgument)
+        {
+            Error(text != "over" ? DiagnosticCodes.UndefinedName : DiagnosticCodes.ArgumentCount, call.Span,
+                "a fixed-buffer allocator is made with 'FixedBufferAllocator.over(mut storage)'");
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
         }
-        var arena = RegionReceiver(receiver, _types.Arena, isMutable: text == "reset", member);
+        var storage = Synth(storageArgument.Operand, null);
+        if (storage.Type.IsBottom)
+        {
+            return ErrorResult(call.Span);
+        }
+        var bytes = _types.SliceOf(_types.U8, isMutable: true);
+        HirExpr? slice = null;
+        if (ReferenceEquals(storage.Type, bytes))
+        {
+            slice = Coerce(storage, bytes, storageArgument.Span); // a reborrow of the caller's slice
+        }
+        else if (AutoDeref(storage) is { Type: { Kind: TypeKind.Array, IsUnsized: false } array } && ReferenceEquals(array.Element, _types.U8))
+        {
+            var deref = AutoDeref(storage);
+            if (ToPlace(deref) is not { } place)
+            {
+                Error(DiagnosticCodes.BorrowOfNonPlace, storageArgument.Span, "the storage must be a variable or field; bind the value to a local first");
+                return ErrorResult(call.Span);
+            }
+            if (MutabilityError(place) is { } reason)
+            {
+                Error(DiagnosticCodes.BorrowMutOfImmutable, storageArgument.Span, $"cannot borrow {DescribePlace(place)} as mutable: {reason}");
+                return ErrorResult(call.Span);
+            }
+            slice = new HirSlice(true, place, null, null, bytes, storageArgument.Span);
+        }
+        else
+        {
+            Error(DiagnosticCodes.TypeMismatch, storageArgument.Operand.Span,
+                $"the storage of a fixed-buffer allocator is a '[u8; N]' or a 'SliceMut<u8>'; found '{storage.Type}'");
+            return ErrorResult(call.Span);
+        }
+        return new HirBuiltinCall(BuiltinFunction.FixedBufferOver, [slice], _types.FixedBufferAllocator, call.Span);
+    }
+
+    /// <summary>
+    /// Region methods (type-system.md §19.2, §19.4, §19.5): <c>alloc(v)</c> and <c>allocArray(n, fill)</c> on
+    /// every region, <c>reset()</c> on an arena, <c>enter()</c> on a scratch frame.
+    /// </summary>
+    private HirExpr CheckArenaMethod(CallExpr call, MemberExpr member, HirExpr receiver)
+    {
+        var regionType = (receiver.Type.Pointee ?? receiver.Type) is { Kind: TypeKind.Region } region ? region : _types.Arena;
+        var text = Name(member.Member.Name);
+        var special = regionType.Region switch { RegionKind.Arena => "reset", RegionKind.ScratchFrame => "enter", _ => null };
+        var arity = text switch { "alloc" => 1, "allocArray" => 2, _ when text == special => 0, _ => -1 };
+        if (arity < 0 || call.Arguments.Length != arity)
+        {
+            Error(arity < 0 ? DiagnosticCodes.UndefinedName : DiagnosticCodes.ArgumentCount, member.Member.Span, arity < 0
+                ? $"'{regionType}' has no method '{text}'; it has 'alloc(v)', 'allocArray(n, fill)'{(special is null ? "" : $" and '{special}()'")}"
+                : $"'{regionType}.{text}' takes {arity} argument(s)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        HirExpr? arena;
+        HirExpr? allocationRight = null;
+        if (regionType.Region == RegionKind.ScratchFrame)
+        {
+            // Allocations borrow the frame's memory; allocating and nesting use its allocation right (§19.5).
+            if (ToPlace(AutoDeref(receiver)) is not { } frame)
+            {
+                Error(DiagnosticCodes.BorrowOfNonPlace, member.Target.Span, "a scratch frame must be bound to a local first: 'using frame = …'");
+                CheckArgumentsLoosely(call);
+                return ErrorResult(call.Span);
+            }
+            var right = Project(frame, new Projection(_frameAllocation));
+            if (text == "enter")
+            {
+                if (MutabilityError(right) is { } reason)
+                {
+                    Error(DiagnosticCodes.BorrowMutOfImmutable, member.Target.Span, $"cannot nest in {DescribePlace(frame)}: {reason}");
+                    CheckArgumentsLoosely(call);
+                    return ErrorResult(call.Span);
+                }
+                arena = new HirBorrow(true, right, _types.ReferenceTo(regionType, isMutable: true), member.Target.Span);
+            }
+            else
+            {
+                arena = new HirBorrow(false, Project(frame, new Projection(_frameMemory)), _types.ReferenceTo(regionType, isMutable: false), member.Target.Span);
+                allocationRight = new HirBorrow(false, right, _types.ReferenceTo(regionType, isMutable: false), member.Target.Span);
+            }
+        }
+        else
+        {
+            arena = RegionReceiver(receiver, regionType, isMutable: text == special, member);
+        }
         if (arena is null)
         {
             CheckArgumentsLoosely(call);
@@ -827,6 +932,10 @@ internal sealed class TypeChecker
         if (text == "reset")
         {
             return new HirBuiltinCall(BuiltinFunction.ArenaReset, [arena], _types.Void, call.Span);
+        }
+        if (text == "enter")
+        {
+            return new HirBuiltinCall(BuiltinFunction.ScratchNest, [arena], _types.ScratchFrame, call.Span);
         }
         var count = text == "allocArray" ? CheckExpr(call.Arguments[0], _types.USize) : null;
         var valueSyntax = call.Arguments[^1];
@@ -837,10 +946,12 @@ internal sealed class TypeChecker
             return ErrorResult(call.Span);
         }
         var allocError = Used(_allocError).Type;
+        // A frame's allocation right comes last: the result borrows only from the first argument.
+        ImmutableArray<HirExpr> extra = allocationRight is null ? [] : [allocationRight];
         return count is null
-            ? new HirBuiltinCall(BuiltinFunction.ArenaAlloc, [arena, value],
+            ? new HirBuiltinCall(BuiltinFunction.ArenaAlloc, [arena, value, .. extra],
                 ResultOf(_types.ReferenceTo(value.Type, isMutable: true), allocError), call.Span)
-            : new HirBuiltinCall(BuiltinFunction.ArenaAllocArray, [arena, count, value],
+            : new HirBuiltinCall(BuiltinFunction.ArenaAllocArray, [arena, count, value, .. extra],
                 ResultOf(_types.SliceOf(value.Type, isMutable: true), allocError), call.Span);
     }
 
@@ -1509,7 +1620,8 @@ internal sealed class TypeChecker
         }
 
         // Declared after the initializer is checked: `let x = x;` does not see the new `x`.
-        var local = _function!.AddLocal(decl.Name.Name, type, decl.IsMutable, isParameter: false, decl.Name.Span);
+        // A `using` binding is pinned, not immutable: it may be mutated and mutably borrowed (§14.6).
+        var local = _function!.AddLocal(decl.Name.Name, type, decl.IsMutable || decl.IsUsing, isParameter: false, decl.Name.Span);
         local.IsUsing = decl.IsUsing;
         _scopes[^1][decl.Name.Name] = local;
         return new HirLocalDecl(local, initializer, decl.Span);
@@ -1589,6 +1701,12 @@ internal sealed class TypeChecker
             Error(DiagnosticCodes.Unsupported, target.Span, "only variables, their fields, and places reached through references can be assigned");
             return null;
         }
+        if (place.IsLocal && place.Root.IsUsing && !place.Type.IsReference)
+        {
+            Error(DiagnosticCodes.AssignToImmutable, target.Span,
+                $"cannot assign to '{Name(place.Root.Name)}': a 'using' binding stays the same value until the end of its block");
+            return null;
+        }
         if (place.Type.IsReference)
         {
             place = Project(place, Projection.Deref);
@@ -1636,6 +1754,10 @@ internal sealed class TypeChecker
             return null;
         }
         var root = Name(place.Root.Name);
+        if (!throughShared && !place.Root.IsParameter && TypeTable.IsScoped(place.Root.Type) && !place.Root.Type.IsReference)
+        {
+            return $"'{root}' is not mutable; bind it with 'using' (a scoped value cannot be a 'var')";
+        }
         return throughShared ? "it is behind a shared reference ('borrow'); a 'borrow mut' reference is needed to modify it"
             : place.Root.Name == _thisSymbol ? "'this' is immutable in a by-value method; use 'borrow mut this'"
             : place.Root.IsParameter ? "parameters are immutable"
@@ -2010,6 +2132,9 @@ internal sealed class TypeChecker
             case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } arenaName } arenaMember } arenaCall
                 when Lookup(arenaName.Name.Name) is Builtin.Arena:
                 return CheckArenaCreate(arenaCall, arenaMember);
+            case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } regionName } regionMember } regionCall
+                when Lookup(regionName.Name.Name) is Builtin.FixedBufferAllocator or Builtin.Scratch:
+                return CheckRegionConstructor(regionCall, regionMember, (Builtin)Lookup(regionName.Name.Name)!);
             case CallExpr call:
                 return SynthCall(call);
             case TryExpr tryExpr:
@@ -2559,7 +2684,7 @@ internal sealed class TypeChecker
             receiver = AutoDeref(receiver); // the method receives the box's contents (§18.2)
         }
         var structType = receiver.Type.Pointee ?? receiver.Type;
-        if (structType.Region == RegionKind.Arena)
+        if (structType.Kind == TypeKind.Region)
         {
             return CheckArenaMethod(call, member, receiver);
         }

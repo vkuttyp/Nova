@@ -1,0 +1,67 @@
+// R1 for fixed-buffer allocators and scratch frames (type-system.md §19.4-19.5).
+fn use(p: borrow u64) { }
+fn useFrame(f: borrow ScratchFrame) { }
+
+fn storageWhileAllocatorLive() -> Result<void, AllocError> {
+    var storage = [0u8; 64];
+    let fba = FixedBufferAllocator.over(mut storage);
+    let p = fba.alloc(1u64)?;
+    storage[0] = 1u8; // error[N0240]
+    use(p);
+    return Ok();
+}
+
+fn storageReadWhileAllocationLive() -> Result<void, AllocError> {
+    var storage = [0u8; 64];
+    let p = FixedBufferAllocator.over(mut storage).alloc(1u64)?; // error[N0243] (the allocator is a temporary)
+    let first = storage[0]; // error[N0242]
+    use(p);
+    return Ok();
+}
+
+fn returnsFixedBufferAllocation(x: borrow u64) -> Result<borrow mut u64, AllocError> {
+    var storage = [0u8; 64];
+    let fba = FixedBufferAllocator.over(mut storage);
+    return fba.alloc(1u64); // error[N0244]
+}
+
+fn parentAllocatesWhileChildLive() -> Result<void, AllocError> {
+    using frame = Scratch.enter();
+    using child = frame.enter();
+    let a = frame.alloc(1u64)?; // error[N0241]
+    let b = child.alloc(2u64)?;
+    return Ok();
+}
+
+fn nestTwice() -> Result<void, AllocError> {
+    using frame = Scratch.enter();
+    using a = frame.enter();
+    using b = frame.enter(); // error[N0241]
+    useFrame(borrow a);
+    return Ok();
+}
+
+fn childAllocationOutlivesChild() -> Result<void, AllocError> {
+    using frame = Scratch.enter();
+    let keep = frame.alloc(0u64)?;
+    {
+        using child = frame.enter();
+        let p = child.alloc(5u64)?;
+        keep = p; // writes through `keep`: fine
+    }
+    use(keep); // the parent's allocation is still usable after the child
+    return Ok();
+}
+
+fn returnsFrameAllocation(x: borrow u64) -> Result<borrow mut u64, AllocError> {
+    using frame = Scratch.enter();
+    return frame.alloc(1u64); // error[N0244]
+}
+
+fn frameMovedWhileAllocationLive() -> Result<void, AllocError> {
+    let frame = Scratch.enter();
+    let p = frame.alloc(1u64)?;
+    let moved = frame; // error[N0240]
+    use(p);
+    return Ok();
+}

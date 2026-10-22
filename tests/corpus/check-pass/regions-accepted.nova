@@ -1,0 +1,43 @@
+// Near-misses for fixed-buffer allocators and scratch frames.
+fn sum(xs: Slice<u32>) -> u32 {
+    var t = 0u32;
+    for (x in xs) { t += x; }
+    return t;
+}
+
+fn storageAfterAllocator() -> Result<u8, AllocError> {
+    var storage = [0u8; 32];
+    {
+        let fba = FixedBufferAllocator.over(mut storage);
+        let a = fba.allocArray(4usize, 7u32)?;
+        let total = sum(a);
+    }
+    storage[0] = 1u8;                     // the allocator and its allocations are gone
+    return Ok(storage[0]);
+}
+
+fn overCallerSlice(buf: SliceMut<u8>) -> Result<u32, AllocError> {
+    let fba = FixedBufferAllocator.over(mut buf);
+    let a = fba.alloc(5u32)?;
+    let b = fba.alloc(6u32)?;
+    return Ok(a + b);
+}
+
+fn parentAllocationUsedDuringChild(frame: borrow mut ScratchFrame) -> Result<u64, AllocError> {
+    let outer = frame.alloc(1u64)?;
+    {
+        using child = frame.enter();
+        let inner = child.alloc(2u64)?;
+        outer += inner;                   // the parent's memory stays usable
+    }
+    let again = frame.alloc(3u64)?;       // the child is gone: the parent may allocate again
+    return Ok(outer + again);
+}
+
+fn main() {
+    let a = storageAfterAllocator()!;
+    var bytes = [0u8; 64];
+    let b = overCallerSlice(borrow mut bytes[..])!;
+    using frame = Scratch.enter();
+    let c = parentAllocationUsedDuringChild(mut frame)!;
+}

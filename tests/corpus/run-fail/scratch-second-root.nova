@@ -1,0 +1,13 @@
+fn helper() -> Result<u8, AllocError> {
+    using frame = Scratch.enter(); // expect-panic: a scratch frame is already active; nest with frame.enter()
+    let b = frame.alloc(1u8)?;
+    return Ok(b);
+}
+
+fn main() {
+    using outer = Scratch.enter();
+    let a = outer.alloc(2u8)!;
+    Console.writeLine(a);
+    let b = helper()!;
+}
+// expect-stdout: 2

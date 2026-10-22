@@ -60,8 +60,8 @@ _Static_assert(_Alignof(nvR_QUu16E10AllocError) == 8, "novac layout: alignof(Res
 _Static_assert(offsetof(nvR_QUu16E10AllocError, u) == 8, "novac layout: Result<SliceMut<u16>, AllocError> payload offset");
 
 static NV_UNUSED int32_t nv_main(void);
-static NV_UNUSED nvR_QS5PointE10AllocError nvAA_S5Point(nv_arena *a, nvT_Point v);
-static NV_UNUSED nvR_QUu16E10AllocError nvAR_u16(nv_arena *a, uint64_t n, uint16_t fill);
+static NV_UNUSED nvR_QS5PointE10AllocError nvAA_S5Point(void *r, uint32_t kind, nvT_Point v);
+static NV_UNUSED nvR_QUu16E10AllocError nvAR_u16(void *r, uint32_t kind, uint64_t n, uint16_t fill);
 
 static int32_t nv_main(void) {
     NV_UNUSED nv_arena v_arena_0 = {0};
@@ -86,7 +86,7 @@ static int32_t nv_main(void) {
     v_arena_0 = nova_arena_create(NV_ALLOC_SYSTEM, ((uint64_t)1024));
     t_5 = &v_arena_0;
     t_6 = ((nvT_Point){ .f_x = ((int32_t)1), .f_y = ((int32_t)2) });
-    t_7 = nvAA_S5Point(t_5, t_6);
+    t_7 = nvAA_S5Point(t_5, NV_REGION_ARENA, t_6);
     t_8 = t_7;
     t_9 = (uint32_t)t_8.tag;
     switch (t_9) {
@@ -96,7 +96,7 @@ static int32_t nv_main(void) {
 bb1:
     v_p_1 = t_8.u.v_Ok.f__0;
     t_10 = &v_arena_0;
-    t_11 = nvAR_u16(t_10, ((uint64_t)3), ((uint16_t)7));
+    t_11 = nvAR_u16(t_10, NV_REGION_ARENA, ((uint64_t)3), ((uint16_t)7));
     t_12 = t_11;
     t_13 = (uint32_t)t_12.tag;
     switch (t_13) {
@@ -120,16 +120,16 @@ bb4:
     nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 6u, 13u));
 }
 
-static nvR_QS5PointE10AllocError nvAA_S5Point(nv_arena *a, nvT_Point v) {
-    nvT_Point *p = (nvT_Point *)nova_arena_alloc(a, sizeof(nvT_Point), _Alignof(nvT_Point));
+static nvR_QS5PointE10AllocError nvAA_S5Point(void *r, uint32_t kind, nvT_Point v) {
+    nvT_Point *p = (nvT_Point *)nova_region_alloc(r, kind, sizeof(nvT_Point), _Alignof(nvT_Point));
     if (p == NULL) return ((nvR_QS5PointE10AllocError){ .tag = 1, .u.v_Err = { .f__0 = ((nvE_AllocError){ .tag = 0 }) } });
     *p = v;
     return ((nvR_QS5PointE10AllocError){ .tag = 0, .u.v_Ok = { .f__0 = p } });
 }
 
-static nvR_QUu16E10AllocError nvAR_u16(nv_arena *a, uint64_t n, uint16_t fill) {
+static nvR_QUu16E10AllocError nvAR_u16(void *r, uint32_t kind, uint64_t n, uint16_t fill) {
     if (n > UINT64_MAX / sizeof(uint16_t)) return ((nvR_QUu16E10AllocError){ .tag = 1, .u.v_Err = { .f__0 = ((nvE_AllocError){ .tag = 0 }) } });
-    uint16_t *p = (uint16_t *)nova_arena_alloc(a, n == 0u ? 1u : n * sizeof(uint16_t), _Alignof(uint16_t));
+    uint16_t *p = (uint16_t *)nova_region_alloc(r, kind, n == 0u ? 1u : n * sizeof(uint16_t), _Alignof(uint16_t));
     if (p == NULL) return ((nvR_QUu16E10AllocError){ .tag = 1, .u.v_Err = { .f__0 = ((nvE_AllocError){ .tag = 0 }) } });
     for (uint64_t i = 0; i < n; i++) p[i] = fill;
     return ((nvR_QUu16E10AllocError){ .tag = 0, .u.v_Ok = { .f__0 = ((nvSm_u16){ .ptr = p, .len = n }) } });

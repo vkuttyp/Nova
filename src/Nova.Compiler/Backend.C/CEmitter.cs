@@ -218,7 +218,7 @@ public sealed class CEmitter
     /// The drop glue of a type that needs drop: <c>nvD_&lt;length&gt;&lt;Name&gt;</c> for user structs and enums,
     /// <c>nvD_&lt;mangled&gt;</c> for built-in instantiations (which start with a letter, so they cannot collide).
     /// </summary>
-    private static string DropGlueName(NovaType type) => type.Kind == TypeKind.Region ? "nova_arena_drop"
+    private static string DropGlueName(NovaType type) => type.Kind == TypeKind.Region ? (type.Region == RegionKind.Arena ? "nova_arena_drop" : "nova_scratch_drop")
         : type.Enum?.ResultTypes is not null || type.IsBox ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
 
     /// <summary>
@@ -307,12 +307,20 @@ public sealed class CEmitter
         return ok.IsSlice ? $"nvAR_{Mangle(ok.Pointee!.Element!)}" : $"nvAA_{Mangle(ok.Pointee!)}";
     }
 
+    /// <summary>The runtime's id for the region a (reference to a) region value names (nova/rt.h).</summary>
+    private static string RegionId(NovaType region) => (region.Pointee ?? region).Region switch
+    {
+        RegionKind.Arena => "NV_REGION_ARENA",
+        RegionKind.FixedBuffer => "NV_REGION_FBA",
+        _ => "NV_REGION_SCRATCH",
+    };
+
     private static string ArenaHelperSignature(NovaType result)
     {
         var ok = result.Enum!.ResultTypes!.Value.Ok;
         return ok.IsSlice
-            ? $"{CTypeName(result)} {ArenaHelperName(result)}(nv_arena *a, uint64_t n, {CType(ok.Pointee!.Element!)} fill)"
-            : $"{CTypeName(result)} {ArenaHelperName(result)}(nv_arena *a, {CType(ok.Pointee!)} v)";
+            ? $"{CTypeName(result)} {ArenaHelperName(result)}(void *r, uint32_t kind, uint64_t n, {CType(ok.Pointee!.Element!)} fill)"
+            : $"{CTypeName(result)} {ArenaHelperName(result)}(void *r, uint32_t kind, {CType(ok.Pointee!)} v)";
     }
 
     private void EmitArenaHelperPrototypes()
@@ -343,7 +351,7 @@ public sealed class CEmitter
                     // Only for elements wider than a byte: GCC's -Wtype-limits flags `n > UINT64_MAX`.
                     Line($"    if (n > UINT64_MAX / sizeof({element})) return {error};");
                 }
-                Line($"    {element} *p = ({element} *)nova_arena_alloc(a, n == 0u ? 1u : n * sizeof({element}), _Alignof({element}));");
+                Line($"    {element} *p = ({element} *)nova_region_alloc(r, kind, n == 0u ? 1u : n * sizeof({element}), _Alignof({element}));");
                 Line($"    if (p == NULL) return {error};");
                 Line("    for (uint64_t i = 0; i < n; i++) p[i] = fill;");
                 Line($"    return (({name}){{ .tag = 0, .u.v_Ok = {{ .f__0 = (({CTypeName(ok)}){{ .ptr = p, .len = n }}) }} }});");
@@ -351,7 +359,7 @@ public sealed class CEmitter
             else
             {
                 var contents = CType(ok.Pointee!);
-                Line($"    {contents} *p = ({contents} *)nova_arena_alloc(a, sizeof({contents}), _Alignof({contents}));");
+                Line($"    {contents} *p = ({contents} *)nova_region_alloc(r, kind, sizeof({contents}), _Alignof({contents}));");
                 Line($"    if (p == NULL) return {error};");
                 Line("    *p = v;");
                 Line($"    return (({name}){{ .tag = 0, .u.v_Ok = {{ .f__0 = p }} }});");
@@ -550,6 +558,9 @@ public sealed class CEmitter
     {
         switch (statement)
         {
+            case NirAssign { Value: NirBuiltin { Function: BuiltinFunction.ScratchEnter } } enter:
+                Line($"    {Place(enter.Target)} = nova_scratch_enter_root({Location(_function!.Source.Source, enter.Span)});");
+                break;
             case NirAssign { Value: NirArrayRepeat repeat } assign:
                 Line($"    for (uint64_t nv_i = 0; nv_i < {repeat.Type.ArrayLength}u; nv_i++) {Place(assign.Target)}.e[nv_i] = {Operand(repeat.Value)};");
                 break;
@@ -688,9 +699,13 @@ public sealed class CEmitter
         NirLength length => $"{Place(length.Slice)}.len",
         NirBuiltin { Function: BuiltinFunction.ArenaCreate } arena =>
             $"nova_arena_create({AllocatorId(arena.Arguments[0].Type)}, {Operand(arena.Arguments[1])})",
-        NirBuiltin { Function: BuiltinFunction.ArenaAlloc } alloc => $"{ArenaHelperName(alloc.Type)}({Operand(alloc.Arguments[0])}, {Operand(alloc.Arguments[1])})",
+        NirBuiltin { Function: BuiltinFunction.ArenaAlloc } alloc =>
+            $"{ArenaHelperName(alloc.Type)}({Operand(alloc.Arguments[0])}, {RegionId(alloc.Arguments[0].Type)}, {Operand(alloc.Arguments[1])})",
         NirBuiltin { Function: BuiltinFunction.ArenaAllocArray } alloc =>
-            $"{ArenaHelperName(alloc.Type)}({Operand(alloc.Arguments[0])}, {Operand(alloc.Arguments[1])}, {Operand(alloc.Arguments[2])})",
+            $"{ArenaHelperName(alloc.Type)}({Operand(alloc.Arguments[0])}, {RegionId(alloc.Arguments[0].Type)}, {Operand(alloc.Arguments[1])}, {Operand(alloc.Arguments[2])})",
+        NirBuiltin { Function: BuiltinFunction.FixedBufferOver } over =>
+            $"nova_fba_over({Operand(over.Arguments[0])}.ptr, {Operand(over.Arguments[0])}.len)",
+        NirBuiltin { Function: BuiltinFunction.ScratchNest } nest => $"nova_scratch_enter_child({Operand(nest.Arguments[0])})",
         NirBuiltin { Function: BuiltinFunction.BoxCreate } create => $"{BoxCreateName(create.Type)}({Operand(create.Arguments[^1])})",
         NirArray array => $"(({CTypeName(array.Type)}){{ .e = {{ {string.Join(", ", array.Elements.Select(Operand))} }} }})",
         NirDiscriminant discriminant => $"(uint32_t){Place(discriminant.Place)}.tag",
@@ -793,6 +808,7 @@ public sealed class CEmitter
             {
                 ProjectionKind.Deref when type.IsSlice => text,
                 ProjectionKind.Deref => $"(*{text})",
+                ProjectionKind.Field when projection.Field!.IsRegionPart => text, // the frame itself (§19.5)
                 ProjectionKind.Field => $"{text}.{FieldName(projection.Field!)}",
                 ProjectionKind.Downcast => $"{text}.u.{VariantName(projection.Variant!)}",
                 _ when type.IsUnsized => $"{text}.ptr[{Operand((NirOperand)projection.Index!)}]",
@@ -854,7 +870,7 @@ public sealed class CEmitter
         TypeKind.Reference => type.IsMutableReference ? $"{CTypeName(type.Pointee!)} *" : $"const {CTypeName(type.Pointee!)} *",
         TypeKind.Array => $"nvA{type.ArrayLength}_{Mangle(type.Element!)}",
         TypeKind.Box => $"{CTypeName(type.Pointee!)} *",
-        TypeKind.Region => "nv_arena",
+        TypeKind.Region => type.Region switch { RegionKind.Arena => "nv_arena", RegionKind.FixedBuffer => "nv_fba", _ => "nv_scratch" },
         _ => throw new InvalidOperationException($"type '{type}' has no C representation"),
     };
 

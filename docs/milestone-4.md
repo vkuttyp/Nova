@@ -9,7 +9,7 @@ spec first, then the code and tests.
 | # | Content | Spec | Status |
 |---|---|---|---|
 | **4a** | **Scoped results and `Arena`**. Results holding references or slices, with loans tracked through any loan-holding local. `Arena.create(allocator, chunkSize)`, `arena.alloc(v)`, `arena.allocArray(n, fill)`, `arena.reset()`, bulk release on drop. R1 and R2 | type-system §19.1–19.3, lifetimes §3 | **done 2026-10-22** |
-| 4b | **`FixedBufferAllocator` and `Scratch`**: allocators over caller storage (scoped to it), and LIFO scratch frames (ADR 0004) | type-system §19.4–19.5 | planned |
+| 4b | **`FixedBufferAllocator` and `Scratch`**: allocators over caller storage (scoped to it), and LIFO scratch frames (ADR 0004) | type-system §19.4–19.5, §14.6 | **done 2026-10-22** |
 | 4c | **`Pool<T>` and `PoolBox<T>`**: a typed pool of fixed capacity, with individually freeable, scoped boxes | type-system §19.6 | planned |
 
 ## Acceptance criteria (`roadmap.md`)

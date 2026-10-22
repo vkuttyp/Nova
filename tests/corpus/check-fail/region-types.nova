@@ -1,0 +1,27 @@
+// Scoped region values and pinned `using` bindings (type-system.md §14.6, §19.4-19.5).
+struct Res { id: i32; drop { } }
+struct Holder { f: FixedBufferAllocator; } // error[N0246]
+struct Scratch { x: i32; } // error[N0201]
+
+fn makesFrame() -> ScratchFrame { // error[N0245]
+    return Scratch.enter();
+}
+
+fn f(slice: SliceMut<u8>, words: [u32; 4]) -> Result<void, AllocError> {
+    var storage = [0u8; 16];
+    let a = FixedBufferAllocator.over(storage); // error[N0209]
+    let b = FixedBufferAllocator.over(mut words); // error[N0205]
+    let c = FixedBufferAllocator.over(mut slice);
+    let d = c.alloc(Res { id: 1 }); // error[N0264]
+    let e = c.reset(); // error[N0200]
+    var g = FixedBufferAllocator.over(mut storage); // error[N0246]
+    let fixedStorage = [0u8; 4];
+    let h = FixedBufferAllocator.over(mut fixedStorage); // error[N0248]
+    let frame = Scratch.enter();
+    let i = frame.enter(); // error[N0248]
+    using pinned = Scratch.enter();
+    pinned = Scratch.enter(); // error[N0211]
+    let j = Scratch.enter().alloc(1); // error[N0247]
+    let k = Scratch.start(); // error[N0200]
+    return Ok();
+}

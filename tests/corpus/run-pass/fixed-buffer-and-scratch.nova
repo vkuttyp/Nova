@@ -1,0 +1,53 @@
+// FixedBufferAllocator over caller storage, and nested scratch frames (type-system.md §19.4-19.5).
+struct Span { start: u32; len: u32; }
+
+fn spans(text: Slice<u8>) -> Result<u32, AllocError> {
+    var storage = [0u8; 256];
+    let fba = FixedBufferAllocator.over(mut storage);
+    let found = fba.allocArray(16usize, Span { start: 0u32, len: 0u32 })?;
+    var count = 0u32;
+    var start = 0usize;
+    for (i in 0..text.length + 1) {
+        if (i == text.length || text[i] == 32u8) {
+            if (i > start && count < 16u32) {
+                found[count as usize] = Span { start: truncate<u32>(start), len: truncate<u32>(i - start) };
+                count += 1u32;
+            }
+            start = i + 1;
+        }
+    }
+    var longest = 0u32;
+    for (s in found) { if (s.len > longest) { longest = s.len; } }
+    let tooBig = fba.allocArray(1000usize, 0u8);
+    match (tooBig) {
+        Ok(_) => { Console.writeLine("unexpected"); }
+        Err(_) => { Console.writeLine("fixed buffer full"); }
+    }
+    return Ok(count * 100u32 + longest);
+}
+
+fn render(n: usize) -> Result<u64, AllocError> {
+    using frame = Scratch.enter();
+    let buf = frame.allocArray(n, 1u64)?;
+    var total = 0u64;
+    {
+        using inner = frame.enter();
+        let tmp = inner.allocArray(n * 2usize, 2u64)?;
+        for (x in tmp) { total += x; }
+    }
+    let after = frame.alloc(5u64)?;
+    for (x in buf) { total += x; }
+    return Ok(total + after);
+}
+
+fn main() -> i32 {
+    let text = [104u8, 105u8, 32u8, 110u8, 111u8, 118u8, 97u8, 32u8, 120u8];
+    Console.writeLine(spans(text[..])!);
+    Console.writeLine(render(10000usize)!);
+    Console.writeLine(render(3usize)!);
+    return 0;
+}
+// expect-stdout: fixed buffer full
+// expect-stdout: 304
+// expect-stdout: 50005
+// expect-stdout: 20

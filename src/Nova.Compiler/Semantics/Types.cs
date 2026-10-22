@@ -53,6 +53,10 @@ public enum RegionKind
     None,
     /// <summary><c>Arena</c> (type-system.md §19.2): owns its chunks; not scoped.</summary>
     Arena,
+    /// <summary><c>FixedBufferAllocator</c> (§19.4): scoped (a mutable loan of its storage); no drop.</summary>
+    FixedBuffer,
+    /// <summary><c>ScratchFrame</c> (§19.5): scoped (a nested frame borrows its parent); releases at drop.</summary>
+    ScratchFrame,
 }
 
 public sealed class StructField
@@ -76,6 +80,12 @@ public sealed class StructField
 
     /// <summary>Byte offset in the target layout (set by <see cref="TypeTable.LayoutOf"/>).</summary>
     public int Offset { get; internal set; }
+
+    /// <summary>
+    /// A part of a scratch frame that only the borrow checker sees (its memory or its allocation
+    /// right, type-system.md §19.5). Its place is the frame itself.
+    /// </summary>
+    public bool IsRegionPart { get; internal init; }
 }
 
 public enum ProjectionKind
@@ -348,9 +358,11 @@ public sealed class TypeTable
         StringLiteral = new NovaType(TypeKind.StringLiteral, "string literal");
         Error = new NovaType(TypeKind.Error, "<error>");
         Arena = new NovaType(RegionKind.Arena, "Arena");
+        FixedBufferAllocator = new NovaType(RegionKind.FixedBuffer, "FixedBufferAllocator");
+        ScratchFrame = new NovaType(RegionKind.ScratchFrame, "ScratchFrame");
 
         _byName = new Dictionary<string, NovaType>(StringComparer.Ordinal);
-        foreach (var t in new[] { I8, I16, I32, I64, ISize, U8, U16, U32, U64, USize, Bool, Void, Arena })
+        foreach (var t in new[] { I8, I16, I32, I64, ISize, U8, U16, U32, U64, USize, Bool, Void, Arena, FixedBufferAllocator, ScratchFrame })
         {
             _byName.Add(t.Name, t);
         }
@@ -374,6 +386,8 @@ public sealed class TypeTable
     public NovaType StringLiteral { get; }
     public NovaType Error { get; }
     public NovaType Arena { get; }
+    public NovaType FixedBufferAllocator { get; }
+    public NovaType ScratchFrame { get; }
 
     public static NovaType CreateStruct(string name, StructDecl syntax, SourceText source) =>
         new(name, new StructDefinition(syntax, source));
@@ -487,7 +501,8 @@ public sealed class TypeTable
             case TypeKind.Box:
                 return (8, 8);
             case TypeKind.Region:
-                return (40, 8); // nv_arena in nova/rt.h: five 8-byte fields, asserted in the generated C
+                // nv_arena, nv_fba, nv_scratch in nova/rt.h (8-byte fields; asserted there).
+                return type.Region switch { RegionKind.Arena => (40, 8), RegionKind.FixedBuffer => (24, 8), _ => (32, 8) };
             case TypeKind.Array:
             {
                 var (elementSize, elementAlign) = LayoutOf(type.Element!);
@@ -599,7 +614,7 @@ public sealed class TypeTable
     public static bool NeedsDrop(NovaType type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        if (type.IsBox || type.Kind == TypeKind.Region)
+        if (type.IsBox || type.Region is RegionKind.Arena or RegionKind.ScratchFrame)
         {
             return true;
         }
@@ -617,7 +632,8 @@ public sealed class TypeTable
     public static bool IsScoped(NovaType type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        return type.IsReference || (type.Enum?.ResultTypes is var (ok, err) && (IsScoped(ok) || IsScoped(err)));
+        return type.IsReference || type.Region is RegionKind.FixedBuffer or RegionKind.ScratchFrame
+            || (type.Enum?.ResultTypes is var (ok, err) && (IsScoped(ok) || IsScoped(err)));
     }
 
     /// <summary>Is every value of <paramref name="from"/> representable in <paramref name="to"/>? (type-system.md §7)</summary>

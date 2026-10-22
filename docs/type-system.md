@@ -334,9 +334,14 @@ The analysis runs on NIR move paths (`intermediate-representation.md`):
   OD-5).
 
 ### 14.6 `using`
-`using x = e;` declares an immutable local that cannot be moved out of (N0253) and is destroyed at
-the end of its block, like any local (R3). It documents that the value's lifetime *is* the scope:
-a lock guard, an arena, a file.
+`using x = e;` declares a local that cannot be moved out of (N0253) and is destroyed at the end
+of its block, like any local (R3). It documents that the value's lifetime *is* the scope: a lock
+guard, an arena, a file.
+
+*Since M4b:* a `using` binding is **pinned, not immutable**. Its contents may be changed and it may
+be borrowed mutably (`arena.reset()`, `frame.enter()`). It cannot be assigned as a whole (N0211)
+or moved (N0253). This also lets scoped values that must be mutably borrowed, such as scratch
+frames, live in a `using` binding, since they cannot be `var`.
 
 ### 14.7 `defer`
 `defer s;` schedules the statement `s` to run when the enclosing block exits on any path:
@@ -672,7 +677,7 @@ allocation borrows its region.
 A type is **scoped** if a value of it may hold loans:
 - references and slices (§13, §16);
 - `Result<T, E>` whose `T` or `E` is scoped (a *scoped result*);
-- the scoped region values of §19.4–19.6.
+- the scoped region values: `FixedBufferAllocator` (§19.4) and `ScratchFrame` (§19.5).
 
 Every rule for references applies to scoped types (N0246):
 - they may appear only in parameters, `let` locals with an initialiser, and return types;
@@ -729,3 +734,64 @@ fn process(input: Slice<u8>) -> Result<u64, AllocError> {
   allocation is live is N0240–N0243.
 
 Diagnostics: N0264 (a type that a region cannot hold).
+
+### 19.4 `FixedBufferAllocator` (M4b)
+```nova
+fn countWords(text: Slice<u8>) -> Result<u32, AllocError> {
+    var storage = [0u8; 4096];
+    let fba = FixedBufferAllocator.over(mut storage);   // a mutable loan of `storage`
+    let spans = fba.allocArray(64usize, Span { start: 0u32, len: 0u32 })?;
+    ...
+}
+```
+- `FixedBufferAllocator.over(mut s)` makes an allocator over caller-provided bytes. `s` is a
+  mutable place of type `[u8; N]`, or a `SliceMut<u8>`. The allocator holds a **mutable loan**
+  of the storage, so the storage cannot be read or written while the allocator or any of its
+  allocations is live.
+- `FixedBufferAllocator` is **scoped** (§19.1): a `let` local, a parameter or a return type with
+  sources, never stored. It is a move type without drop; nothing is freed.
+- `alloc(v)` and `allocArray(n, fill)` work as for `Arena` (§19.2), including R2 (N0264). Each
+  allocation is aligned within the storage. When the remaining bytes are not enough, the result
+  is `Err(AllocError.OutOfMemory)`; the storage is never grown. There is no `reset`: to reuse the
+  storage, let the allocator end and make a new one.
+- An allocation's loans include the allocator's loan of the storage, so the storage stays
+  borrowed while any allocation is live, even after the allocator's last use.
+
+### 19.5 Scratch frames (M4b; ADR 0004)
+```nova
+fn render(n: usize) -> Result<u64, AllocError> {
+    using frame = Scratch.enter();               // a root frame
+    let buf = frame.allocArray(n, 0u8)?;         // scoped to `frame`
+    {
+        using inner = frame.enter();             // a nested frame borrows `frame` mutably
+        let tmp = inner.alloc(1u64)?;
+        ...
+    }                                            // `inner`'s memory is released here
+    return Ok(buf.length as u64);
+}                                                // `frame`'s memory is released here
+```
+- Scratch memory is a runtime-owned stack of heap chunks (`SystemHeap`); it is not the native stack.
+- `Scratch.enter()` makes a **root frame**. Only one root frame may be live at a time (per
+  thread; v0 is single-threaded): entering a second one **panics** ("a scratch frame is already
+  active"). Code that needs scratch memory below a frame receives the frame
+  (`borrow ScratchFrame`) and nests.
+- `frame.enter()` makes a **nested frame**. For the borrow checker a frame has two parts: its
+  *memory*, which allocations borrow, and its *allocation right*, which every allocation call
+  uses briefly. The rules:
+  - an allocation result carries a shared loan of the frame's memory;
+  - each `alloc`/`allocArray` call needs a shared borrow of the allocation right for the call
+    only;
+  - `enter()` takes a **mutable** loan of the parent's allocation right, which the nested frame
+    carries.
+
+  While a nested frame is live, the parent therefore cannot allocate or nest again (B1), but
+  allocations already made from the parent stay usable: they lie below the nested frame's
+  memory. Destroying or moving a frame conflicts with both parts. This makes frames strictly LIFO.
+- Calling a frame method needs a frame that is a place (`using frame = …`): N0247 otherwise.
+- `ScratchFrame` is scoped (§19.1) and needs drop. Destroying a frame releases everything
+  allocated from it (and from frames nested in it), and returns chunks to the heap.
+- `alloc(v)` and `allocArray(n, fill)` work as for `Arena`, including R2. A failure to obtain a
+  chunk is `Err(AllocError.OutOfMemory)`.
+- Frames are bound with `using` (R3; §14.6): nesting borrows the frame mutably, and a scoped
+  value cannot be a `var`. Since frames are scoped, they cannot be returned from the function
+  that entered them.

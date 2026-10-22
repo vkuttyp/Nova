@@ -148,6 +148,13 @@ references, so the borrow checker reports their conflicts as N0240–N0245.
 | N0263 | An allocator argument that is not an allocator type (`SystemHeap`, `FailingAllocator`) | `Box<i32, Point>`, `Box.createIn(point, 1)` |
 | N0264 | A type a region cannot hold (R2): one that needs drop, a scoped type, or a non-Copy fill value for `allocArray` | `arena.alloc(Res { id: 1 })`, `arena.alloc(someReference)` |
 
+Region values reuse codes:
+- assigning a `using` binding as a whole is N0211;
+- nesting a frame that is not a `using` binding is N0248;
+- a method call on a frame that is not a local is N0247;
+- a storage that is not `[u8; N]` or `SliceMut<u8>` is N0205;
+- returning a frame or fixed-buffer allocator without sources is N0245.
+
 `?` inside a deferred statement is N0254, and `Ok`/`Err` with the wrong number of values is
 N0209. The names `Result`, `Ok`, `Err`, `AllocError`, `Box`, `SystemHeap` and `FailingAllocator`
 cannot be declared (N0201). Moving out of a box's contents is N0251 until M3c.

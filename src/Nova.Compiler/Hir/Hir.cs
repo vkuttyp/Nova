@@ -245,12 +245,18 @@ public enum BuiltinFunction
     FailReset,
     /// <summary><c>Arena.create(allocator, chunkSize)</c> (type-system.md §19.2).</summary>
     ArenaCreate,
-    /// <summary><c>arena.alloc(v)</c>: arguments are a shared reference to the arena, then the value.</summary>
+    /// <summary><c>region.alloc(v)</c>: arguments are a shared reference to the region (any region type), then the value.</summary>
     ArenaAlloc,
     /// <summary><c>arena.allocArray(n, fill)</c>: the arena reference, the count, the fill value.</summary>
     ArenaAllocArray,
     /// <summary><c>arena.reset()</c>: a mutable reference to the arena.</summary>
     ArenaReset,
+    /// <summary><c>FixedBufferAllocator.over(mut storage)</c>: a <c>SliceMut&lt;u8&gt;</c> of the storage (§19.4).</summary>
+    FixedBufferOver,
+    /// <summary><c>Scratch.enter()</c>: a root frame (§19.5).</summary>
+    ScratchEnter,
+    /// <summary><c>frame.enter()</c>: a mutable reference to the parent frame.</summary>
+    ScratchNest,
 }
 
 public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<HirExpr> Arguments, NovaType Type, TextSpan Span) : HirExpr(Type, Span);

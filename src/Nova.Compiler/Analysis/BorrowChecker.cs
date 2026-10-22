@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Nova.Compiler.Diagnostics;
+using Nova.Compiler.Hir;
 using Nova.Compiler.Nir;
 using Nova.Compiler.Semantics;
 using Nova.Compiler.Syntax;
@@ -135,7 +136,12 @@ internal sealed class BorrowChecker
                         // of every scoped value they read.
                         // Only a value that is itself scoped (or read through a reference) carries loans:
                         // the `Err(AllocError)` payload of a scoped result does not.
-                        foreach (var operand in MoveData.Operands(assign.Value).OfType<NirPlaceOperand>()
+                        // A region allocation borrows only from its region (argument 0), not from a frame's
+                        // allocation right, which it needs for the call only (type-system.md §19.5).
+                        var sources = assign.Value is NirBuiltin { Function: BuiltinFunction.ArenaAlloc or BuiltinFunction.ArenaAllocArray } allocation
+                            ? [allocation.Arguments[0]]
+                            : MoveData.Operands(assign.Value);
+                        foreach (var operand in sources.OfType<NirPlaceOperand>()
                                      .Where(o => IsReference(o.Place.Local) && (TypeTable.IsScoped(o.Type) || DerefsReference(o.Place))))
                         {
                             edges.Add((operand.Place.Local, target));
@@ -437,13 +443,20 @@ internal sealed class BorrowChecker
             {
                 continue;
             }
-            // A reborrow of a local reference is reported through that reference's own loans.
-            foreach (var loan in LoansOf(value.Place.Local).Select(id => _loans[id])
+            // A reborrow of a local reference is reported through that reference's own loans, and
+            // one local loan per return is enough (an allocation and its region are both local).
+            var reportedLocal = false;
+            foreach (var loan in LoansOf(value.Place.Local).Order().Select(id => _loans[id])
                          .Where(l => l.Place is null || !(DerefsReference(l.Place) && l.Place.Local.Id >= _function.ParameterCount)))
             {
                 var parameter = loan.Place is null ? loan.ParameterIndex : DerefOfParameter(loan.Place);
                 if (parameter < 0)
                 {
+                    if (reportedLocal)
+                    {
+                        continue;
+                    }
+                    reportedLocal = true;
                     _diagnostics.Error(DiagnosticCodes.ReturnsLocalReference, _source, ret.Span,
                         $"cannot return a reference to {Quoted(loan.Place!)}, which is local to '{_symbols.GetName(_function.Name)}'",
                         [new DiagnosticNote(loan.Span, "borrowed here")]);
