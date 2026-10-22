@@ -1,0 +1,14 @@
+// The index of a vector element written after a call is checked again (type-system.md §23.1):
+// the call removed the element, so writing it would destroy a moved-out value.
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+
+fn takeLast(v: borrow mut Vector<Res>) -> Res {
+    return v.pop()!;
+}
+
+fn main() {
+    var v = Vector<Res>.create();
+    v.push(Res { id: 1 })!;
+    v.push(Res { id: 2 })!;
+    v[1] = takeLast(mut v); // expect-panic: index out of bounds
+}

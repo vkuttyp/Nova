@@ -44,6 +44,25 @@ void nova_write_str(const char *text, size_t length) {
     nova_platform_write_stdout((const uint8_t *)text, length);
 }
 
+max_align_t nova_vec_empty;
+
+void *nova_vec_grow(void *ptr, uint64_t len, uint64_t *cap, uint64_t extra, uint64_t size, uint32_t allocator) {
+    if (extra > UINT64_MAX - len) return NULL;
+    uint64_t need = len + extra;
+    if (need <= *cap) return ptr;
+    uint64_t next = *cap > UINT64_MAX / 2u ? UINT64_MAX : *cap * 2u;
+    if (next < 4u) next = 4u;
+    if (next < need) next = need;
+    if (size == 0u || next > (uint64_t)SIZE_MAX / size) return NULL;
+    uint8_t *fresh = (uint8_t *)nova_alloc((size_t)(next * size), allocator);
+    if (fresh == NULL) return NULL;
+    const uint8_t *old = (const uint8_t *)ptr;
+    for (uint64_t i = 0; i < len * size; i++) fresh[i] = old[i];
+    if (*cap != 0u) nova_free(ptr, allocator);
+    *cap = next;
+    return fresh;
+}
+
 void nova_write_view(nv_str text) {
     nova_platform_write_stdout(text.ptr, (size_t)text.len);
 }

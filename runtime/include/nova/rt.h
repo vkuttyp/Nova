@@ -283,6 +283,22 @@ void nova_free(void *p, uint32_t allocator);
 /* FailingAllocator.failAfter(n) / FailingAllocator.reset(). */
 void nova_fail_after(uint64_t n);
 void nova_fail_reset(void);
+
+/* ---- Vectors and strings (type-system.md §23; runtime/core/nova_rt_core.c) ---------------- */
+
+/*
+ * The buffer address of every empty vector: valid and aligned for any element type (elements are
+ * at most max_align_t-aligned, asserted by the generated helpers), and never dereferenced.
+ */
+extern max_align_t nova_vec_empty;
+
+/*
+ * Room for `extra` more elements of `size` bytes after the `len` in use. Returns the buffer to use:
+ * `ptr` itself if it has room; otherwise a new one (capacity doubled, at least 4 and at least
+ * len + extra) holding the old bytes, after the old one (if any) is freed, with *cap updated.
+ * NULL, with nothing changed, if the size overflows or the allocation fails.
+ */
+void *nova_vec_grow(void *ptr, uint64_t len, uint64_t *cap, uint64_t extra, uint64_t size, uint32_t allocator);
 /* ---- Arena (type-system.md §19.2; runtime/core/nova_rt_core.c) ---------------------------- */
 
 /*

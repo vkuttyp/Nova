@@ -158,6 +158,8 @@ internal sealed class MoveChecker
         {
             Error(place.Local, DiagnosticCodes.MoveOutOfReference, span, place.Local.Type.IsBox && place.Projections[0].IsDeref
                 ? $"cannot move a '{place.Type}' out of the contents of the box '{Name(place.Local)}'; only Copy values can be read out of a box"
+                : place.Local.Type.IsVector && place.Projections[0].IsDeref
+                ? $"cannot move a '{place.Type}' out of an element of the vector '{Name(place.Local)}'; only Copy values can be read from there (use 'pop()')"
                 : place.Projections.Any(p => p.IsDeref)
                 ? $"cannot move a '{place.Type}' out of the value '{Name(place.Local)}' refers to; only Copy values can be read through a reference"
                 : $"cannot move a '{place.Type}' out of an element or enum payload of '{Name(place.Local)}'; only Copy values can be read from there");

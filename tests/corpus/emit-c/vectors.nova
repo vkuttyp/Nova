@@ -1,0 +1,9 @@
+fn main() {
+    var v = Vector<i32>.create();
+    v.push(2)!;
+    v[0] = 3;
+    var s = String.create();
+    s.append("hi")!;
+    Console.writeLine(v[0]);
+    Console.writeLine(s);
+}

@@ -11,7 +11,7 @@ first, then the code and tests.
 | **6a** | **Generics**: type parameters on functions, structs and enums; explicit and inferred type arguments; checking generic bodies once with opaque type parameters (types, moves, borrows); monomorphisation | type-system §20 | **done 2026-10-22** |
 | 6b | **Interfaces**: `interface` declarations (generic too), `impl I for T`, bounds `<T: I>`, interface methods called on type parameters, `Copy` as a bound. Ex12, Ex13 (adapted) | type-system §21 | **done 2026-10-22** |
 | 6c | **Optionals and string views**: `T?`, `null`, `?` and `!` on optionals; `StringView` with string literals, `length`, indexing, slicing, comparison, printing | type-system §22 | **done 2026-10-23** |
-| 6d | **`Vector<T, A>` and `String<A>`**: growth with `Result`, indexing, views as slices, `for` over a vector, invalidation through borrows (H2, B5). Ex9, Ex10 | type-system §23 | planned |
+| 6d | **`Vector<T, A>` and `String<A>`**: growth with `Result`, indexing, views as slices, `for` over a vector, invalidation through borrows (H2, B5). Ex9 (adapted: `truncate<i32>` for `as i32`), Ex10 | type-system §23 | **done 2026-10-23** |
 | 6e | **`SlotMap<T>` / `Handle<T>` and `StableVector<T>`** | type-system §24 | planned |
 | 6f | **Model-based property tests** of the collections; invalidation compile-fail suite; the **OD-3 design** (lifetime-parameterised aggregates) | `od3-design.md` | planned |
 

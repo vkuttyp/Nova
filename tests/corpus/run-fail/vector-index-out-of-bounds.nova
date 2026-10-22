@@ -1,0 +1,8 @@
+fn main() {
+    var v = Vector<i32>.create();
+    v.push(4)!;
+    Console.writeLine(v[0]);
+    v.clear();
+    Console.writeLine(v[0]); // expect-panic: index out of bounds
+}
+// expect-stdout: 4

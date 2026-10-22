@@ -1,0 +1,86 @@
+// Invalidation (H2, type-system.md §23.1): growth, removal, clearing, element writes, moves and
+// destruction are rejected while an element borrow or a view is live.
+struct Res { id: i32; drop { } }
+fn consume(v: Vector<i32>) { }
+fn look(r: borrow i32) { }
+fn grow(v: borrow mut Vector<i32>) { v.push(9)!; }
+
+fn pushWhileBorrowed() {
+    var v = Vector<i32>.create();
+    v.push(1)!;
+    let r = borrow v[0];
+    v.push(2)!; // error[N0241]
+    look(r);
+}
+
+fn popWhileViewed() {
+    var v = Vector<i32>.create();
+    let view = v.view();
+    let x = v.pop(); // error[N0241]
+    Console.writeLine(view.length);
+}
+
+fn clearWhileBorrowed() {
+    var v = Vector<i32>.create();
+    v.push(1)!;
+    let r = borrow v[0];
+    v.clear(); // error[N0241]
+    look(r);
+}
+
+fn writeWhileViewed() {
+    var v = Vector<i32>.create();
+    v.push(1)!;
+    let view = v.view();
+    v[0] = 2; // error[N0240]
+    Console.writeLine(view[0]);
+}
+
+fn moveWhileBorrowed() {
+    var v = Vector<i32>.create();
+    v.push(1)!;
+    let r = borrow v[0];
+    consume(v); // error[N0240]
+    look(r);
+}
+
+fn mutViewWhileBorrowed() {
+    var v = Vector<i32>.create();
+    v.push(1)!;
+    let r = borrow v[0];
+    let m = v.viewMut(); // error[N0241]
+    look(r);
+}
+
+fn growThroughCallWhileBorrowed() {
+    var v = Vector<i32>.create();
+    v.push(1)!;
+    let r = borrow v[0];
+    grow(mut v); // error[N0241]
+    look(r);
+}
+
+fn pushInLoop() {
+    var v = Vector<i32>.create();
+    v.push(1)!;
+    for (x in v) {
+        v.push(x)!; // error[N0241]
+    }
+}
+
+fn escapes(v: borrow Vector<i32>) -> borrow i32 {
+    let local = Vector<i32>.create();
+    return borrow local[0]; // error[N0244]
+}
+
+fn appendSelf() {
+    var s = String.create();
+    s.append(s.view())!; // error[N0241]
+}
+
+fn moveElementOut() {
+    var v = Vector<Res>.create();
+    let r = v[0]; // error[N0251]
+}
+
+fn main() { }

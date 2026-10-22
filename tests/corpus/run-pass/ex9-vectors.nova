@@ -1,0 +1,14 @@
+// language-spec.md Ex9. Adapted: `v.length as i32` is `truncate<i32>(v.length)`, because `as`
+// only allows lossless conversions (type-system.md §7).
+fn main() -> i32 {
+    var v = Vector<i32>.create();          // no allocation until first push
+    v.push(1)!;                            // push returns Result<void, AllocError>
+    v.push(truncate<i32>(v.length))!;      // two-phase borrow (B5)
+
+    let r = borrow v[0];
+    // v.push(3)!;                         // error[N0241]: `v` is borrowed by `r`
+    Console.writeLine(r);
+    v.push(3)!;                            // fine: `r` is dead (NLL)
+    return 0;
+}
+// expect-stdout: 1

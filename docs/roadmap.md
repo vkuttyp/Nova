@@ -71,9 +71,10 @@ corpus and a guest-side fault-injection sweep inside CosmoOS on both arches.
 **M6, generics and collections, is in progress** (`milestone-6.md`; ADR 0005):
 - 6a, generics (checked once, monomorphised), done 2026-10-22;
 - 6b, interfaces, `impl`, bounds, done 2026-10-22;
-- 6c, optionals `T?` and `StringView`, done 2026-10-23.
+- 6c, optionals `T?` and `StringView`, done 2026-10-23;
+- 6d, `Vector<T, A>` and `String<A>` (Ex9, Ex10), done 2026-10-23.
 
-Next: **6d**, `Vector<T, A>` and `String<A>` (Ex9, Ex10), then 6e (`SlotMap`, `StableVector`) and 6f
-(property tests, invalidation suite, OD-3 design). **M5** (escape and
+Next: **6e**, `SlotMap<T>`/`Handle<T>` and `StableVector<T>`, then 6f (property tests, invalidation
+suite, OD-3 design). **M5** (escape and
 placement analysis) may follow M4 in parallel. In parallel, when the owner wants it: propose the
 S1 in-tree port for C1 (OD-20).

@@ -248,6 +248,10 @@ public sealed class NirBuilder
                     if (right is not null)
                     {
                         _span = assign.Span;
+                        if (NeedsIndexRecheck(target, assign.Value))
+                        {
+                            RecheckVectorIndexes(target);
+                        }
                         Emit(new NirAssign(target, new NirBinary(assign.Op!.Value, new NirPlaceOperand(target), right,
                             target.Type, _function.Source, assign.Span)));
                     }
@@ -716,11 +720,49 @@ public sealed class NirBuilder
     private void AssignRvalue(NirPlace target, HirExpr value)
     {
         var statementSpan = _span;
+        if (NeedsIndexRecheck(target, value))
+        {
+            // The value is complete (its calls returned) before the element's index is checked again.
+            if (LowerOperand(value) is { } operand)
+            {
+                _span = statementSpan;
+                RecheckVectorIndexes(target);
+                Emit(new NirAssign(target, new NirUse(operand)));
+            }
+            return;
+        }
         var rvalue = LowerRvalue(value);
         if (rvalue is not null)
         {
             _span = statementSpan;
             Emit(new NirAssign(target, rvalue));
+        }
+    }
+
+    /// <summary>
+    /// A vector element written after a value that calls code: the code may have shrunk the vector since
+    /// the target's index was checked, so the index is checked again before the write (§23.1).
+    /// </summary>
+    private static bool NeedsIndexRecheck(NirPlace target, HirExpr value) =>
+        ContainsCall(value) && VectorIndexes(target).Any();
+
+    private static IEnumerable<(NirOperand Index, NirPlace Elements)> VectorIndexes(NirPlace target)
+    {
+        for (var i = 1; i < target.Projections.Length; i++)
+        {
+            if (target.Projections[i].Kind == ProjectionKind.Index && target.Projections[i - 1].IsDeref
+                && new NirPlace(target.Local, target.Projections[..(i - 1)]).Type.IsVector)
+            {
+                yield return ((NirOperand)target.Projections[i].Index!, new NirPlace(target.Local, target.Projections[..i]));
+            }
+        }
+    }
+
+    private void RecheckVectorIndexes(NirPlace target)
+    {
+        foreach (var (index, elements) in VectorIndexes(target))
+        {
+            Emit(new NirBoundsCheck(index, Length(elements)));
         }
     }
 
@@ -950,6 +992,17 @@ public sealed class NirBuilder
                     Terminate(new NirExit(code));
                 }
                 return null;
+            }
+            case HirBuiltinCall { Function: BuiltinFunction.VectorPush or BuiltinFunction.StringAppend } mutation:
+            {
+                // B5, as for a `borrow mut this` method: the receiver's loan starts after the argument (§23.1).
+                var argument = LowerOperand(mutation.Arguments[1]);
+                if (argument is null)
+                {
+                    return null;
+                }
+                var receiver = LowerOperand(mutation.Arguments[0]);
+                return receiver is null ? null : new NirBuiltin(mutation.Function, [receiver, argument], mutation.Type);
             }
             case HirBuiltinCall builtin:
             {

@@ -19,7 +19,7 @@ static nv_str nv_tail(NV_UNUSED nv_str v_s_0, NV_UNUSED uint64_t v_from_1) {
     NV_UNUSED nv_str t_3 = {0};
     NV_UNUSED nv_str t_4 = {0};
     t_2 = v_s_0.len;
-    nv_check_str_range(v_s_0, v_from_1, t_2, NV_LOC(nv_file_0, 1u, 54u));
+    nv_check_str_range(((nv_str){ .ptr = v_s_0.ptr, .len = v_s_0.len }), v_from_1, t_2, NV_LOC(nv_file_0, 1u, 54u));
     t_3 = ((nv_str){ .ptr = v_s_0.ptr + v_from_1, .len = t_2 - v_from_1 });
     t_4 = t_3;
     return t_4;

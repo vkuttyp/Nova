@@ -43,6 +43,12 @@ public enum TypeKind
     Box,
     /// <summary>A built-in region type (type-system.md §19): <see cref="NovaType.Region"/> says which.</summary>
     Region,
+    /// <summary>
+    /// <c>Vector&lt;T, A&gt;</c> or <c>String&lt;A&gt;</c> (type-system.md §23): owns a growable buffer from allocator
+    /// type <see cref="NovaType.Allocator"/>. <see cref="NovaType.Pointee"/> is the unsized <c>[T]</c> (or <c>str</c>)
+    /// it dereferences to, like a box: elements are places of the vector.
+    /// </summary>
+    Vector,
     /// <summary>A type parameter inside a generic declaration (type-system.md §20.3): opaque.</summary>
     TypeParameter,
 }
@@ -292,6 +298,13 @@ public sealed class NovaType
         Allocator = allocator;
     }
 
+    internal NovaType(NovaType elements, NovaType allocator, string name)
+        : this(TypeKind.Vector, name)
+    {
+        Pointee = elements;
+        Allocator = allocator;
+    }
+
     internal NovaType(NovaType element, long length, bool isStr = false)
         : this(TypeKind.Array, isStr ? "str" : length < 0 ? $"[{element.Name}]" : $"[{element.Name}; {length}]")
     {
@@ -354,6 +367,12 @@ public sealed class NovaType
     public NovaType? Allocator { get; }
 
     public bool IsBox => Kind == TypeKind.Box;
+
+    /// <summary><c>Vector&lt;T, A&gt;</c> or <c>String&lt;A&gt;</c> (§23).</summary>
+    public bool IsVector => Kind == TypeKind.Vector;
+
+    /// <summary><c>String&lt;A&gt;</c> (§23.2): a vector of UTF-8 text.</summary>
+    public bool IsString => Kind == TypeKind.Vector && Pointee!.IsStr;
 
     /// <summary>
     /// Does the type mention a type parameter (§20.3)? Such types belong to generic code, which is
@@ -537,6 +556,28 @@ public sealed class TypeTable
     public NovaType PoolBoxOf(NovaType element) => BoxOf(element, PoolOf(element), isDefault: false);
 
     /// <summary>The unique <c>Box&lt;contents, allocator&gt;</c>; <paramref name="isDefault"/> when the allocator is <c>SystemHeap</c>.</summary>
+    private readonly Dictionary<(NovaType, NovaType), NovaType> _vectors = [];
+
+    /// <summary>
+    /// The unique <c>Vector&lt;element, allocator&gt;</c> (§23.1), or <c>String&lt;allocator&gt;</c> (§23.2) when
+    /// <paramref name="element"/> is null.
+    /// </summary>
+    public NovaType VectorOf(NovaType? element, NovaType allocator, bool isDefault)
+    {
+        ArgumentNullException.ThrowIfNull(allocator);
+        var elements = element is null ? Str : ArrayOf(element, -1);
+        if (!_vectors.TryGetValue((elements, allocator), out var vector))
+        {
+            var name = element is null
+                ? isDefault ? "String" : $"String<{allocator.Name}>"
+                : isDefault ? $"Vector<{element.Name}>" : $"Vector<{element.Name}, {allocator.Name}>";
+            vector = new NovaType(elements, allocator, name);
+            _vectors.Add((elements, allocator), vector);
+            _composites.Add(vector);
+        }
+        return vector;
+    }
+
     public NovaType BoxOf(NovaType contents, NovaType allocator, bool isDefault)
     {
         ArgumentNullException.ThrowIfNull(contents);
@@ -612,6 +653,8 @@ public sealed class TypeTable
                 return type.IsSlice ? (16, 8) : (8, 8); // a slice is (pointer, u64 length)
             case TypeKind.Box:
                 return type.IsPoolBox ? (16, 8) : (8, 8); // a pool box also points to its pool
+            case TypeKind.Vector:
+                return (24, 8); // (pointer, u64 length, u64 capacity)
             case TypeKind.Region:
                 // nv_arena, nv_fba, nv_scratch in nova/rt.h (8-byte fields; asserted there).
                 return type.Region switch
@@ -726,7 +769,7 @@ public sealed class TypeTable
             TypeKind.Enum when type.Enum!.OptionType is { } value => IsCopy(value),
             TypeKind.Enum => type.Enum!.IsCopy,
             TypeKind.Reference => !type.IsMutableReference,
-            TypeKind.Box or TypeKind.Region => false,
+            TypeKind.Box or TypeKind.Region or TypeKind.Vector => false,
             _ => true,
         };
     }
@@ -738,7 +781,7 @@ public sealed class TypeTable
         {
             return !type.IsCopyBound;
         }
-        if (type.IsBox || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
+        if (type.IsBox || type.IsVector || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
         {
             return true;
         }

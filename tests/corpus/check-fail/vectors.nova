@@ -1,0 +1,32 @@
+// Vector and String misuse (type-system.md §23).
+struct Res { id: i32; drop { } }
+fn takesView(s: StringView) { }
+fn takesSlice(xs: Slice<i32>) { }
+
+fn main() {
+    let a = Vector.create(); // error[N0260]
+    let b: Vector<borrow i32> = Vector.create(); // error[N0246]
+    let c: Vector<i32, Arena> = Vector.create(); // error[N0263]
+    let d: Vector = Vector.create(); // error[N0204]
+    let e = Vector<i32>.make(); // error[N0200]
+    let f = Vector<i32>.create(1); // error[N0209]
+    let g = Vector<i32>.withCapacity(); // error[N0209]
+    let v = Vector<i32>.create();
+    v.push(1)!; // error[N0248]
+    var w = Vector<i32>.create();
+    w.push(true)!; // error[N0205]
+    w.append("x")!; // error[N0200]
+    let h = w.first; // error[N0230]
+    let i: Vector<u8> = w; // error[N0205]
+    var s = String.create();
+    s.push(1u8)!; // error[N0200]
+    s.append(5)!; // error[N0205]
+    s[0] = 65u8; // error[N0211]
+    let m = s.viewMut(); // error[N0200]
+    takesView(s);
+    takesSlice(w);
+    takesSlice(s); // error[N0205]
+    let j: String<SystemHeap> = String.create();
+    let k: String<i32> = String.create(); // error[N0263]
+    let l = String<SystemHeap, SystemHeap>.create(); // error[N0204]
+}

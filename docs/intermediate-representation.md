@@ -134,6 +134,14 @@ Lowering rules (HIR → NIR, `NirBuilder`):
     `?` returns the `null` of the function's return type and `!` ends in `Panic(UnwrapNull)`.
     `o == null` (HIR `IsNull`) takes a shared borrow of `o` (or of a temporary), reads
     `Discriminant(*r)` and compares it with 0, so `o` is not consumed.
+  - **Vectors and strings (M6d).** A vector dereferences, like a box, to its unsized elements: `v[i]`
+    is the place `v.*[i]`, with a `BoundsCheck` against `Length(v)`, and views are `Ref` of `v.*`.
+    The deref is not a move path, so moving an element out is a move out of a deref (N0251).
+    `push`/`append` lower their argument before the receiver's `Ref mut` (B5). `for (x in v)`
+    iterates over a view held in a header temporary, so the vector stays borrowed for the whole
+    loop. When the value written to a vector element contains a call, it is evaluated into a
+    temporary and the element's index is checked again just before the write (the call may have
+    shrunk the vector).
   - **String views (M6c).** A literal is a constant operand of type `StringView` (no loans); a place
     is needed only when it is spilled into a temporary. `s[lo..hi]` always emits a `RangeCheck`
     with `Text`; `s.bytes()` is a `Cast` to `Slice<u8>` that keeps the view's loans.

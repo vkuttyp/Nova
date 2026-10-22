@@ -1,0 +1,77 @@
+// String<A> (type-system.md §23.2).
+fn countByte(text: StringView, wanted: u8) -> usize {
+    var count: usize = 0;
+    for (b in text.bytes()) {
+        if (b == wanted) { count += 1; }
+    }
+    return count;
+}
+
+fn joined(first: StringView, second: StringView, separator: StringView) -> Result<String, AllocError> {
+    var out = String.create();
+    out.append(first)?;
+    out.append(separator)?;
+    out.append(second)?;
+    return Ok(out);
+}
+
+fn tryAppend(s: borrow mut String<FailingAllocator>, text: StringView) {
+    match (s.append(text)) {
+        Ok() => { Console.writeLine("appended"); }
+        Err(_) => { Console.writeLine("out of memory"); }
+    }
+}
+
+fn main() {
+    var s = String.create();
+    Console.writeLine(s.length);
+    Console.writeLine(s.capacity);
+    s.append("héllo")!;
+    s.append("")!;
+    s.append(", wörld")!;
+    Console.writeLine(s);
+    Console.writeLine(s.length);
+    Console.writeLine(s.capacity);
+    Console.writeLine(countByte(s, 108u8)); // a String argument for a StringView parameter
+    Console.writeLine(s[0]);
+    Console.writeLine(s[0..6]);
+    Console.writeLine(s.view() == "héllo, wörld");
+    Console.writeLine(s.bytes().length);
+    let copy = s.view();
+    var t = String.withCapacity(copy.length)!;
+    t.append(copy)!;
+    Console.writeLine(t);
+    t.clear();
+    Console.writeLine(t.length);
+    Console.writeLine(t.view() == "");
+
+    let pair = joined("one", "two", ", ")!;
+    let all = joined(pair, "three", ", ")!; // a String argument for a StringView parameter
+    Console.writeLine(all);
+
+    var limited = String<FailingAllocator>.create();
+    tryAppend(mut limited, "abc");
+    FailingAllocator.failAfter(0u64);
+    tryAppend(mut limited, "too long for four bytes");
+    tryAppend(mut limited, "d");           // fits in the capacity: no allocation
+    FailingAllocator.reset();
+    Console.writeLine(limited);
+}
+// expect-stdout: 0
+// expect-stdout: 0
+// expect-stdout: héllo, wörld
+// expect-stdout: 14
+// expect-stdout: 14
+// expect-stdout: 3
+// expect-stdout: 104
+// expect-stdout: héllo
+// expect-stdout: true
+// expect-stdout: 14
+// expect-stdout: héllo, wörld
+// expect-stdout: 0
+// expect-stdout: true
+// expect-stdout: one, two, three
+// expect-stdout: appended
+// expect-stdout: out of memory
+// expect-stdout: appended
+// expect-stdout: abcd

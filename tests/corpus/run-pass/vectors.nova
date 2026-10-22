@@ -1,0 +1,120 @@
+// Vector<T, A> (type-system.md §23.1).
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+
+interface Weighted { fn weight(borrow this) -> i32; }
+impl Weighted for Res { fn weight(borrow this) -> i32 => this.id; }
+
+fn sum(xs: Slice<i32>) -> i32 {
+    var total = 0;
+    for (x in xs) { total += x; }
+    return total;
+}
+
+fn doubleAll(xs: SliceMut<i32>) {
+    for (i in 0..xs.length) { xs[i] = xs[i] * 2; }
+}
+
+// Generic code over vectors: checked once, instantiated per element type.
+fn totalWeight<T: Weighted>(items: borrow Vector<T>) -> i32 {
+    var total = 0;
+    for (i in 0..items.length) { total += items[i].weight(); }
+    return total;
+}
+
+fn filled<T: Copy>(value: T, count: usize) -> Result<Vector<T>, AllocError> {
+    var v = Vector<T>.withCapacity(count)?;
+    for (i in 0..count) { v.push(value)?; }
+    return Ok(v);
+}
+
+fn shrink(v: borrow mut Vector<i32>) -> i32 {
+    let last = v.pop();
+    return 7;
+}
+
+fn main() -> i32 {
+    var v = Vector<i32>.create();
+    Console.writeLine(v.length);
+    Console.writeLine(v.capacity);           // nothing allocated yet
+    Console.writeLine(v.pop() == null);
+    v.push(1)!;
+    v.push(truncate<i32>(v.length))!;        // two-phase: the argument reads v first
+    let r = borrow v[0];
+    Console.writeLine(r);
+    v.push(3)!;                              // r is dead
+    Console.writeLine(sum(v));               // a vector argument for a Slice<i32> parameter
+    doubleAll(mut v);
+    Console.writeLine(v[2]);
+    v[0] += 10;
+    for (x in v) { Console.writeLine(x); }
+    let view = v.view();
+    Console.writeLine(view[1]);
+    for (i in 0..5) { v.push(i)!; }
+    Console.writeLine(v.length);
+    Console.writeLine(v.capacity);           // 4, then 8
+    Console.writeLine(v.pop()!);
+    v.clear();
+    Console.writeLine(v.length);
+    Console.writeLine(v.capacity);
+
+    // Index re-checked after a value that shrinks the vector (here it still fits).
+    v.push(1)!;
+    v.push(2)!;
+    v.push(3)!;
+    v[0] = shrink(mut v);
+    Console.writeLine(v[0]);
+
+    var items = Vector<Res>.create();
+    items.push(Res { id: 1 })!;
+    items.push(Res { id: 2 })!;
+    items.push(Res { id: 3 })!;
+    Console.writeLine(totalWeight(items));
+    let last = items.pop()!;
+    Console.writeLine(last.id);
+    items[0] = Res { id: 10 };               // destroys the old element
+    match (items.pop()) {
+        Some(res) => { Console.writeLine(res.id); }
+        null => { }
+    }
+    Console.writeLine("end of block");
+
+    var grid = Vector<Vector<i32>>.create();
+    grid.push(filled(5, 3)!)!;
+    grid.push(Vector<i32>.create())!;
+    grid[1].push(9)!;
+    Console.writeLine(grid[0][2] + grid[1][0]);
+    Console.writeLine(grid.length);
+
+    var boxes = Vector<Box<Res>>.create();
+    boxes.push(Box.create(Res { id: 20 })!)!;
+    Console.writeLine(boxes[0].id);
+    return 0;
+}
+// expect-stdout: 0
+// expect-stdout: 0
+// expect-stdout: true
+// expect-stdout: 1
+// expect-stdout: 5
+// expect-stdout: 6
+// expect-stdout: 12
+// expect-stdout: 2
+// expect-stdout: 6
+// expect-stdout: 2
+// expect-stdout: 8
+// expect-stdout: 8
+// expect-stdout: 4
+// expect-stdout: 0
+// expect-stdout: 8
+// expect-stdout: 7
+// expect-stdout: 6
+// expect-stdout: 3
+// expect-stdout: drop 1
+// expect-stdout: 2
+// expect-stdout: drop 2
+// expect-stdout: end of block
+// expect-stdout: 14
+// expect-stdout: 2
+// expect-stdout: 20
+// expect-stdout: drop 20
+// expect-stdout: drop 3
+// expect-stdout: drop 10

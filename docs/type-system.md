@@ -1052,3 +1052,100 @@ fn main() {
 
 Diagnostics: none new. `null` without an expected type is N0260; `?` and `!` on non-optional,
 non-result values are N0262.
+
+## 23. `Vector<T, A>` and `String<A>` (M6d)
+
+### 23.1 `Vector<T, A>`
+```nova
+fn sum(xs: Slice<i32>) -> i32 {
+    var total = 0;
+    for (x in xs) { total += x; }
+    return total;
+}
+
+fn main() -> i32 {
+    var v = Vector<i32>.create();          // no allocation until the first push
+    v.push(1)!;                             // Result<void, AllocError>
+    v.push(v.length as i32)!;               // two-phase borrow (B5)
+    let r = borrow v[0];
+    // v.push(3)!;                          // error[N0240]: `v` is borrowed by `r`
+    Console.writeLine(r);
+    v.push(3)!;                             // fine: `r` is dead
+    Console.writeLine(sum(v));              // a vector argument for a slice parameter
+    return 0;
+}
+```
+- `Vector<T, A>` owns a growable, contiguous buffer of `T` values obtained from allocator type `A`
+  (H2). `Vector<T>` means `Vector<T, SystemHeap>`. `A` must be an allocator type (N0263). `T` is
+  any value type except `void` and scoped types (N0246; references in aggregates are OD-3).
+- A vector is a **move type** that needs drop and is never Copy. It is not scoped. Destroying it
+  destroys the elements from index 0 upward, then returns the buffer to `A`.
+- **Creation** (built-in functions on the type; the type arguments come from the explicit list or,
+  without one, from an expected `Vector<T, A>` or `Result<Vector<T, A>, _>`; N0260 otherwise):
+  - `Vector<T>.create()`: an empty vector. It allocates nothing;
+  - `Vector<T>.withCapacity(n)` (`n: usize`): `Result<Vector<T, A>, AllocError>`, an empty vector
+    with room for `n` elements (`n == 0` allocates nothing).
+- **Members:**
+  - `v.length` and `v.capacity` (`usize`);
+  - `v[i]` is element `i`, bounds-checked (panic "index out of bounds"). It is a place, like an
+    element of a slice: it can be read (Copy `T`), borrowed (`borrow v[i]`, `borrow mut v[i]`) and
+    assigned (`v[i] = x` destroys the old element). Writing needs a mutable vector: a `var`, or
+    one reached through `borrow mut`. Moving an element out is rejected (N0251), as for a slice;
+  - `v.push(x)`: `Result<void, AllocError>`. It appends `x`, growing the buffer when it is full
+    (new capacity: twice the old, at least 4). If the allocation fails, `x` is destroyed, the
+    vector is unchanged, and the result is `Err(AllocError.OutOfMemory)`;
+  - `v.pop()`: `T?`, the last element moved out, or `null` if the vector is empty;
+  - `v.clear()`: destroys every element; the capacity stays;
+  - `v.view()`: the elements as a `Slice<T>`, and `v.viewMut()` as a `SliceMut<T>`;
+  - a `Vector<T>` argument for a `Slice<T>` parameter is borrowed as `v.view()`, and `mut v` for a
+    `SliceMut<T>` parameter as `v.viewMut()` (like a box's contents, §18.2);
+  - `for (x in v)` is `for (x in v.view())` (§16.4).
+- **Calls take `this` like methods:** `push`, `pop` and `clear` take `borrow mut this`, and their
+  arguments are evaluated before the mutable loan starts (two-phase, B5, `lifetimes.md` §5).
+  `length`, `capacity`, `view` and element reads take `borrow this`.
+- **Invalidation (H2, acceptance criterion 1 of M6):** an element borrow, a view, or anything
+  derived from them is a loan of the vector. While one is live, `push`, `pop`, `clear`, element
+  writes, `viewMut`, moving the vector and destroying it are rejected (N0240, N0241, N0243),
+  exactly as for a place and its fields. The vector makes **no address-stability promise**:
+  growth moves the elements.
+- No `==`, no `Copy`.
+- **Layout (v0):** `{ T *ptr; u64 length; u64 capacity }` (24 bytes on LP64). An empty vector's
+  pointer is a valid, aligned, never-dereferenced address (not null), so views of it are valid.
+
+### 23.2 `String<A>`
+```nova
+fn greet(name: StringView) -> Result<String, AllocError> {
+    var s = String.withCapacity(name.length + 7)?;
+    s.append("Hello, ")?;
+    s.append(name)?;
+    return Ok(s);
+}
+
+fn main() -> i32 {
+    let msg = greet("Nova")!;
+    Console.writeLine(msg.view());          // a StringView borrowed from msg
+    return 0;
+}
+```
+- `String<A>` owns UTF-8 text in a growable buffer (`String` means `String<SystemHeap>`). It is a
+  move type that needs drop, like `Vector<u8, A>`, but a distinct type.
+- **UTF-8 invariant:** text only enters a string through `append` of a `StringView`, which is
+  always valid UTF-8 (§22.2), so a string's bytes are always valid UTF-8. Its bytes cannot be
+  written: `s[i] = b` is rejected (N0211), and `borrow mut s[i]` and mutable slices of a string
+  (N0248).
+- **Creation:** `String.create()` (no allocation) and `String.withCapacity(n)`:
+  `Result<String<A>, AllocError>`; `String<A>.create()` for another allocator.
+- **Members:**
+  - `s.append(text)` (`text: StringView`): `Result<void, AllocError>`, two-phase like `push`.
+    Growth is as for vectors. On failure the string is unchanged;
+  - `s.clear()`, `s.length` (bytes), `s.capacity`;
+  - `s.view()`: the text as a `StringView`, a loan of `s`; a `String` argument for a `StringView`
+    parameter is borrowed the same way;
+  - read-only access as for a view: `s[i]` (`u8`), `s[lo..hi]` (a `StringView`, boundary-checked),
+    `s.bytes()`;
+  - printing: `Console.writeLine(s)` prints the text of a string place.
+- Appending a view of the string itself (`s.append(s.view())`) is rejected (N0240): the view is a
+  live shared loan of `s` when the call's mutable loan starts.
+- **Layout (v0):** as `Vector<u8, A>`.
+
+Diagnostics: none new. The errors reuse N0205, N0209, N0211, N0240–N0251, N0260 and N0263.

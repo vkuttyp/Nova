@@ -181,7 +181,7 @@ concurrency.
 |---|---|---|---|---|
 | `[T; N]` | value | — | loans of the array | Copy iff T Copy |
 | `Slice<T>` / `SliceMut<T>` | scoped borrow | — | reborrows | bounds-checked |
-| `Vector<T, A>` | owns buffer | reallocates (amortised ×2) | loans of the vector. Growth requires `borrow mut` → **rejected while element loans are live** | contiguous; **no address stability promise** |
+| `Vector<T, A>` (M6d, type-system §23.1) | owns buffer | reallocates (amortised ×2) | loans of the vector. Growth requires `borrow mut` → **rejected while element loans are live** | contiguous; **no address stability promise** |
 | `StableVector<T, A>` (M6) | owns chunks | appends a chunk, never moves | loans with *shared* access permitted during `push` (grow-only: goose.md §9.3) | push takes `borrow this` with interior bump. Not `Sync` |
 | `SlotMap<T, A>` (M6) | owns slots | may reallocate | `Handle<T>` (not a loan) validated by generation | stable *identity*, not stable addresses |
 | `String<A>` / `StringView` | owns / scoped | as Vector | as Vector | UTF-8 invariant |

@@ -1,0 +1,14 @@
+// language-spec.md Ex10, as written.
+fn greet(name: StringView) -> Result<String, AllocError> {
+    var s = String.withCapacity(name.length + 7)?;
+    s.append("Hello, ")?;
+    s.append(name)?;
+    return Ok(s);
+}
+
+fn main() -> i32 {
+    let msg = greet("Nova")!;
+    Console.writeLine(msg.view());         // StringView borrowed from msg
+    return 0;
+}
+// expect-stdout: Hello, Nova

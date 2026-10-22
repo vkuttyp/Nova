@@ -282,6 +282,20 @@ public enum BuiltinFunction
     PoolCreate,
     /// <summary><c>pool.take(v)</c>: a shared reference to the pool, then the value.</summary>
     PoolTake,
+    /// <summary><c>Vector&lt;T&gt;.create()</c> / <c>String.create()</c> (type-system.md §23): no arguments.</summary>
+    VectorCreate,
+    /// <summary><c>Vector&lt;T&gt;.withCapacity(n)</c> / <c>String.withCapacity(n)</c>: the count.</summary>
+    VectorWithCapacity,
+    /// <summary><c>v.push(x)</c>: a mutable reference to the vector, then the value.</summary>
+    VectorPush,
+    /// <summary><c>v.pop()</c>: a mutable reference to the vector.</summary>
+    VectorPop,
+    /// <summary><c>v.clear()</c> / <c>s.clear()</c>: a mutable reference to the vector or string.</summary>
+    VectorClear,
+    /// <summary><c>v.capacity</c>: a shared reference to the vector or string.</summary>
+    VectorCapacity,
+    /// <summary><c>s.append(text)</c>: a mutable reference to the string, then the view.</summary>
+    StringAppend,
 }
 
 public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<HirExpr> Arguments, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
