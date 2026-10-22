@@ -1,0 +1,92 @@
+(program
+  (fn area ((s#0: Shape)) -> i64
+    (block
+      (match s#0
+        (arm Empty
+          (block
+            (return 0:i64)
+          )
+        )
+        (arm Circle (r#1: i64 = payload 0)
+          (block
+            (return (* (* 3:i64 r#1):i64 r#1):i64)
+          )
+        )
+        (arm Rect (w#2: i64 = payload 0) (h#3: i64 = payload 1)
+          (block
+            (return (* w#2 h#3):i64)
+          )
+        )
+      )
+    )
+  )
+  (fn grow ((s#0: borrow mut Shape)) -> void
+    (block
+      (match s#0
+        (arm Circle (r#1: borrow mut i64 = payload 0)
+          (block
+            (+= (*r#1) 1:i64)
+          )
+        )
+        (arm Rect (w#2: borrow mut i64 = payload 0)
+          (block
+            (*= (*w#2) 2:i64)
+          )
+        )
+        (arm _
+          (block)
+        )
+      )
+    )
+  )
+  (fn holderId ((h#0: borrow Holder)) -> i32
+    (block
+      (match h#0
+        (arm Nothing
+          (block
+            (return -1:i32)
+          )
+        )
+        (arm One (r#1: borrow Res = payload 0)
+          (block
+            (return (. (deref r#1):Res id):i32)
+          )
+        )
+        (arm Two (r#2: borrow Res = payload 0) (extra#3: borrow i32 = payload 1)
+          (block
+            (return (+ (. (deref r#2):Res id):i32 (deref extra#3):i32):i32)
+          )
+        )
+      )
+    )
+  )
+  (fn sign ((n#0: i64)) -> i32
+    (block
+      (match n#0
+        (arm 0
+          (block
+            (return 0:i32)
+          )
+        )
+        (arm _
+          (block)
+        )
+      )
+      (match (> n#0 0:i64):bool
+        (arm true
+          (block
+            (return 1:i32)
+          )
+        )
+        (arm false
+          (block
+            (return -1:i32)
+          )
+        )
+      )
+    )
+  )
+  (fn Res.drop ((this#0: borrow mut Res)) -> void
+    (block)
+  )
+)

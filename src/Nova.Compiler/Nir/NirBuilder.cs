@@ -78,15 +78,9 @@ public sealed class NirBuilder
             {
                 continue;
             }
-            switch (block.Terminator)
+            foreach (var successor in block.Terminator!.Successors)
             {
-                case NirGoto g:
-                    work.Push(g.Target);
-                    break;
-                case NirBranch b:
-                    work.Push(b.Then);
-                    work.Push(b.Else);
-                    break;
+                work.Push(successor);
             }
         }
         return [.. _blocks.Where(reachable.Contains)];
@@ -288,6 +282,9 @@ public sealed class NirBuilder
             case HirDefer defer:
                 _scopes[^1].Add(defer);
                 break;
+            case HirMatch match:
+                WithStatementTemps(() => LowerMatch(match));
+                break;
             case HirExprStmt exprStmt:
                 WithStatementTemps(() =>
                 {
@@ -301,6 +298,115 @@ public sealed class NirBuilder
                 break;
             default:
                 throw new InvalidOperationException($"cannot lower {stmt.GetType().Name}");
+        }
+    }
+
+    /// <summary>
+    /// A match (type-system.md §15.2): switch on the discriminant (or the integer or bool value),
+    /// then bind payloads in each arm, as copies or as references into the scrutinee.
+    /// </summary>
+    private void LowerMatch(HirMatch match)
+    {
+        var scrutineeType = match.Scrutinee.Type;
+        var type = scrutineeType.Pointee ?? scrutineeType;
+        if (LowerPlace(match.Scrutinee) is not { } scrutinee)
+        {
+            return;
+        }
+        var place = scrutineeType.IsReference ? scrutinee.Deref() : scrutinee;
+
+        NirOperand value;
+        if (type.Kind == TypeKind.Enum)
+        {
+            var tag = NewTemp(_types.U32);
+            Emit(new NirAssign(new NirPlace(tag), new NirDiscriminant(place, _types.U32)));
+            value = new NirPlaceOperand(tag);
+        }
+        else
+        {
+            value = new NirPlaceOperand(place);
+        }
+
+        var cases = ImmutableArray.CreateBuilder<(Int128, NirBlock)>();
+        var arms = new List<(HirArm Arm, NirBlock Block)>();
+        NirBlock? otherwise = null;
+        foreach (var arm in match.Arms)
+        {
+            var block = NewBlock();
+            arms.Add((arm, block));
+            switch (arm.Kind)
+            {
+                case HirPatternKind.Wildcard:
+                    otherwise ??= block;
+                    break;
+                case HirPatternKind.Variant:
+                    cases.Add((arm.Variant!.Index, block));
+                    break;
+                default:
+                    cases.Add((arm.Value, block));
+                    break;
+            }
+        }
+        if (otherwise is null)
+        {
+            // Exhaustive without `_`: no other value can occur.
+            otherwise = NewBlock();
+            otherwise.Terminator = new NirUnreachable { Span = match.Span };
+        }
+        Terminate(new NirSwitch(value, cases.ToImmutable(), otherwise));
+
+        var join = NewBlock();
+        var joinReached = false;
+        foreach (var (arm, block) in arms)
+        {
+            _current = block;
+            var depth = _scopes.Count;
+            _scopes.Add([]);
+            foreach (var (local, index) in arm.Bindings)
+            {
+                var binding = _locals[local.Id];
+                _scopes[^1].Add(binding);
+                var payload = place.Project(Projection.Downcast(arm.Variant!)).Field(arm.Variant!.Payload[index]);
+                Emit(new NirAssign(new NirPlace(binding), local.Type.IsReference
+                    ? new NirRef(local.Type.IsMutableReference, payload, local.Type)
+                    : new NirUse(Read(payload))));
+            }
+            LowerStmt(arm.Body);
+            if (_current is not null)
+            {
+                EmitStorageDead(depth);
+                Terminate(new NirGoto(join));
+                joinReached = true;
+            }
+            _scopes.RemoveAt(_scopes.Count - 1);
+        }
+        _current = joinReached ? join : null;
+    }
+
+    /// <summary>The place an expression denotes, without moving it; other values are spilled into a temporary.</summary>
+    private NirPlace? LowerPlace(HirExpr expr)
+    {
+        switch (expr)
+        {
+            case HirLocalRef local:
+                return new NirPlace(_locals[local.Local.Id]);
+            case HirFieldAccess field:
+                return LowerPlace(field.Target)?.Field(field.Field);
+            case HirDeref deref:
+                return LowerPlace(deref.Reference)?.Deref();
+        }
+        switch (LowerOperand(expr))
+        {
+            case NirPlaceOperand operand:
+                return operand.Place;
+            case NirConst constant:
+            {
+                var temp = NewTemp(constant.Type);
+                Emit(new NirAssign(new NirPlace(temp), new NirUse(constant)));
+                return new NirPlace(temp);
+            }
+            default:
+                return null;
         }
     }
 
@@ -474,6 +580,11 @@ public sealed class NirBuilder
                 var operand = LowerOperand(expr);
                 return operand is null ? null : new NirUse(operand);
             }
+            case HirEnumValue enumValue:
+            {
+                var payload = LowerOperands(enumValue.Payload);
+                return payload.IsDefault ? null : new NirEnumAggregate(enumValue.Variant, payload, enumValue.Type);
+            }
             case HirStructLiteral literal:
             {
                 // Evaluate in source order, then place the values in declaration order.
@@ -587,6 +698,7 @@ public sealed class NirBuilder
         HirReborrow r => ContainsCall(r.Reference),
         HirBorrowTemp t => ContainsCall(t.Value),
         HirStructLiteral s => s.Fields.Any(f => ContainsCall(f.Value)),
+        HirEnumValue e => e.Payload.Any(ContainsCall),
         _ => false,
     };
 

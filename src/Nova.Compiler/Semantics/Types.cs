@@ -28,6 +28,8 @@ public enum TypeKind
     Error,
     /// <summary>A user-defined struct (type-system.md §12); see <see cref="NovaType.Struct"/>.</summary>
     Struct,
+    /// <summary>A user-defined enum (type-system.md §15); see <see cref="NovaType.Enum"/>.</summary>
+    Enum,
     /// <summary><c>borrow T</c> / <c>borrow mut T</c> (type-system.md §13); see <see cref="NovaType.Pointee"/>.</summary>
     Reference,
 }
@@ -55,14 +57,94 @@ public sealed class StructField
     public int Offset { get; internal set; }
 }
 
-/// <summary>One step of a place: a struct field, or <c>Deref</c> (through a reference) when <see cref="Field"/> is null.</summary>
-public readonly record struct Projection(StructField? Field)
+public enum ProjectionKind
 {
-    public static Projection Deref => default;
+    Field,
+    Deref,
+    /// <summary>Views an enum value as one variant, whose payloads are then <see cref="Field"/> projections (M2d).</summary>
+    Downcast,
+    /// <summary>An array or slice element; <see cref="Projection.Index"/> holds the index (HIR expression or NIR operand).</summary>
+    Index,
+}
 
-    public bool IsDeref => Field is null;
+/// <summary>One step of a place: a field, a deref through a reference, an enum variant, or an element.</summary>
+public readonly record struct Projection(ProjectionKind Kind, StructField? Field = null, EnumVariant? Variant = null, object? Index = null)
+{
+    public Projection(StructField field)
+        : this(ProjectionKind.Field, field)
+    {
+    }
 
-    public override string ToString() => IsDeref ? "*" : $"field {Field!.Index}";
+    public static Projection Deref => new(ProjectionKind.Deref);
+
+    public static Projection Downcast(EnumVariant variant) => new(ProjectionKind.Downcast, Variant: variant);
+
+    public static Projection At(object index) => new(ProjectionKind.Index, Index: index);
+
+    public bool IsDeref => Kind == ProjectionKind.Deref;
+
+    public bool IsField => Kind == ProjectionKind.Field;
+
+    /// <summary>The type after this step, given the type before it.</summary>
+    public NovaType Apply(NovaType type) => Kind switch
+    {
+        ProjectionKind.Field => Field!.Type,
+        ProjectionKind.Deref => type.Pointee!,
+        ProjectionKind.Downcast => type,
+        _ => type.Element!,
+    };
+
+    public override string ToString() => Kind switch
+    {
+        ProjectionKind.Field => $"field {Field!.Index}",
+        ProjectionKind.Downcast => $"as {Variant!.Index}",
+        _ => Kind.ToString(),
+    };
+}
+
+/// <summary>An enum variant; its payloads are fields named _0, _1, ... (type-system.md §15).</summary>
+public sealed class EnumVariant
+{
+    internal EnumVariant(Symbol name, int index, TextSpan span)
+    {
+        Name = name;
+        Index = index;
+        Span = span;
+    }
+
+    public Symbol Name { get; }
+
+    /// <summary>Declaration order; also the tag value.</summary>
+    public int Index { get; }
+
+    public TextSpan Span { get; }
+
+    public List<StructField> Payload { get; } = [];
+}
+
+public sealed class EnumDefinition
+{
+    internal EnumDefinition(EnumDecl syntax, SourceText source)
+    {
+        Syntax = syntax;
+        Source = source;
+    }
+
+    public EnumDecl Syntax { get; }
+
+    public SourceText Source { get; }
+
+    public List<EnumVariant> Variants { get; } = [];
+
+    public bool IsCopy { get; internal set; } = true;
+
+    public bool NeedsDrop { get; internal set; }
+
+    public bool IsRecursive { get; internal set; }
+
+    internal (int Size, int Align, int TagSize, int UnionOffset)? Layout { get; set; }
+
+    public EnumVariant? FindVariant(Symbol name) => Variants.Find(v => v.Name == name);
 }
 
 /// <summary>The members of a struct type. Filled in by the type checker after all items are declared.</summary>
@@ -115,6 +197,9 @@ public sealed class NovaType
     internal NovaType(string name, StructDefinition definition)
         : this(TypeKind.Struct, name) => Struct = definition;
 
+    internal NovaType(string name, EnumDefinition definition)
+        : this(TypeKind.Enum, name) => Enum = definition;
+
     internal NovaType(NovaType pointee, bool isMutable)
         : this(TypeKind.Reference, (isMutable ? "borrow mut " : "borrow ") + pointee.Name)
     {
@@ -139,6 +224,12 @@ public sealed class NovaType
 
     /// <summary>The definition of a struct type; null for every other kind.</summary>
     public StructDefinition? Struct { get; }
+
+    /// <summary>The definition of an enum type; null for every other kind.</summary>
+    public EnumDefinition? Enum { get; }
+
+    /// <summary>The element type of an array or slice; null for every other kind (M2d).</summary>
+    public NovaType? Element { get; init; }
 
     /// <summary>The referent type of a reference; null for every other kind.</summary>
     public NovaType? Pointee { get; }
@@ -224,6 +315,9 @@ public sealed class TypeTable
     public static NovaType CreateStruct(string name, StructDecl syntax, SourceText source) =>
         new(name, new StructDefinition(syntax, source));
 
+    public static NovaType CreateEnum(string name, EnumDecl syntax, SourceText source) =>
+        new(name, new EnumDefinition(syntax, source));
+
     private readonly Dictionary<(NovaType, bool), NovaType> _references = [];
 
     /// <summary>The unique reference type to <paramref name="pointee"/> (types are compared by reference).</summary>
@@ -254,6 +348,11 @@ public sealed class TypeTable
                 return (1, 1);
             case TypeKind.Reference:
                 return (8, 8); // LP64 targets only in M2 (TargetInfo.PointerBits is asserted in the generated C)
+            case TypeKind.Enum:
+            {
+                var (size, align, _, _) = EnumLayout(type);
+                return (size, align);
+            }
             case TypeKind.Struct:
             {
                 var definition = type.Struct!;
@@ -301,6 +400,42 @@ public sealed class TypeTable
         _ => null,
     };
 
+    /// <summary>
+    /// <c>struct { uintN_t tag; union { struct { payload } v_V; … } u; }</c> by C's rules
+    /// (type-system.md §15.1). The union is omitted when no variant has a payload.
+    /// </summary>
+    public static (int Size, int Align, int TagSize, int UnionOffset) EnumLayout(NovaType type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        var definition = type.Enum!;
+        if (definition.Layout is { } cached)
+        {
+            return cached;
+        }
+        var tagSize = definition.Variants.Count <= 256 ? 1 : definition.Variants.Count <= 65536 ? 2 : 4;
+        int unionSize = 0, unionAlign = 1;
+        foreach (var variant in definition.Variants.Where(v => v.Payload.Count > 0))
+        {
+            int offset = 0, align = 1;
+            foreach (var field in variant.Payload)
+            {
+                var (fieldSize, fieldAlign) = LayoutOf(field.Type);
+                offset = (offset + fieldAlign - 1) / fieldAlign * fieldAlign;
+                field.Offset = offset;
+                offset += fieldSize;
+                align = Math.Max(align, fieldAlign);
+            }
+            unionSize = Math.Max(unionSize, (offset + align - 1) / align * align);
+            unionAlign = Math.Max(unionAlign, align);
+        }
+        var totalAlign = Math.Max(tagSize, unionSize == 0 ? 1 : unionAlign);
+        var unionOffset = (tagSize + unionAlign - 1) / unionAlign * unionAlign;
+        var end = unionSize == 0 ? tagSize : unionOffset + unionSize;
+        var layout = ((end + totalAlign - 1) / totalAlign * totalAlign, totalAlign, tagSize, unionSize == 0 ? -1 : unionOffset);
+        definition.Layout = layout;
+        return layout;
+    }
+
     /// <summary>Copy types are duplicated by use; every other type is moved (type-system.md §14.1).</summary>
     public static bool IsCopy(NovaType type)
     {
@@ -308,6 +443,7 @@ public sealed class TypeTable
         return type.Kind switch
         {
             TypeKind.Struct => type.Struct!.IsCopy,
+            TypeKind.Enum => type.Enum!.IsCopy,
             TypeKind.Reference => !type.IsMutableReference,
             _ => true,
         };
@@ -316,7 +452,7 @@ public sealed class TypeTable
     public static bool NeedsDrop(NovaType type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        return type.Struct is { NeedsDrop: true };
+        return type.Struct is { NeedsDrop: true } || type.Enum is { NeedsDrop: true };
     }
 
     /// <summary>Is every value of <paramref name="from"/> representable in <paramref name="to"/>? (type-system.md §7)</summary>

@@ -1,0 +1,34 @@
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+enum Holder { Nothing, One(Res), Two(Res, Res) }
+
+fn total(h: borrow Holder) -> i32 {
+    match (h) {
+        Holder.Nothing => { return 0; }
+        Holder.One(r) => { return r.id; }
+        Holder.Two(a, b) => { return a.id + b.id; }
+    }
+}
+
+fn main() {
+    var h = Holder.One(Res { id: 1 });
+    Console.writeLine(total(h));
+    h = Holder.Two(Res { id: 2 }, Res { id: 3 });
+    Console.writeLine(total(h));
+    h = Holder.Nothing;
+    Console.writeLine(total(h));
+    {
+        let inner = Holder.One(Res { id: 4 });
+    }
+    let last = Holder.Two(Res { id: 5 }, Res { id: 6 });
+    Console.writeLine("end");
+}
+// expect-stdout: 1
+// expect-stdout: drop 1
+// expect-stdout: 5
+// expect-stdout: drop 2
+// expect-stdout: drop 3
+// expect-stdout: 0
+// expect-stdout: drop 4
+// expect-stdout: end
+// expect-stdout: drop 5
+// expect-stdout: drop 6

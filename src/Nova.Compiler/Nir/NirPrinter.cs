@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Nova.Compiler.Hir;
+using Nova.Compiler.Semantics;
 using Nova.Compiler.Syntax;
 
 namespace Nova.Compiler.Nir;
@@ -43,7 +44,13 @@ public static class NirPrinter
         var text = Local(place.Local, symbols);
         foreach (var projection in place.Projections)
         {
-            text = projection.IsDeref ? $"(*{text})" : $"{text}.{symbols.GetName(projection.Field!.Name)}";
+            text = projection.Kind switch
+            {
+                ProjectionKind.Deref => $"(*{text})",
+                ProjectionKind.Field => $"{text}.{symbols.GetName(projection.Field!.Name)}",
+                ProjectionKind.Downcast => $"({text} as {symbols.GetName(projection.Variant!.Name)})",
+                _ => $"{text}[{(projection.Index is NirOperand index ? Operand(index, symbols) : "?")}]",
+            };
         }
         return text;
     }
@@ -65,6 +72,8 @@ public static class NirPrinter
         NirTruncate t => $"truncate<{t.Type}>({Operand(t.Operand, symbols)})",
         NirCall c => $"{symbols.GetName(c.Callee.Name)}({string.Join(", ", c.Arguments.Select(a => Operand(a, symbols)))})",
         NirRef r => $"&{(r.IsMutable ? "mut " : "")}{Place(r.Place, symbols)}",
+        NirDiscriminant d => $"discriminant({Place(d.Place, symbols)})",
+        NirEnumAggregate e => $"{e.Type}.{symbols.GetName(e.Variant.Name)}({string.Join(", ", e.Payload.Select(f => Operand(f, symbols)))})",
         NirAggregate a => $"{a.Type} {{ {string.Join(", ", a.Fields.Select(f => Operand(f, symbols)))} }}",
         NirBuiltin b => $"{b.Function}({string.Join(", ", b.Arguments.Select(a => Operand(a, symbols)))})",
         _ => rvalue.ToString(),
@@ -84,6 +93,7 @@ public static class NirPrinter
     {
         NirGoto g => $"goto bb{g.Target.Id}",
         NirBranch b => $"branch {Operand(b.Condition, symbols)} ? bb{b.Then.Id} : bb{b.Else.Id}",
+        NirSwitch s => $"switch {Operand(s.Value, symbols)} [{string.Join(", ", s.Cases.Select(c => $"{c.Value} => bb{c.Target.Id}"))}, _ => bb{s.Otherwise.Id}]",
         NirReturn { Value: null } => "return",
         NirReturn r => $"return {Operand(r.Value!, symbols)}",
         NirExit e => $"exit {Operand(e.Code, symbols)}",

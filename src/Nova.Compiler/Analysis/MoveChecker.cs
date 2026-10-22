@@ -60,6 +60,7 @@ internal sealed class MoveChecker
         var operand = block.Terminator switch
         {
             NirBranch b => b.Condition,
+            NirSwitch s => s.Value,
             NirReturn r => r.Value,
             NirExit e => e.Code,
             _ => null,
@@ -78,11 +79,16 @@ internal sealed class MoveChecker
             CheckUse(reference.Place, isMove: false, state, span);
             return;
         }
+        if (rvalue is NirDiscriminant discriminant)
+        {
+            CheckUse(discriminant.Place, isMove: false, state, span);
+            return;
+        }
         var running = state.Clone();
         foreach (var operand in MoveData.Operands(rvalue).OfType<NirPlaceOperand>())
         {
             CheckUse(operand.Place, operand.IsMove, running, span);
-            if (operand.IsMove && !operand.Place.Projections.Any(p => p.IsDeref))
+            if (operand.IsMove && operand.Place.IsFieldPath)
             {
                 running.Uninitialize(_data.PathFor(operand.Place), moved: true);
             }
@@ -94,7 +100,7 @@ internal sealed class MoveChecker
     private string Describe(NirPlace place)
     {
         var text = Name(place.Local);
-        foreach (var projection in place.Projections.TakeWhile(p => !p.IsDeref))
+        foreach (var projection in place.Projections.TakeWhile(p => p.IsField))
         {
             text += "." + _symbols.GetName(projection.Field!.Name);
         }
@@ -111,7 +117,7 @@ internal sealed class MoveChecker
 
     private void CheckUse(NirPlace place, bool isMove, InitState state, TextSpan span)
     {
-        var hasDeref = place.Projections.Any(p => p.IsDeref);
+        var hasDeref = !place.IsFieldPath; // through a reference, into an element, or into an enum variant
         // Reading through a reference needs the reference; reading a place needs the place.
         var path = hasDeref ? _data.Root(place.Local) : _data.PathFor(place);
         if (!state.DefinitelyInit(path))
@@ -134,8 +140,9 @@ internal sealed class MoveChecker
         }
         if (hasDeref)
         {
-            Error(place.Local, DiagnosticCodes.MoveOutOfReference, span,
-                $"cannot move a '{place.Type}' out of the value '{Name(place.Local)}' refers to; only Copy values can be read through a reference");
+            Error(place.Local, DiagnosticCodes.MoveOutOfReference, span, place.Projections.Any(p => p.IsDeref)
+                ? $"cannot move a '{place.Type}' out of the value '{Name(place.Local)}' refers to; only Copy values can be read through a reference"
+                : $"cannot move a '{place.Type}' out of an element or enum payload of '{Name(place.Local)}'; only Copy values can be read from there");
             return;
         }
         if (place.Local.IsUsing)
@@ -155,7 +162,7 @@ internal sealed class MoveChecker
 
     private void CheckWrite(NirPlace target, InitState state, TextSpan span)
     {
-        if (target.Projections.Any(p => p.IsDeref))
+        if (!target.IsFieldPath)
         {
             CheckUse(new NirPlace(target.Local), isMove: false, state, span);
             return;

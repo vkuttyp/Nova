@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Nova.Compiler.Semantics;
 using Nova.Compiler.Syntax;
 
 namespace Nova.Compiler.Hir;
@@ -60,7 +61,13 @@ public sealed class HirPrinter
         var text = Local(place.Root);
         foreach (var projection in place.Projections)
         {
-            text = projection.IsDeref ? $"(*{text})" : $"{text}.{_symbols.GetName(projection.Field!.Name)}";
+            text = projection.Kind switch
+            {
+                ProjectionKind.Deref => $"(*{text})",
+                ProjectionKind.Field => $"{text}.{_symbols.GetName(projection.Field!.Name)}",
+                ProjectionKind.Downcast => $"({text} as {_symbols.GetName(projection.Variant!.Name)})",
+                _ => $"{text}[{(projection.Index is HirExpr index ? Expr(index) : "?")}]",
+            };
         }
         return text;
     }
@@ -129,6 +136,24 @@ public sealed class HirPrinter
             case HirDefer defer:
                 Nested("defer", defer.Body);
                 break;
+            case HirMatch match:
+                Line($"(match {Expr(match.Scrutinee)}");
+                _indent++;
+                foreach (var arm in match.Arms)
+                {
+                    var pattern = arm.Kind switch
+                    {
+                        HirPatternKind.Wildcard => "_",
+                        HirPatternKind.Variant => _symbols.GetName(arm.Variant!.Name),
+                        HirPatternKind.Bool => arm.Value != 0 ? "true" : "false",
+                        _ => arm.Value.ToString(CultureInfo.InvariantCulture),
+                    };
+                    var bindings = string.Concat(arm.Bindings.Select(b => $" ({Local(b.Local)}: {b.Local.Type} = payload {b.PayloadIndex})"));
+                    Nested($"arm {pattern}{bindings}", arm.Body);
+                }
+                _indent--;
+                Line(")");
+                break;
             default:
                 throw new InvalidOperationException($"unknown HIR statement {stmt.GetType().Name}");
         }
@@ -156,6 +181,9 @@ public sealed class HirPrinter
         HirReborrow r => $"({(r.IsMutable ? "reborrow-mut" : "reborrow")} {Expr(r.Reference)})",
         HirDeref d => $"(deref {Expr(d.Reference)}):{d.Type}",
         HirMove m => $"(move {Place(m.Place)})",
+        HirEnumValue e => e.Payload.IsEmpty
+            ? $"({e.Type}.{_symbols.GetName(e.Variant.Name)})"
+            : $"({e.Type}.{_symbols.GetName(e.Variant.Name)}{Args(e.Payload)})",
         HirError => "<error>",
         _ => throw new InvalidOperationException($"unknown HIR expression {expr.GetType().Name}"),
     };

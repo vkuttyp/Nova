@@ -153,6 +153,8 @@ internal sealed class BorrowChecker
         NirCall c => c.Arguments.SelectMany(OperandAccesses),
         NirBuiltin b => b.Arguments.SelectMany(OperandAccesses),
         NirRef r => [(r.IsMutable ? AccessKind.BorrowMut : AccessKind.BorrowShared, r.Place)],
+        NirDiscriminant d => [(AccessKind.Read, d.Place)],
+        NirEnumAggregate e => e.Payload.SelectMany(OperandAccesses),
         _ => [],
     };
 
@@ -168,6 +170,7 @@ internal sealed class BorrowChecker
     private static IEnumerable<(AccessKind Kind, NirPlace Place)> TerminatorAccesses(NirTerminator terminator) => terminator switch
     {
         NirBranch b => OperandAccesses(b.Condition),
+        NirSwitch s => OperandAccesses(s.Value),
         NirReturn r => OperandAccesses(r.Value),
         NirExit e => OperandAccesses(e.Code),
         _ => [],
@@ -183,7 +186,14 @@ internal sealed class BorrowChecker
         var common = Math.Min(a.Projections.Length, b.Projections.Length);
         for (var i = 0; i < common; i++)
         {
-            if (a.Projections[i] != b.Projections[i])
+            var (x, y) = (a.Projections[i], b.Projections[i]);
+            var same = x.Kind == y.Kind && x.Kind switch
+            {
+                ProjectionKind.Field => x.Field == y.Field,
+                ProjectionKind.Downcast => x.Variant == y.Variant,
+                _ => true, // every element of an array overlaps every other (no index reasoning in v0)
+            };
+            if (!same)
             {
                 return false;
             }
@@ -208,12 +218,7 @@ internal sealed class BorrowChecker
     /// <summary>Live-in sets per statement position (index Count is the terminator).</summary>
     private Dictionary<NirBlock, List<HashSet<NirLocal>>> ComputeLiveness()
     {
-        var successors = _function.Blocks.ToDictionary(b => b, b => b.Terminator switch
-        {
-            NirGoto g => new[] { g.Target },
-            NirBranch br => [br.Then, br.Else],
-            _ => [],
-        });
+        var successors = _function.Blocks.ToDictionary(b => b, b => b.Terminator!.Successors.ToArray());
         var liveIn = _function.Blocks.ToDictionary(b => b, _ => new HashSet<NirLocal>());
         var positions = new Dictionary<NirBlock, List<HashSet<NirLocal>>>();
 
@@ -351,12 +356,7 @@ internal sealed class BorrowChecker
                     return i < b.Statements.Count ? b.Statements[i].Span : b.Terminator!.Span;
                 }
             }
-            IEnumerable<NirBlock> next = b.Terminator switch
-            {
-                NirGoto g => [g.Target],
-                NirBranch br => [br.Then, br.Else],
-                _ => [],
-            };
+            var next = b.Terminator!.Successors;
             foreach (var successor in next.Where(visited.Add))
             {
                 work.Enqueue((successor, 0));

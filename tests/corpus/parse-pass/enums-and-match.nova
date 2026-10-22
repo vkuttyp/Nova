@@ -1,0 +1,16 @@
+enum Shape { Empty, Circle(i64), Rect(i64, i64,), }
+enum Unit { }
+
+fn f(s: borrow Shape, n: i32) {
+    match (s) {
+        Shape.Empty => { }
+        Shape.Circle(r) => { use(r); },
+        Shape.Rect(w, _) => { }
+    }
+    match (n) {
+        0 => { }
+        -1 => { }
+        _ => { }
+    }
+    let x = Shape.Rect(1, 2);
+}

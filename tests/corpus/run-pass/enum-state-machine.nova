@@ -1,0 +1,36 @@
+enum Light { Red, Green, Yellow(u32) }
+
+fn next(l: Light) -> Light {
+    match (l) {
+        Light.Red => { return Light.Green; }
+        Light.Green => { return Light.Yellow(2); }
+        Light.Yellow(left) => {
+            if (left > 1) { return Light.Yellow(left - 1); }
+            return Light.Red;
+        }
+    }
+}
+
+fn show(l: borrow Light) {
+    match (l) {
+        Light.Red => { Console.writeLine("red"); }
+        Light.Green => { Console.writeLine("green"); }
+        Light.Yellow(n) => { Console.write("yellow "); Console.writeLine(n); }
+    }
+}
+
+fn main() {
+    var l = Light.Red;
+    var i = 0;
+    while (i < 6) {
+        show(l);
+        l = next(l);
+        i += 1;
+    }
+}
+// expect-stdout: red
+// expect-stdout: green
+// expect-stdout: yellow 2
+// expect-stdout: yellow 1
+// expect-stdout: red
+// expect-stdout: green

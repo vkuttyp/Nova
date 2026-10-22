@@ -33,6 +33,7 @@ public static class DiagnosticCodes
     public const string ExpectedType = "N0105";
     public const string MisplacedNamespace = "N0106";
     public const string ExpectedMember = "N0107";
+    public const string ExpectedPattern = "N0108";
 
     // Names, types and flow: N0200-N0299
     public const string UndefinedName = "N0200";
@@ -88,6 +89,11 @@ public static class DiagnosticCodes
     public const string MoveOutOfDropType = "N0252";
     public const string MoveOutOfUsing = "N0253";
     public const string JumpInDefer = "N0254";
+
+    // Enums and match (type-system.md §15)
+    public const string NonExhaustiveMatch = "N0256";
+    public const string UnreachableArm = "N0257";
+    public const string NonCopyBinding = "N0258";
 
     // Build: N0300-N0399
     public const string MissingMain = "N0300";

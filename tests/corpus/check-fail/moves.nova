@@ -2,6 +2,7 @@
 struct Res { id: i32; drop { } }
 struct Pair { a: Res; b: Res; }
 struct Owner { res: Res; drop { } }
+enum Holder { One(Res) }
 fn consume(r: Res) { }
 fn look(r: borrow Res) { }
 fn make(id: i32) -> Res => Res { id: id };
@@ -70,4 +71,9 @@ fn moveFieldWhileWholeBorrowed() {
     let b = borrow p;
     consume(p.a); // error[N0240]
     look(b.b);
+}
+fn movesOutOfPayloadReference(h: borrow Holder) -> Res {
+    match (h) {
+        Holder.One(r) => { return r; } // error[N0251]
+    }
 }

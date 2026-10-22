@@ -71,6 +71,19 @@ internal sealed class FlowAnalysis
                 return !Diverges(exprStmt.Expression);
             case HirDefer:
                 return true; // the deferred statement runs at scope exit, not here
+            case HirMatch match:
+            {
+                if (Diverges(match.Scrutinee))
+                {
+                    return false;
+                }
+                var any = false;
+                foreach (var arm in match.Arms)
+                {
+                    any |= Completes(arm.Body); // matches are exhaustive (N0256), so some arm always runs
+                }
+                return any;
+            }
             default:
                 throw new InvalidOperationException($"unexpected statement {stmt.GetType().Name}");
         }
@@ -97,6 +110,7 @@ internal sealed class FlowAnalysis
         HirTruncate truncate => Diverges(truncate.Operand),
         HirFieldAccess field => Diverges(field.Target),
         HirStructLiteral literal => literal.Fields.Any(f => Diverges(f.Value)),
+        HirEnumValue value => value.Payload.Any(Diverges),
         HirDeref deref => Diverges(deref.Reference),
         HirReborrow reborrow => Diverges(reborrow.Reference),
         HirBorrowTemp temp => Diverges(temp.Value),

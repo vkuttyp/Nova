@@ -1,0 +1,38 @@
+enum Shape { Empty, Circle(i64), Rect(i64, i64) }
+struct Res { id: i32; drop { } }
+enum Holder { Nothing, One(Res), Two(Res, i32) }
+
+fn area(s: Shape) -> i64 {
+    match (s) {
+        Shape.Empty => { return 0; }
+        Shape.Circle(r) => { return 3 * r * r; }
+        Shape.Rect(w, h) => { return w * h; }
+    }
+}
+
+fn grow(s: borrow mut Shape) {
+    match (s) {
+        Shape.Circle(r) => { r += 1; }
+        Shape.Rect(w, _) => { w *= 2; }
+        _ => { }
+    }
+}
+
+fn holderId(h: borrow Holder) -> i32 {
+    match (h) {
+        Holder.Nothing => { return -1; }
+        Holder.One(r) => { return r.id; }
+        Holder.Two(r, extra) => { return r.id + extra; }
+    }
+}
+
+fn sign(n: i64) -> i32 {
+    match (n) {
+        0 => { return 0; }
+        _ => { }
+    }
+    match (n > 0) {
+        true => { return 1; }
+        false => { return -1; }
+    }
+}

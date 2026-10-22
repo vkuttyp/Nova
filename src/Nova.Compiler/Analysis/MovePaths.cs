@@ -188,7 +188,7 @@ internal sealed class MoveData
         var node = _roots[place.Local];
         foreach (var projection in place.Projections)
         {
-            if (projection.IsDeref || node.IsLeaf)
+            if (!projection.IsField || node.IsLeaf)
             {
                 break;
             }
@@ -216,6 +216,7 @@ internal sealed class MoveData
         NirCast c => [c.Operand],
         NirTruncate t => [t.Operand],
         NirAggregate a => a.Fields,
+        NirEnumAggregate e => e.Payload,
         NirCall c => c.Arguments,
         NirBuiltin b => b.Arguments,
         _ => [],
@@ -226,7 +227,7 @@ internal sealed class MoveData
         var node = _roots[place.Local];
         foreach (var projection in place.Projections)
         {
-            if (projection.IsDeref)
+            if (!projection.IsField)
             {
                 return;
             }
@@ -246,7 +247,7 @@ internal sealed class MoveData
     /// <summary>Applies the moves of an rvalue's operands.</summary>
     public void ApplyMoves(NirRvalue rvalue, InitState state)
     {
-        foreach (var place in MovedPlaces(rvalue).Where(p => !p.Projections.Any(x => x.IsDeref)))
+        foreach (var place in MovedPlaces(rvalue).Where(p => p.IsFieldPath))
         {
             state.Uninitialize(PathFor(place), moved: true);
         }
@@ -258,7 +259,7 @@ internal sealed class MoveData
         {
             case NirAssign assign:
                 ApplyMoves(assign.Value, state);
-                if (!assign.Target.Projections.Any(p => p.IsDeref))
+                if (assign.Target.IsFieldPath)
                 {
                     state.Initialize(PathFor(assign.Target));
                 }
@@ -306,12 +307,7 @@ internal sealed class MoveData
             positions.Add(state.Clone());
             Before[block] = positions;
 
-            IEnumerable<NirBlock> successors = block.Terminator switch
-            {
-                NirGoto g => [g.Target],
-                NirBranch b => [b.Then, b.Else],
-                _ => [],
-            };
+            var successors = block.Terminator!.Successors;
             foreach (var successor in successors)
             {
                 if (!blockIn.TryGetValue(successor, out var existing))

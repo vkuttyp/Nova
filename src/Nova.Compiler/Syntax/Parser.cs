@@ -135,7 +135,7 @@ public sealed class Parser
             else
             {
                 Error(DiagnosticCodes.ExpectedItem, Current.Span,
-                    $"expected 'fn', 'const' or 'struct', found {TokenFacts.Describe(Current.Kind)}");
+                    $"expected 'fn', 'const', 'struct' or 'enum', found {TokenFacts.Describe(Current.Kind)}");
                 Advance();
             }
 
@@ -158,7 +158,7 @@ public sealed class Parser
     }
 
     private static bool IsItemStart(TokenKind kind) => kind is TokenKind.FnKeyword or TokenKind.ConstKeyword
-        or TokenKind.StructKeyword or TokenKind.PublicKeyword or TokenKind.InternalKeyword or TokenKind.PrivateKeyword;
+        or TokenKind.StructKeyword or TokenKind.EnumKeyword or TokenKind.PublicKeyword or TokenKind.InternalKeyword or TokenKind.PrivateKeyword;
 
     /// <summary>Keywords that begin a declaration in some milestone; top-level recovery stops at them.</summary>
     private static bool IsDeclarationKeyword(TokenKind kind) => IsItemStart(kind) || kind is TokenKind.NamespaceKeyword
@@ -221,9 +221,13 @@ public sealed class Parser
         {
             return ParseStruct(visibility, start);
         }
+        if (At(TokenKind.EnumKeyword))
+        {
+            return ParseEnum(visibility, start);
+        }
 
         Error(DiagnosticCodes.ExpectedItem, Current.Span,
-            $"expected 'fn', 'const' or 'struct', found {TokenFacts.Describe(Current.Kind)}");
+            $"expected 'fn', 'const', 'struct' or 'enum', found {TokenFacts.Describe(Current.Kind)}");
         // Consume the offender: recovery stops at declaration keywords, so leaving e.g. `let` would re-report it.
         Advance();
         return null;
@@ -365,6 +369,39 @@ public sealed class Parser
         return new StructDecl(visibility, name, fields.ToImmutable(), functions.ToImmutable(), SpanFrom(start)) { Drop = drop };
     }
 
+    private EnumDecl ParseEnum(Visibility visibility, int start)
+    {
+        Expect(TokenKind.EnumKeyword);
+        var name = ParseIdentifier();
+        var variants = ImmutableArray.CreateBuilder<VariantDecl>();
+        Expect(TokenKind.OpenBrace);
+        while (At(TokenKind.Identifier))
+        {
+            var variantStart = Current.Span.Start;
+            var variantName = ParseIdentifier();
+            var payload = ImmutableArray.CreateBuilder<TypeSyntax>();
+            if (Eat(TokenKind.OpenParen))
+            {
+                while (!At(TokenKind.CloseParen) && !At(TokenKind.EndOfFile))
+                {
+                    payload.Add(ParseType());
+                    if (!Eat(TokenKind.Comma))
+                    {
+                        break;
+                    }
+                }
+                Expect(TokenKind.CloseParen);
+            }
+            variants.Add(new VariantDecl(variantName, payload.ToImmutable(), SpanFrom(variantStart)));
+            if (!Eat(TokenKind.Comma))
+            {
+                break;
+            }
+        }
+        Expect(TokenKind.CloseBrace);
+        return new EnumDecl(visibility, name, variants.ToImmutable(), SpanFrom(start));
+    }
+
     /// <summary>Recovery inside a struct body (grammar.md §3): skip to the next member start or the closing brace.</summary>
     private void SynchronizeMember()
     {
@@ -481,7 +518,7 @@ public sealed class Parser
     private static bool IsStatementKeyword(TokenKind kind) => kind is TokenKind.LetKeyword or TokenKind.VarKeyword
         or TokenKind.UsingKeyword or TokenKind.DeferKeyword
         or TokenKind.IfKeyword or TokenKind.WhileKeyword or TokenKind.LoopKeyword or TokenKind.ReturnKeyword
-        or TokenKind.BreakKeyword or TokenKind.ContinueKeyword;
+        or TokenKind.BreakKeyword or TokenKind.ContinueKeyword or TokenKind.MatchKeyword;
 
     /// <summary>Tokens that cannot start a statement but do start an item: a block ends before them.</summary>
     private static bool EndsBlock(TokenKind kind) => kind is TokenKind.CloseBrace or TokenKind.EndOfFile
@@ -578,6 +615,8 @@ public sealed class Parser
                 var body = ParseStatement();
                 return new DeferStmt(body, SpanFrom(start));
             }
+            case TokenKind.MatchKeyword:
+                return ParseMatch();
             case TokenKind.IfKeyword:
                 return ParseIf();
             case TokenKind.WhileKeyword:
@@ -610,6 +649,67 @@ public sealed class Parser
             }
             default:
                 return ParseExpressionOrAssignment();
+        }
+    }
+
+    private MatchStmt ParseMatch()
+    {
+        var start = Advance().Span.Start;
+        var scrutinee = ParseParenthesizedCondition();
+        var arms = ImmutableArray.CreateBuilder<MatchArm>();
+        Expect(TokenKind.OpenBrace);
+        while (!At(TokenKind.CloseBrace) && !At(TokenKind.EndOfFile))
+        {
+            var armStart = Current.Span.Start;
+            var startPos = _pos;
+            var pattern = ParsePattern();
+            Expect(TokenKind.FatArrow);
+            var body = ParseBlock();
+            arms.Add(new MatchArm(pattern, body, SpanFrom(armStart)));
+            Eat(TokenKind.Comma);
+            if (_pos == startPos)
+            {
+                Advance();
+            }
+        }
+        Expect(TokenKind.CloseBrace);
+        return new MatchStmt(scrutinee, arms.ToImmutable(), SpanFrom(start));
+    }
+
+    private Pattern ParsePattern()
+    {
+        var start = Current.Span.Start;
+        switch (Current.Kind)
+        {
+            case TokenKind.Underscore:
+                return new WildcardPattern(Advance().Span);
+            case TokenKind.IntLiteral or TokenKind.TrueKeyword or TokenKind.FalseKeyword:
+                return new LiteralPattern(ParsePrimary(), SpanFrom(start));
+            case TokenKind.Minus when Peek(1).Kind == TokenKind.IntLiteral:
+                return new LiteralPattern(ParseUnary(), SpanFrom(start));
+            case TokenKind.Identifier:
+            {
+                var path = ParseQualifiedName();
+                ImmutableArray<Identifier?> bindings = default;
+                if (Eat(TokenKind.OpenParen))
+                {
+                    var builder = ImmutableArray.CreateBuilder<Identifier?>();
+                    while (!At(TokenKind.CloseParen) && !At(TokenKind.EndOfFile))
+                    {
+                        builder.Add(Eat(TokenKind.Underscore) ? null : ParseIdentifier());
+                        if (!Eat(TokenKind.Comma))
+                        {
+                            break;
+                        }
+                    }
+                    Expect(TokenKind.CloseParen);
+                    bindings = builder.ToImmutable();
+                }
+                return new VariantPattern(path, bindings, SpanFrom(start));
+            }
+            default:
+                Error(DiagnosticCodes.ExpectedPattern, Current.Span, $"expected a pattern, found {TokenFacts.Describe(Current.Kind)}");
+                return new WildcardPattern(new TextSpan(Current.Span.Start, 0));
         }
     }
 

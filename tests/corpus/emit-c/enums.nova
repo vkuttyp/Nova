@@ -1,0 +1,14 @@
+struct Res { id: i32; drop { } }
+enum Shape { Empty, Circle(i64), Rect(i32, i64) }
+enum Holder { Nothing, One(Res) }
+fn area(s: Shape) -> i64 {
+    match (s) {
+        Shape.Empty => { return 0; }
+        Shape.Circle(r) => { return r; }
+        Shape.Rect(w, h) => { return w as i64 * h; }
+    }
+}
+fn main() -> i32 {
+    let h = Holder.One(Res { id: 1 });
+    return truncate<i32>(area(Shape.Rect(2, 3)));
+}

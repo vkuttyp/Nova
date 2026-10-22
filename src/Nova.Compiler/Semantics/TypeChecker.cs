@@ -35,6 +35,13 @@ internal sealed class TypeChecker
         public NovaType Type { get; } = type;
     }
 
+    private sealed class EnumEntry(EnumDecl decl, SourceText source, NovaType type)
+    {
+        public EnumDecl Decl { get; } = decl;
+        public SourceText Source { get; } = source;
+        public NovaType Type { get; } = type;
+    }
+
     private enum Builtin
     {
         Console,
@@ -52,6 +59,8 @@ internal sealed class TypeChecker
     private readonly List<HirFunction> _functions = [];
     private readonly List<ConstEntry> _constants = [];
     private readonly List<StructEntry> _structs = [];
+    private readonly List<EnumEntry> _enums = [];
+    private static readonly bool[] s_boolValues = [false, true];
     private readonly Symbol _thisSymbol;
 
     // Context of the body or constant currently being checked.
@@ -81,15 +90,23 @@ internal sealed class TypeChecker
         foreach (var unit in _units)
         {
             _source = unit.Source;
-            foreach (var item in unit.Items.OfType<StructDecl>())
+            foreach (var item in unit.Items)
             {
-                DeclareStruct(item);
+                switch (item)
+                {
+                    case StructDecl s:
+                        DeclareStruct(s);
+                        break;
+                    case EnumDecl e:
+                        DeclareEnum(e);
+                        break;
+                }
             }
         }
         foreach (var unit in _units)
         {
             _source = unit.Source;
-            foreach (var item in unit.Items.Where(i => i is not StructDecl))
+            foreach (var item in unit.Items.Where(i => i is not (StructDecl or EnumDecl)))
             {
                 Declare(item);
             }
@@ -97,6 +114,10 @@ internal sealed class TypeChecker
         foreach (var entry in _structs)
         {
             ResolveStructMembers(entry);
+        }
+        foreach (var entry in _enums)
+        {
+            ResolveEnumVariants(entry);
         }
         CheckStructRecursion();
         ComputeCopyAndDrop();
@@ -112,7 +133,8 @@ internal sealed class TypeChecker
         }
 
         CheckMain();
-        return new HirProgram([.. _functions], [.. _constants.Select(c => c.Hir)], [.. _structs.Select(s => s.Type)]);
+        return new HirProgram([.. _functions], [.. _constants.Select(c => c.Hir)],
+            [.. _structs.Select(s => s.Type), .. _enums.Select(e => e.Type)]);
     }
 
     private string Name(Symbol symbol) => _symbols.GetName(symbol);
@@ -265,6 +287,50 @@ internal sealed class TypeChecker
         _structs.Add(entry);
     }
 
+    private void DeclareEnum(EnumDecl decl)
+    {
+        var name = decl.Name.Name;
+        var text = Name(name);
+        if (_types.Lookup(text) is not null || _items.ContainsKey(name))
+        {
+            Error(DiagnosticCodes.DuplicateItem, decl.Name.Span, _types.Lookup(text) is not null
+                ? $"'{text}' is the name of a built-in type"
+                : $"'{text}' is already defined");
+            return;
+        }
+        var entry = new EnumEntry(decl, _source, TypeTable.CreateEnum(text, decl, _source));
+        _items.Add(name, entry);
+        _enums.Add(entry);
+    }
+
+    private void ResolveEnumVariants(EnumEntry entry)
+    {
+        _source = entry.Source;
+        var definition = entry.Type.Enum!;
+        foreach (var variantDecl in entry.Decl.Variants)
+        {
+            if (definition.FindVariant(variantDecl.Name.Name) is not null)
+            {
+                Error(DiagnosticCodes.DuplicateMember, variantDecl.Name.Span,
+                    $"'{entry.Type}' already has a variant named '{Name(variantDecl.Name.Name)}'");
+                continue;
+            }
+            var variant = new EnumVariant(variantDecl.Name.Name, definition.Variants.Count, variantDecl.Name.Span);
+            for (var i = 0; i < variantDecl.Payload.Length; i++)
+            {
+                var type = ResolveType(variantDecl.Payload[i], allowVoid: false);
+                if (type.IsReference)
+                {
+                    Error(DiagnosticCodes.ReferenceNotAllowed, variantDecl.Payload[i].Span,
+                        "enum payloads cannot be references in v0 (they would need lifetime parameters)");
+                    type = _types.Error;
+                }
+                variant.Payload.Add(new StructField(_symbols.Intern($"_{i}"), type, i, variantDecl.Payload[i].Span));
+            }
+            definition.Variants.Add(variant);
+        }
+    }
+
     private void ResolveStructMembers(StructEntry entry)
     {
         _source = entry.Source;
@@ -306,7 +372,17 @@ internal sealed class TypeChecker
         }
     }
 
-    /// <summary>A struct may not contain itself by value, directly or indirectly (N0227).</summary>
+    /// <summary>The types an aggregate contains by value, with the declaring span (struct fields, enum payloads).</summary>
+    private static IEnumerable<(NovaType Type, TextSpan Span, SourceText Source)> Contained(NovaType type) => type.Kind switch
+    {
+        TypeKind.Struct => type.Struct!.Fields.Select(f => (f.Type, f.Span, type.Struct.Source)),
+        TypeKind.Enum => type.Enum!.Variants.SelectMany(v => v.Payload).Select(f => (f.Type, f.Span, type.Enum.Source)),
+        _ => [],
+    };
+
+    private static bool IsAggregate(NovaType type) => type.Kind is TypeKind.Struct or TypeKind.Enum;
+
+    /// <summary>An aggregate may not contain itself by value, directly or indirectly (N0227).</summary>
     private void CheckStructRecursion()
     {
         var state = new Dictionary<NovaType, int>(); // 1 = on the DFS stack, 2 = finished
@@ -316,22 +392,29 @@ internal sealed class TypeChecker
         {
             state[type] = 1;
             stack.Add(type);
-            foreach (var field in type.Struct!.Fields.Where(f => f.Type.Kind == TypeKind.Struct))
+            foreach (var (inner, span, source) in Contained(type).Where(c => IsAggregate(c.Type)))
             {
-                switch (state.GetValueOrDefault(field.Type))
+                switch (state.GetValueOrDefault(inner))
                 {
                     case 0:
-                        Visit(field.Type);
+                        Visit(inner);
                         break;
                     case 1:
-                        // Every struct on the cycle is recursive; report at the one that closes it.
-                        foreach (var member in stack.Skip(stack.IndexOf(field.Type)))
+                        // Every type on the cycle is recursive; report at the one that closes it.
+                        foreach (var member in stack.Skip(stack.IndexOf(inner)))
                         {
-                            member.Struct!.IsRecursive = true;
+                            if (member.Struct is { } s)
+                            {
+                                s.IsRecursive = true;
+                            }
+                            else
+                            {
+                                member.Enum!.IsRecursive = true;
+                            }
                         }
-                        _source = type.Struct!.Source;
-                        Error(DiagnosticCodes.RecursiveStruct, field.Span,
-                            $"'{type}' contains '{field.Type}' by value, which contains '{type}': the struct would have infinite size");
+                        _source = source;
+                        Error(DiagnosticCodes.RecursiveStruct, span,
+                            $"'{type}' contains '{inner}' by value, which contains '{type}': the type would have infinite size");
                         break;
                 }
             }
@@ -339,35 +422,44 @@ internal sealed class TypeChecker
             state[type] = 2;
         }
 
-        foreach (var entry in _structs)
+        foreach (var type in _structs.Select(s => s.Type).Concat(_enums.Select(e => e.Type)))
         {
-            if (state.GetValueOrDefault(entry.Type) == 0)
+            if (state.GetValueOrDefault(type) == 0)
             {
-                Visit(entry.Type);
+                Visit(type);
             }
         }
     }
 
-    /// <summary>Copy and needs-drop for every struct (type-system.md §14.1); fields first, so order does not matter.</summary>
+    /// <summary>Copy and needs-drop for every struct and enum (type-system.md §14.1, §15.1); contained types first.</summary>
     private void ComputeCopyAndDrop()
     {
         var done = new HashSet<NovaType>();
         void Visit(NovaType type)
         {
-            if (!done.Add(type) || type.Struct is not { IsRecursive: false } definition)
+            if (!done.Add(type) || type.Struct is { IsRecursive: true } || type.Enum is { IsRecursive: true })
             {
                 return;
             }
-            foreach (var field in definition.Fields.Where(f => f.Type.Kind == TypeKind.Struct))
+            var contained = Contained(type).Select(c => c.Type).ToList();
+            foreach (var inner in contained.Where(IsAggregate))
             {
-                Visit(field.Type);
+                Visit(inner);
             }
-            definition.NeedsDrop = definition.DropFunction is not null || definition.Fields.Any(f => TypeTable.NeedsDrop(f.Type));
-            definition.IsCopy = definition.DropFunction is null && definition.Fields.All(f => TypeTable.IsCopy(f.Type));
+            if (type.Struct is { } definition)
+            {
+                definition.NeedsDrop = definition.DropFunction is not null || contained.Any(TypeTable.NeedsDrop);
+                definition.IsCopy = definition.DropFunction is null && contained.All(TypeTable.IsCopy);
+            }
+            else if (type.Enum is { } enumDefinition)
+            {
+                enumDefinition.NeedsDrop = contained.Any(TypeTable.NeedsDrop);
+                enumDefinition.IsCopy = contained.All(TypeTable.IsCopy);
+            }
         }
-        foreach (var entry in _structs)
+        foreach (var type in _structs.Select(s => s.Type).Concat(_enums.Select(e => e.Type)))
         {
-            Visit(entry.Type);
+            Visit(type);
         }
     }
 
@@ -399,8 +491,12 @@ internal sealed class TypeChecker
         }
 
         var text = Name(named.Name.Parts[0].Name);
-        var type = _types.Lookup(text)
-            ?? (_items.GetValueOrDefault(named.Name.Parts[0].Name) as StructEntry)?.Type;
+        var type = _types.Lookup(text) ?? _items.GetValueOrDefault(named.Name.Parts[0].Name) switch
+        {
+            StructEntry s => s.Type,
+            EnumEntry e => e.Type,
+            _ => null,
+        };
         if (type is null)
         {
             Error(DiagnosticCodes.UnknownType, named.Span, $"unknown type '{text}'");
@@ -632,6 +728,8 @@ internal sealed class TypeChecker
                 return CheckReturn(ret);
             case ExprStmt exprStmt:
                 return new HirExprStmt(CheckExpressionStatement(exprStmt.Expression), stmt.Span);
+            case MatchStmt match:
+                return CheckMatch(match);
             case DeferStmt defer:
             {
                 var body = CheckStmt(defer.Body);
@@ -645,6 +743,144 @@ internal sealed class TypeChecker
             default:
                 throw new InvalidOperationException($"unexpected statement {stmt.GetType().Name}");
         }
+    }
+
+    /// <summary>A `match` statement: patterns, bindings, exhaustiveness (type-system.md §15.2).</summary>
+    private HirStmt CheckMatch(MatchStmt match)
+    {
+        var scrutinee = Synth(match.Scrutinee, null);
+        var reference = scrutinee.Type.IsReference ? scrutinee.Type : null;
+        var type = reference?.Pointee ?? scrutinee.Type;
+        var ok = !type.IsBottom;
+        if (ok && type.Kind is not (TypeKind.Enum or TypeKind.Integer or TypeKind.Bool))
+        {
+            Error(DiagnosticCodes.InvalidOperandTypes, match.Scrutinee.Span, $"cannot match on a value of type '{type}'");
+            ok = false;
+        }
+
+        var arms = ImmutableArray.CreateBuilder<HirArm>();
+        var seenVariants = new HashSet<EnumVariant>();
+        var seenValues = new HashSet<Int128>();
+        var wildcard = false;
+        foreach (var arm in match.Arms)
+        {
+            if (wildcard)
+            {
+                Error(DiagnosticCodes.UnreachableArm, arm.Pattern.Span, "this arm can never match: an earlier '_' matches everything");
+            }
+            var kind = HirPatternKind.Wildcard;
+            EnumVariant? variant = null;
+            Int128 value = 0;
+            var bindings = ImmutableArray.CreateBuilder<(HirLocal, int)>();
+            _scopes.Add([]);
+            switch (arm.Pattern)
+            {
+                case WildcardPattern:
+                    wildcard = true;
+                    break;
+                case LiteralPattern literal when ok:
+                {
+                    var hir = CheckExpr(literal.Literal, type);
+                    switch (hir)
+                    {
+                        case HirIntConst i:
+                            kind = HirPatternKind.IntegerLiteral;
+                            value = i.Value;
+                            break;
+                        case HirBoolConst b:
+                            kind = HirPatternKind.Bool;
+                            value = b.Value ? 1 : 0;
+                            break;
+                    }
+                    if (hir is (HirIntConst or HirBoolConst) && !seenValues.Add(value))
+                    {
+                        Error(DiagnosticCodes.UnreachableArm, arm.Pattern.Span, "this value is already matched by an earlier arm");
+                    }
+                    break;
+                }
+                case VariantPattern pattern when ok:
+                    kind = HirPatternKind.Variant;
+                    variant = CheckVariantPattern(pattern, type, reference, bindings);
+                    if (variant is not null && !seenVariants.Add(variant))
+                    {
+                        Error(DiagnosticCodes.UnreachableArm, pattern.Span, $"variant '{Name(variant.Name)}' is already matched by an earlier arm");
+                    }
+                    break;
+            }
+            var body = CheckBlock(arm.Body);
+            _scopes.RemoveAt(_scopes.Count - 1);
+            arms.Add(new HirArm(kind, variant, value, bindings.ToImmutable(), body, arm.Span));
+        }
+
+        if (ok && !wildcard)
+        {
+            var missing = type.Kind switch
+            {
+                TypeKind.Enum => type.Enum!.Variants.Where(v => !seenVariants.Contains(v)).Select(v => $"{type}.{Name(v.Name)}").ToList(),
+                TypeKind.Bool => s_boolValues.Where(b => !seenValues.Contains(b ? 1 : 0)).Select(b => b ? "true" : "false").ToList(),
+                _ => ["_"],
+            };
+            if (missing.Count > 0)
+            {
+                Error(DiagnosticCodes.NonExhaustiveMatch, match.Scrutinee.Span,
+                    $"this match does not cover {string.Join(", ", missing)}; add the missing arms or a '_' arm");
+            }
+        }
+        return ok ? new HirMatch(scrutinee, arms.ToImmutable(), match.Span) : new HirExprStmt(ErrorResult(match.Span), match.Span);
+    }
+
+    private EnumVariant? CheckVariantPattern(VariantPattern pattern, NovaType type, NovaType? reference,
+        ImmutableArray<(HirLocal, int)>.Builder bindings)
+    {
+        if (type.Kind != TypeKind.Enum)
+        {
+            Error(DiagnosticCodes.TypeMismatch, pattern.Span, $"a variant pattern needs an enum, but the value has type '{type}'");
+            return null;
+        }
+        var parts = pattern.Path.Parts;
+        if (parts.Length != 2 || parts[0].Name != _symbols.Intern(type.Name))
+        {
+            Error(DiagnosticCodes.TypeMismatch, pattern.Path.Span, $"expected a variant of '{type}', written '{type}.Variant'");
+            return null;
+        }
+        if (type.Enum!.FindVariant(parts[1].Name) is not { } variant)
+        {
+            Error(DiagnosticCodes.UndefinedName, parts[1].Span, $"'{type}' has no variant named '{Name(parts[1].Name)}'");
+            return null;
+        }
+        if (pattern.Bindings.IsDefault)
+        {
+            return variant; // `E.V` ignores the payload
+        }
+        if (pattern.Bindings.Length != variant.Payload.Count)
+        {
+            Error(DiagnosticCodes.ArgumentCount, pattern.Span,
+                $"'{type}.{Name(variant.Name)}' has {variant.Payload.Count} payload value(s), but the pattern binds {pattern.Bindings.Length}");
+            return variant;
+        }
+        for (var i = 0; i < pattern.Bindings.Length; i++)
+        {
+            if (pattern.Bindings[i] is not { } name)
+            {
+                continue;
+            }
+            var payloadType = variant.Payload[i].Type;
+            if (reference is null && !TypeTable.IsCopy(payloadType))
+            {
+                Error(DiagnosticCodes.NonCopyBinding, name.Span,
+                    $"'{Name(name.Name)}' would copy a '{payloadType}', which is not Copy; match on 'borrow …' to bind it by reference");
+            }
+            if (LookupLocal(name.Name) is not null)
+            {
+                Error(DiagnosticCodes.LocalRedeclared, name.Span,
+                    $"'{Name(name.Name)}' is already declared in this function; locals cannot be shadowed");
+            }
+            var bindingType = reference is null ? payloadType : _types.ReferenceTo(payloadType, reference.IsMutableReference);
+            var local = _function!.AddLocal(name.Name, bindingType, isMutable: false, isParameter: false, name.Span);
+            _scopes[^1][name.Name] = local;
+            bindings.Add((local, i));
+        }
+        return variant;
     }
 
     /// <summary>The first `return`, `break`, `continue` or `defer` inside a statement (N0254).</summary>
@@ -830,7 +1066,7 @@ internal sealed class TypeChecker
     private static HirPlace Project(HirPlace place, Projection projection) => new(
         place.Root,
         place.Projections.Add(projection),
-        projection.IsDeref ? place.Type.Pointee! : projection.Field!.Type);
+        projection.Apply(place.Type));
 
     /// <summary>Null if the place may be written or mutably borrowed; otherwise the reason it may not.</summary>
     private string? MutabilityError(HirPlace place)
@@ -844,12 +1080,8 @@ internal sealed class TypeChecker
             {
                 mutable = type.IsMutableReference;
                 throughShared = !mutable;
-                type = type.Pointee!;
             }
-            else
-            {
-                type = projection.Field!.Type;
-            }
+            type = projection.Apply(type);
         }
         if (mutable)
         {
@@ -866,7 +1098,7 @@ internal sealed class TypeChecker
     {
         var text = Name(place.Root.Name);
         var hasField = false;
-        foreach (var projection in place.Projections.Where(p => !p.IsDeref))
+        foreach (var projection in place.Projections.Where(p => p.IsField))
         {
             text += "." + Name(projection.Field!.Name);
             hasField = true;
@@ -1153,6 +1385,11 @@ internal sealed class TypeChecker
 
     private HirExpr SynthMember(MemberExpr member)
     {
+        // `Shape.Empty`: a variant without payload.
+        if (member.Target is NameExpr { TypeArguments.IsEmpty: true } enumName && Lookup(enumName.Name.Name) is EnumEntry entry)
+        {
+            return CheckEnumValue(entry, member, [], member.Span);
+        }
         // `Console.writeLine` or `Point.origin` without a call.
         if (member.Target is NameExpr { TypeArguments.IsEmpty: true } target && Lookup(target.Name.Name) is Builtin or StructEntry)
         {
@@ -1256,7 +1493,7 @@ internal sealed class TypeChecker
                 Error(DiagnosticCodes.NotCallable, name.Span,
                     $"function '{Name(symbol)}' cannot be used as a value; call it with '(...)'");
                 return ErrorResult(name.Span);
-            case StructEntry:
+            case StructEntry or EnumEntry:
                 Error(DiagnosticCodes.NotCallable, name.Span, $"'{Name(symbol)}' is a type, not a value");
                 return ErrorResult(name.Span);
             case Builtin:
@@ -1477,6 +1714,9 @@ internal sealed class TypeChecker
             case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
                 when Lookup(target.Name.Name) is StructEntry entry:
                 return CheckStaticCall(call, entry, member);
+            case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
+                when Lookup(target.Name.Name) is EnumEntry enumEntry:
+                return CheckEnumValue(enumEntry, member, call.Arguments, call.Span);
             case MemberExpr member:
                 return CheckMethodCall(call, member);
         }
@@ -1522,6 +1762,36 @@ internal sealed class TypeChecker
         return call.Arguments.Length == parameters.Length
             ? new HirCall(function, arguments.ToImmutable(), function.ReturnType, call.Span)
             : ErrorResult(call.Span);
+    }
+
+    /// <summary><c>E.V</c> or <c>E.V(payload…)</c> (type-system.md §15.1).</summary>
+    private HirExpr CheckEnumValue(EnumEntry entry, MemberExpr member, ImmutableArray<Expr> arguments, TextSpan span)
+    {
+        if (entry.Type.Enum!.FindVariant(member.Member.Name) is not { } variant)
+        {
+            Error(DiagnosticCodes.UndefinedName, member.Member.Span, $"'{entry.Type}' has no variant named '{Name(member.Member.Name)}'");
+            foreach (var argument in arguments)
+            {
+                Synth(argument, null);
+            }
+            return ErrorResult(span);
+        }
+        if (arguments.Length != variant.Payload.Count)
+        {
+            Error(DiagnosticCodes.ArgumentCount, span,
+                $"'{entry.Type}.{Name(variant.Name)}' has {variant.Payload.Count} payload value(s) but {arguments.Length} were given");
+            foreach (var argument in arguments)
+            {
+                Synth(argument, null);
+            }
+            return ErrorResult(span);
+        }
+        var payload = ImmutableArray.CreateBuilder<HirExpr>(arguments.Length);
+        for (var i = 0; i < arguments.Length; i++)
+        {
+            payload.Add(CheckExpr(arguments[i], variant.Payload[i].Type));
+        }
+        return new HirEnumValue(variant, payload.MoveToImmutable(), entry.Type, span);
     }
 
     /// <summary><c>S.f(args)</c>: a static function of struct S (type-system.md §12).</summary>

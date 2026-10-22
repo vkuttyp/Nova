@@ -106,7 +106,7 @@ public sealed record NirPlace(NirLocal Local, ImmutableArray<Projection> Project
             var type = Local.Type;
             foreach (var projection in Projections)
             {
-                type = projection.IsDeref ? type.Pointee! : projection.Field!.Type;
+                type = projection.Apply(type);
             }
             return type;
         }
@@ -117,6 +117,11 @@ public sealed record NirPlace(NirLocal Local, ImmutableArray<Projection> Project
     public NirPlace Field(StructField field) => new(Local, Projections.Add(new Projection(field)));
 
     public NirPlace Deref() => new(Local, Projections.Add(Projection.Deref));
+
+    public NirPlace Project(Projection projection) => new(Local, Projections.Add(projection));
+
+    /// <summary>Only field projections: a move path (no deref, downcast or element).</summary>
+    public bool IsFieldPath => Projections.All(p => p.IsField);
 
     public bool Equals(NirPlace? other) =>
         other is not null && other.Local == Local && Projections.SequenceEqual(other.Projections);
@@ -157,6 +162,12 @@ public sealed record NirTruncate(NirOperand Operand, NovaType Type) : NirRvalue(
 /// <summary><c>&amp;place</c>: creates a loan of <see cref="Place"/> (lifetimes.md §2).</summary>
 public sealed record NirRef(bool IsMutable, NirPlace Place, NovaType Type) : NirRvalue(Type);
 
+/// <summary>The tag (variant index) of the enum value in <see cref="Place"/>, as a u32.</summary>
+public sealed record NirDiscriminant(NirPlace Place, NovaType Type) : NirRvalue(Type);
+
+/// <summary>An enum value of one variant with its payload operands.</summary>
+public sealed record NirEnumAggregate(EnumVariant Variant, ImmutableArray<NirOperand> Payload, NovaType Type) : NirRvalue(Type);
+
 /// <summary>A struct value built from its field values, given in declaration order.</summary>
 public sealed record NirAggregate(ImmutableArray<NirOperand> Fields, NovaType Type) : NirRvalue(Type);
 
@@ -189,11 +200,25 @@ public sealed record NirEval(NirRvalue Value) : NirStatement;
 public abstract record NirTerminator
 {
     public TextSpan Span { get; init; }
+
+    public virtual IEnumerable<NirBlock> Successors => [];
 }
 
-public sealed record NirGoto(NirBlock Target) : NirTerminator;
+public sealed record NirGoto(NirBlock Target) : NirTerminator
+{
+    public override IEnumerable<NirBlock> Successors => [Target];
+}
 
-public sealed record NirBranch(NirOperand Condition, NirBlock Then, NirBlock Else) : NirTerminator;
+public sealed record NirBranch(NirOperand Condition, NirBlock Then, NirBlock Else) : NirTerminator
+{
+    public override IEnumerable<NirBlock> Successors => [Then, Else];
+}
+
+/// <summary>Jumps to the case whose value equals <see cref="Value"/>, else to <see cref="Otherwise"/> (match, M2d).</summary>
+public sealed record NirSwitch(NirOperand Value, ImmutableArray<(Int128 Value, NirBlock Target)> Cases, NirBlock Otherwise) : NirTerminator
+{
+    public override IEnumerable<NirBlock> Successors => [.. Cases.Select(c => c.Target), Otherwise];
+}
 
 public sealed record NirReturn(NirOperand? Value) : NirTerminator;
 

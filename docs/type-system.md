@@ -343,3 +343,65 @@ a lock guard, an arena, a file.
 Deferred statements and local destructions run in reverse order of their position, so a `defer`
 runs before the locals declared before it are destroyed, and after the locals declared after it.
 `s` may not contain `return`, `break`, `continue` or another `defer` (N0254).
+
+## 15. Enums and `match` (M2d)
+
+```nova
+enum Shape {
+    Empty,
+    Circle(i64),
+    Rect(i64, i64),
+}
+
+fn area(s: Shape) -> i64 {
+    match (s) {
+        Shape.Empty => { return 0; }
+        Shape.Circle(r) => { return 3 * r * r; }
+        Shape.Rect(w, h) => { return w * h; }
+    }
+}
+```
+
+### 15.1 Declarations and values
+- `enum E { V1, V2(T1, …), … }` at the top level. Variants are unique (N0228) and have zero or
+  more positional payload types: any non-reference, non-`void` type (E3 applies to payloads too).
+  An enum must not contain itself by value (N0227).
+- **Values.** `E.V` for a variant without payload; `E.V(e1, …)` with exactly the payload arity
+  (N0209). Each `ei` is checked against its payload type.
+- **Copy and drop.** An enum is Copy iff every payload type is Copy. It needs drop iff some payload
+  needs drop; destroying it destroys the payloads of the active variant. Enums have no `drop`
+  block (v0).
+- **Layout.**
+  - A tag (`u8` for ≤ 256 variants, else `u16`/`u32`), then a union of the variants' payloads, each
+    laid out like a struct.
+  - Size and alignment follow C's rules for `struct { tag; union { … }; }`. The generated C
+    asserts them.
+  - Nova does not reorder or niche-optimise (v0).
+
+### 15.2 `match`
+```text
+MatchStmt = 'match' '(' Expr ')' '{' Arm* '}'
+Arm       = Pattern '=>' Block ','?
+Pattern   = '_' | IntLiteral | '-' IntLiteral | 'true' | 'false'
+          | QualifiedName ('(' Binding (',' Binding)* ')')?        -- E.V or E.V(x, _)
+Binding   = Identifier | '_'
+```
+- `match` is a **statement** in v0. Arms are tried in order; the first that matches runs its block.
+- **Scrutinee types:**
+  - an enum: variant patterns;
+  - an integer: literal patterns of that type;
+  - `bool`: `true`/`false`;
+  - or a reference to one of these.
+- **Exhaustiveness** (N0256): enum matches must cover every variant or end with `_`. Integer
+  matches need `_`. `bool` matches need both values or `_`. An arm that can never match (a
+  repeated variant or literal, or anything after `_`) is N0257.
+- **Bindings.** A variant pattern binds each named payload to a new immutable local in the arm:
+  - **Scrutinee of type `E` (a value):** the binding is a *copy* of the payload. A non-Copy
+    payload cannot be bound this way (N0258: "match on `borrow e` to bind it by reference").
+    Moving payloads out of an enum is future work (it needs move paths into variants).
+  - **Scrutinee of type `borrow E` / `borrow mut E`:** the binding is a `borrow T` /
+    `borrow mut T` to the payload, and the borrow checker treats it like any reborrow of the
+    scrutinee.
+  - `_` binds nothing.
+- The scrutinee is evaluated once. When it is a place it is not moved (only Copy payloads are
+  read). A temporary scrutinee lives until the end of the `match` statement.

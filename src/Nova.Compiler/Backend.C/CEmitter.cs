@@ -100,8 +100,13 @@ public sealed class CEmitter
             {
                 return;
             }
+            if (type.Enum is not null)
+            {
+                EmitEnum(type, Emit);
+                return;
+            }
             var definition = type.Struct!;
-            foreach (var field in definition.Fields.Where(f => f.Type.Kind == TypeKind.Struct))
+            foreach (var field in definition.Fields.Where(f => f.Type.Kind is TypeKind.Struct or TypeKind.Enum))
             {
                 Emit(field.Type);
             }
@@ -133,6 +138,40 @@ public sealed class CEmitter
         }
     }
 
+    /// <summary>An enum: <c>struct { uintN_t tag; union { struct { … } v_V; … } u; }</c> (type-system.md §15.1).</summary>
+    private void EmitEnum(NovaType type, Action<NovaType> emitDependency)
+    {
+        var definition = type.Enum!;
+        foreach (var field in definition.Variants.SelectMany(v => v.Payload).Where(f => f.Type.Kind is TypeKind.Struct or TypeKind.Enum))
+        {
+            emitDependency(field.Type);
+        }
+        var name = CTypeName(type);
+        var (size, align, tagSize, unionOffset) = TypeTable.EnumLayout(type);
+        Line($"struct {name} {{");
+        Line($"    uint{tagSize * 8}_t tag;");
+        var withPayload = definition.Variants.Where(v => v.Payload.Count > 0).ToList();
+        if (withPayload.Count > 0)
+        {
+            Line("    union {");
+            foreach (var variant in withPayload)
+            {
+                Line($"        struct {{ {string.Concat(variant.Payload.Select(f => $"{CType(f.Type)} {FieldName(f)}; "))}}} {VariantName(variant)};");
+            }
+            Line("    } u;");
+        }
+        Line("};");
+        Line($"_Static_assert(sizeof({name}) == {size}, \"novac layout: sizeof({type})\");");
+        Line($"_Static_assert(_Alignof({name}) == {align}, \"novac layout: alignof({type})\");");
+        if (unionOffset >= 0)
+        {
+            Line($"_Static_assert(offsetof({name}, u) == {unionOffset}, \"novac layout: {type} payload offset\");");
+        }
+        Line();
+    }
+
+    private string VariantName(EnumVariant variant) => "v_" + _symbols.GetName(variant.Name);
+
     private string FieldName(StructField field) => "f_" + _symbols.GetName(field.Name);
 
     /// <summary>The drop glue of a struct that needs drop: its drop block, then its fields in declaration order.</summary>
@@ -150,6 +189,27 @@ public sealed class CEmitter
     {
         foreach (var type in _program.Structs.Where(TypeTable.NeedsDrop))
         {
+            if (type.Enum is { } enumDefinition)
+            {
+                // Destroys the payloads of the active variant.
+                Line($"static void {DropGlueName(type)}({CTypeName(type)} *p) {{");
+                Line("    switch (p->tag) {");
+                foreach (var variant in enumDefinition.Variants.Where(v => v.Payload.Any(f => TypeTable.NeedsDrop(f.Type))))
+                {
+                    Line($"    case {variant.Index}:");
+                    foreach (var field in variant.Payload.Where(f => TypeTable.NeedsDrop(f.Type)))
+                    {
+                        Line($"        {DropGlueName(field.Type)}(&p->u.{VariantName(variant)}.{FieldName(field)});");
+                    }
+                    Line("        break;");
+                }
+                Line("    default:");
+                Line("        break;");
+                Line("    }");
+                Line("}");
+                Line();
+                continue;
+            }
             var definition = type.Struct!;
             Line($"static void {DropGlueName(type)}({CTypeName(type)} *p) {{");
             if (definition.DropFunction is { } drop)
@@ -190,18 +250,20 @@ public sealed class CEmitter
         foreach (var local in function.Locals.Skip(function.ParameterCount))
         {
             // Zero-initialised: Nova's definite assignment already forbids reading it first.
-            var zero = local.Type.Kind switch { TypeKind.Bool => "false", TypeKind.Struct => "{0}", TypeKind.Reference => "NULL", _ => "0" };
+            var zero = local.Type.Kind switch
+            {
+                TypeKind.Bool => "false",
+                TypeKind.Struct or TypeKind.Enum => "{0}",
+                TypeKind.Reference => "NULL",
+                _ => "0",
+            };
             Line($"    NV_UNUSED {CType(local.Type)} {LocalName(local)} = {zero};");
         }
 
         var targeted = new HashSet<NirBlock>();
         foreach (var block in function.Blocks)
         {
-            switch (block.Terminator)
-            {
-                case NirGoto g: targeted.Add(g.Target); break;
-                case NirBranch b: targeted.Add(b.Then); targeted.Add(b.Else); break;
-            }
+            targeted.UnionWith(block.Terminator!.Successors);
         }
 
         foreach (var block in function.Blocks)
@@ -273,6 +335,20 @@ public sealed class CEmitter
             case NirBranch b:
                 Line($"    if ({Operand(b.Condition)}) goto bb{b.Then.Id}; else goto bb{b.Else.Id};");
                 break;
+            case NirSwitch s:
+            {
+                // C rejects switching on a bool (-Wswitch-bool): switch on its int value instead.
+                var isBool = s.Value.Type.Kind == TypeKind.Bool;
+                Line(isBool ? $"    switch ((int){Operand(s.Value)}) {{" : $"    switch ({Operand(s.Value)}) {{");
+                foreach (var (value, target) in s.Cases)
+                {
+                    var label = isBool ? value.ToString(CultureInfo.InvariantCulture) : Constant(value, s.Value.Type);
+                    Line($"    case {label}: goto bb{target.Id};");
+                }
+                Line($"    default: goto bb{s.Otherwise.Id};");
+                Line("    }");
+                break;
+            }
             case NirReturn { Value: null }:
                 Line("    return;");
                 break;
@@ -301,6 +377,8 @@ public sealed class CEmitter
         NirCall call => $"{FunctionName(call.Callee)}({string.Join(", ", call.Arguments.Select(Operand))})",
         NirAggregate aggregate => Aggregate(aggregate),
         NirRef reference => $"&{Place(reference.Place)}",
+        NirDiscriminant discriminant => $"(uint32_t){Place(discriminant.Place)}.tag",
+        NirEnumAggregate value => EnumAggregate(value),
         _ => throw new InvalidOperationException($"cannot emit rvalue {rvalue}"),
     };
 
@@ -390,9 +468,26 @@ public sealed class CEmitter
         var text = LocalName(place.Local);
         foreach (var projection in place.Projections)
         {
-            text = projection.IsDeref ? $"(*{text})" : $"{text}.{FieldName(projection.Field!)}";
+            text = projection.Kind switch
+            {
+                ProjectionKind.Deref => $"(*{text})",
+                ProjectionKind.Field => $"{text}.{FieldName(projection.Field!)}",
+                ProjectionKind.Downcast => $"{text}.u.{VariantName(projection.Variant!)}",
+                _ => throw new InvalidOperationException("array elements arrive in a later increment"),
+            };
         }
         return text;
+    }
+
+    private string EnumAggregate(NirEnumAggregate value)
+    {
+        var name = CTypeName(value.Type);
+        if (value.Payload.IsEmpty)
+        {
+            return $"(({name}){{ .tag = {value.Variant.Index} }})";
+        }
+        var inits = value.Variant.Payload.Select((f, i) => $".{FieldName(f)} = {Operand(value.Payload[i])}");
+        return $"(({name}){{ .tag = {value.Variant.Index}, .u.{VariantName(value.Variant)} = {{ {string.Join(", ", inits)} }} }})";
     }
 
     private string Aggregate(NirAggregate aggregate)
@@ -417,6 +512,7 @@ public sealed class CEmitter
         TypeKind.Void => "void",
         TypeKind.Integer => $"{(type.IsSigned ? "int" : "uint")}{type.Bits}_t",
         TypeKind.Struct => $"nvT_{type.Name}",
+        TypeKind.Enum => $"nvE_{type.Name}",
         TypeKind.Reference => type.IsMutableReference ? $"{CTypeName(type.Pointee!)} *" : $"const {CTypeName(type.Pointee!)} *",
         _ => throw new InvalidOperationException($"type '{type}' has no C representation"),
     };

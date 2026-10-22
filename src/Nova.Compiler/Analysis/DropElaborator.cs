@@ -54,8 +54,8 @@ internal sealed class DropElaborator
                     {
                         var afterValue = state.Clone();
                         _data.ApplyMoves(assign.Value, afterValue);
-                        var drops = assign.Target.Projections.Any(p => p.IsDeref)
-                            ? [new NirDrop(assign.Target, null) { Span = statement.Span }] // a referent is always initialised
+                        var drops = !assign.Target.IsFieldPath
+                            ? [new NirDrop(assign.Target, null) { Span = statement.Span }] // a referent or element is always initialised
                             : Sequence(_data.PathFor(assign.Target), afterValue, statement);
                         if (drops.Count > 0)
                         {
@@ -150,7 +150,7 @@ internal sealed class DropElaborator
         };
         if (rvalue is not null)
         {
-            foreach (var moved in MoveData.MovedPlaces(rvalue).Where(p => !p.Projections.Any(x => x.IsDeref)))
+            foreach (var moved in MoveData.MovedPlaces(rvalue).Where(p => p.IsFieldPath))
             {
                 foreach (var leaf in _data.PathFor(moved).Leaves().Where(_flags.ContainsKey))
                 {
@@ -158,7 +158,7 @@ internal sealed class DropElaborator
                 }
             }
         }
-        if (statement is NirAssign assign && !assign.Target.Projections.Any(p => p.IsDeref) && _data.Tracks(assign.Target.Local))
+        if (statement is NirAssign assign && assign.Target.IsFieldPath && _data.Tracks(assign.Target.Local))
         {
             foreach (var leaf in _data.PathFor(assign.Target).Leaves().Where(_flags.ContainsKey))
             {

@@ -1,0 +1,38 @@
+(unit
+  (enum default Shape
+    (variant Empty)
+    (variant Circle i64)
+    (variant Rect i64 i64)
+  )
+  (enum default Unit
+  )
+  (fn default f (params (s (borrow Shape)) (n i32))
+    (block
+      (match s
+        (arm Shape.Empty
+          (block)
+        )
+        (arm (Shape.Circle r)
+          (block
+            (expr (call use r))
+          )
+        )
+        (arm (Shape.Rect w _)
+          (block)
+        )
+      )
+      (match n
+        (arm 0
+          (block)
+        )
+        (arm (neg 1)
+          (block)
+        )
+        (arm _
+          (block)
+        )
+      )
+      (let x = (call (. Shape Rect) 1 2))
+    )
+  )
+)

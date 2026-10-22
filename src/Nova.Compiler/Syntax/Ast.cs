@@ -71,6 +71,14 @@ public sealed record StructDecl(
 
 public sealed record DropBlock(BlockStmt Body, TextSpan Span) : SyntaxNode(Span);
 
+public sealed record EnumDecl(
+    Visibility Visibility,
+    Identifier Name,
+    ImmutableArray<VariantDecl> Variants,
+    TextSpan Span) : Item(Visibility, Name, Span);
+
+public sealed record VariantDecl(Identifier Name, ImmutableArray<TypeSyntax> Payload, TextSpan Span) : SyntaxNode(Span);
+
 public sealed record FieldDecl(Visibility Visibility, Identifier Name, TypeSyntax Type, TextSpan Span) : SyntaxNode(Span);
 
 public sealed record ConstDecl(
@@ -118,6 +126,21 @@ public sealed record LocalDeclStmt(
 
 /// <summary><c>defer s;</c> (type-system.md §14.7).</summary>
 public sealed record DeferStmt(Stmt Body, TextSpan Span) : Stmt(Span);
+
+/// <summary><c>match (e) { pattern => { ... } ... }</c> (type-system.md §15.2).</summary>
+public sealed record MatchStmt(Expr Scrutinee, ImmutableArray<MatchArm> Arms, TextSpan Span) : Stmt(Span);
+
+public sealed record MatchArm(Pattern Pattern, BlockStmt Body, TextSpan Span) : SyntaxNode(Span);
+
+public abstract record Pattern(TextSpan Span) : SyntaxNode(Span);
+
+public sealed record WildcardPattern(TextSpan Span) : Pattern(Span);
+
+/// <summary>An integer (possibly negated) or bool literal.</summary>
+public sealed record LiteralPattern(Expr Literal, TextSpan Span) : Pattern(Span);
+
+/// <summary><c>E.V</c> or <c>E.V(x, _)</c>; a null binding is <c>_</c>. <see cref="Bindings"/> is default without parentheses.</summary>
+public sealed record VariantPattern(QualifiedName Path, ImmutableArray<Identifier?> Bindings, TextSpan Span) : Pattern(Span);
 
 /// <summary><see cref="Else"/> is null, a <see cref="BlockStmt"/>, or an <see cref="IfStmt"/>.</summary>
 public sealed record IfStmt(Expr Condition, BlockStmt Then, Stmt? Else, TextSpan Span) : Stmt(Span);

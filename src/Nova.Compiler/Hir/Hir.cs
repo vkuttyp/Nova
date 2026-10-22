@@ -163,6 +163,29 @@ public sealed record HirReturn(HirExpr? Value, TextSpan Span) : HirStmt(Span);
 
 public sealed record HirExprStmt(HirExpr Expression, TextSpan Span) : HirStmt(Span);
 
+/// <summary>A `match` statement (type-system.md §15.2); arms are tried in order.</summary>
+public sealed record HirMatch(HirExpr Scrutinee, ImmutableArray<HirArm> Arms, TextSpan Span) : HirStmt(Span);
+
+public enum HirPatternKind
+{
+    Wildcard,
+    Variant,
+    IntegerLiteral,
+    Bool,
+}
+
+/// <summary>
+/// One arm. <see cref="Variant"/> is set for variant patterns; <see cref="Value"/> for literal ones.
+/// Each binding receives payload <c>PayloadIndex</c>: a copy, or a reference when the scrutinee is a reference.
+/// </summary>
+public sealed record HirArm(
+    HirPatternKind Kind,
+    EnumVariant? Variant,
+    Int128 Value,
+    ImmutableArray<(HirLocal Local, int PayloadIndex)> Bindings,
+    HirBlock Body,
+    TextSpan Span);
+
 /// <summary>Runs <see cref="Body"/> when the enclosing block exits (type-system.md §14.7).</summary>
 public sealed record HirDefer(HirStmt Body, TextSpan Span) : HirStmt(Span);
 
@@ -203,6 +226,9 @@ public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<Hir
 
 /// <summary>Reads field <see cref="Field"/> of a struct value.</summary>
 public sealed record HirFieldAccess(HirExpr Target, StructField Field, TextSpan Span) : HirExpr(Field.Type, Span);
+
+/// <summary>An enum value <c>E.V(payload…)</c> (type-system.md §15.1).</summary>
+public sealed record HirEnumValue(EnumVariant Variant, ImmutableArray<HirExpr> Payload, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
 
 /// <summary>A struct literal. <see cref="Fields"/> is in source order, which is also evaluation order.</summary>
 public sealed record HirStructLiteral(ImmutableArray<(StructField Field, HirExpr Value)> Fields, NovaType Type, TextSpan Span) : HirExpr(Type, Span);

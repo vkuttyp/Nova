@@ -1,0 +1,26 @@
+enum Shape { Empty, Circle(i64), Rect(i64, i64) }
+enum Other { A }
+struct Res { id: i32; drop { } }
+enum Holder { One(Res) }
+enum Dup { A, A } // error[N0228]
+enum Loop { Next(Loop) } // error[N0227]
+enum HasRef { R(borrow i64) } // error[N0246]
+fn f(s: Shape, n: i32, b: bool, h: Holder) {
+    match (s) { Shape.Empty => { } Shape.Circle(r) => { } } // error[N0256]
+    match (s) { _ => { } Shape.Empty => { } } // error[N0257]
+    match (s) { Shape.Empty => { } Shape.Empty => { } _ => { } } // error[N0257]
+    match (s) { Other.A => { } _ => { } } // error[N0205]
+    match (s) { Shape.Rect(w) => { } _ => { } } // error[N0209]
+    match (s) { Shape.Square => { } _ => { } } // error[N0200]
+    match (n) { 1 => { } 2 => { } } // error[N0256]
+    match (n) { 1 => { } 1 => { } _ => { } } // error[N0257]
+    match (b) { true => { } } // error[N0256]
+    match (h) { Holder.One(r) => { } } // error[N0258]
+    match (n) { Shape.Empty => { } _ => { } } // error[N0205]
+    let x = Shape.Circle(1, 2); // error[N0209]
+    let y = Shape.Rect; // error[N0209]
+    let z = Shape.Nothing; // error[N0200]
+    let q = s == s; // error[N0207]
+    let t = Shape; // error[N0210]
+    match (f) { _ => { } } // error[N0210]
+}

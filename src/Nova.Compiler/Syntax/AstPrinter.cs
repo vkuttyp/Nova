@@ -83,6 +83,16 @@ public sealed class AstPrinter
                 _indent--;
                 Line(")");
                 break;
+            case EnumDecl e:
+                Line($"(enum {visibility} {Name(e.Name)}");
+                _indent++;
+                foreach (var variant in e.Variants)
+                {
+                    Line(variant.Payload.IsEmpty ? $"(variant {Name(variant.Name)})" : $"(variant {Name(variant.Name)} {string.Join(" ", variant.Payload.Select(Type))})");
+                }
+                _indent--;
+                Line(")");
+                break;
             case ConstDecl c:
                 Line($"(const {visibility} {Name(c.Name)} {Type(c.Type)} {Expr(c.Value)})");
                 break;
@@ -197,6 +207,20 @@ public sealed class AstPrinter
             case ExprStmt exprStmt:
                 Line($"(expr {Expr(exprStmt.Expression)})");
                 break;
+            case MatchStmt match:
+                Line($"(match {Expr(match.Scrutinee)}");
+                _indent++;
+                foreach (var arm in match.Arms)
+                {
+                    Line($"(arm {PatternText(arm.Pattern)}");
+                    _indent++;
+                    PrintStmt(arm.Body);
+                    _indent--;
+                    Line(")");
+                }
+                _indent--;
+                Line(")");
+                break;
             case DeferStmt defer:
                 Line("(defer");
                 _indent++;
@@ -235,6 +259,15 @@ public sealed class AstPrinter
             ? $"(new {Name(s.TypeName)})"
             : $"(new {Name(s.TypeName)} {string.Join(" ", s.Fields.Select(f => $"({Name(f.Name)} {Expr(f.Value)})"))})",
         _ => throw new InvalidOperationException($"unknown expression {expr.GetType().Name}"),
+    };
+
+    private string PatternText(Pattern pattern) => pattern switch
+    {
+        WildcardPattern => "_",
+        LiteralPattern l => Expr(l.Literal),
+        VariantPattern { Bindings.IsDefault: true } v => Name(v.Path),
+        VariantPattern v => $"({Name(v.Path)} {string.Join(" ", v.Bindings.Select(b => b is null ? "_" : Name(b)))})",
+        _ => "?",
     };
 
     private string Type(TypeSyntax type) => type switch

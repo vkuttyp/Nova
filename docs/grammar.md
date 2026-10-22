@@ -85,7 +85,9 @@ CompilationUnit = NamespaceDecl? Item* EOF
 NamespaceDecl   = 'namespace' QualifiedName ';'
 QualifiedName   = Identifier ('.' Identifier)*
 
-Item       = Visibility? (FunctionDecl | ConstDecl | StructDecl)
+Item       = Visibility? (FunctionDecl | ConstDecl | StructDecl | EnumDecl)
+EnumDecl   = 'enum' Identifier '{' (Variant (',' Variant)* ','?)? '}'        (* M2d *)
+Variant    = Identifier ('(' Type (',' Type)* ','? ')')?
 Visibility = 'public' | 'internal' | 'private'
 
 FunctionDecl = 'fn' Identifier '(' ParamList? ')' ('->' Type)? FunctionBody
@@ -116,6 +118,7 @@ Statement = Block
           | 'return' Expr? ';'
           | 'using' Identifier (':' Type)? '=' Expr ';'      (* M2c *)
           | 'defer' Statement                               (* M2c *)
+          | MatchStmt                                       (* M2d; type-system.md §15.2 *)
           | Expr AssignOp Expr ';'        (* assignment: a statement, not an expression *)
           | Expr ';'
 LocalDecl = ('let' | 'var') Identifier (':' Type)? ('=' Expr)? ';'

@@ -1,0 +1,9 @@
+fn f(n: i32) {
+    match (n) {
+        + => { } // error[N0108]
+    }
+    match (n) {
+        1 { } // error[N0100]
+    }
+}
+enum E { A(, B } // error[N0105]
