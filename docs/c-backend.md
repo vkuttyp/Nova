@@ -41,7 +41,7 @@ Status: Milestone 0 proposal. Applies from M1. CosmoOS-specific flags are covere
 | Nova | C |
 |---|---|
 | `i8..i64`, `u8..u64` | `int8_t..int64_t`, `uint8_t..uint64_t` |
-| `isize`/`usize` | `intptr_t`/`uintptr_t` (`ptrdiff_t`/`size_t` used at FFI boundaries; equal widths asserted per target) |
+| `isize`/`usize` | the fixed-width type of the target's pointer width (`int64_t`/`uint64_t` on LP64), plus `_Static_assert(sizeof(void *) == 8)`. `ptrdiff_t`/`size_t` are used at FFI boundaries (M8) |
 | `bool` | `bool` (`_Bool`) |
 | `char` | `uint32_t` |
 | `f32`/`f64` | `float`/`double` (`_Static_assert(sizeof(double)==8)`); **kernel profile forbids floats** unless the target profile enables them (`cosmoos/profiles.md`) |
@@ -136,6 +136,25 @@ with side effects are always assigned to temporaries first.
 - `#line` directives map C back to Nova source (optional, `--line-directives`;
   on by default for debug builds). They must use package-relative paths.
 - Stable local names (`v_<name>_<n>`) so a C debugger shows recognisable variables.
+
+## 7a. Implementation notes (M1, increment 1c)
+
+- Every Nova function becomes `static NV_UNUSED` with a prototype. Nova allows unused functions,
+  parameters and locals, and `-Wunused-*` must stay clean under `-Werror`.
+- Locals are declared at the top of the function and zero-initialised (scalars only in M1). Only
+  blocks that are jump targets get a label.
+- Runtime files:
+  - `nova/rt.h`: freestanding checked helpers `nv_add_i32`, `nv_div_u64`, `nv_shl_u8`,
+    `nv_shift_amount_s/u`, `nv_as_iN`, …;
+  - `nova_rt_core.c`: output formatting and the panic message, with no libc;
+  - `nova_rt_hosted.c`: the platform layer over stdio.
+
+  `novac build --emit c` writes all of them next to `main.c`. Build with
+  `cc -I <dir> <dir>/*.c`.
+- Panic output: `nova panic: <reason> at <file>:<line>:<column>`. Stdout is flushed first, then
+  `abort()` (exit status 134).
+- `main() -> i32` becomes `int main(void) { return (int)nv_main(); }`. `Process.exit(c)` calls
+  `exit(c)`, which flushes stdio.
 
 ## 8. Validation
 

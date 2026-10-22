@@ -1,0 +1,24 @@
+fn divisorSum(n: u32) -> u32 {
+    var sum: u32 = 1;
+    var d: u32 = 2;
+    while (d * d <= n) {
+        if (n % d == 0) {
+            sum += d;
+            if (d * d != n) { sum += n / d; }
+        }
+        d += 1;
+    }
+    return sum;
+}
+
+fn main() {
+    var n: u32 = 2;
+    while (n < 10000) {
+        if (divisorSum(n) == n) { Console.writeLine(n); }
+        n += 1;
+    }
+}
+// expect-stdout: 6
+// expect-stdout: 28
+// expect-stdout: 496
+// expect-stdout: 8128

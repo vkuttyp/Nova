@@ -1,0 +1,18 @@
+fn isEven(n: u32) -> bool {
+    if (n == 0) { return true; }
+    return isOdd(n - 1);
+}
+
+fn isOdd(n: u32) -> bool {
+    if (n == 0) { return false; }
+    return isEven(n - 1);
+}
+
+fn main() {
+    Console.writeLine(isEven(10));
+    Console.writeLine(isOdd(7));
+    Console.writeLine(isEven(7));
+}
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: false

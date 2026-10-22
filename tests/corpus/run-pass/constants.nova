@@ -1,0 +1,20 @@
+const WIDTH: u32 = 1 << 4;
+const HEIGHT: u32 = 12;
+const AREA: u32 = WIDTH * HEIGHT;
+const LOW: u8 = truncate<u8>(AREA + 60);
+const NEGATIVE: i64 = -(AREA as i64);
+const BIG: bool = AREA > 100;
+
+fn main() {
+    Console.writeLine(AREA);
+    Console.writeLine(LOW);
+    Console.writeLine(NEGATIVE);
+    Console.writeLine(BIG);
+    let runtime = WIDTH * HEIGHT;
+    Console.writeLine(runtime == AREA);
+}
+// expect-stdout: 192
+// expect-stdout: 252
+// expect-stdout: -192
+// expect-stdout: true
+// expect-stdout: true

@@ -1,0 +1,18 @@
+fn popcount(value: u64) -> u32 {
+    var count: u32 = 0;
+    var v = value;
+    while (v != 0) {
+        count += truncate<u32>(v & 1);
+        v >>= 1;
+    }
+    return count;
+}
+
+fn main() {
+    Console.writeLine(popcount(18446744073709551615));
+    Console.writeLine(popcount(0b1011));
+    Console.writeLine(popcount(0));
+}
+// expect-stdout: 64
+// expect-stdout: 3
+// expect-stdout: 0

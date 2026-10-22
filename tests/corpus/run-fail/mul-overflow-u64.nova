@@ -1,0 +1,5 @@
+fn main() {
+    let big: u64 = 4294967296;
+    let x = big * big; // expect-panic: integer overflow
+    Console.writeLine(x);
+}

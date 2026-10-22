@@ -1,0 +1,9 @@
+fn sum(n: u64) -> u64 {
+    if (n == 0) { return 0; }
+    return n + sum(n - 1);
+}
+
+fn main() {
+    Console.writeLine(sum(10000));
+}
+// expect-stdout: 50005000

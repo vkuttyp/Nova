@@ -1,0 +1,13 @@
+fn main() {
+    let a = -9223372036854775808i64;
+    let b = 18446744073709551615u64;
+    let c = -2147483648;
+    let d = 4294967296i64;
+    let e = true;
+    Console.writeLine(a);
+    Console.writeLine(b);
+    Console.writeLine(c);
+    Console.writeLine(d);
+    Console.writeLine(e);
+    Console.writeLine("tab\tquote\" é ??=");
+}

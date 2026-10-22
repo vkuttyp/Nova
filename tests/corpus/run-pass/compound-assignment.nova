@@ -1,0 +1,26 @@
+fn main() {
+    var x: i32 = 10;
+    x += 5;
+    Console.writeLine(x);
+    x -= 20;
+    Console.writeLine(x);
+    x *= -3;
+    Console.writeLine(x);
+    x /= 4;
+    Console.writeLine(x);
+    x %= 3;
+    Console.writeLine(x);
+    var u: u8 = 0b1010;
+    u &= 0b0110;
+    u |= 0b0001;
+    u ^= 0b1111;
+    u <<= 2;
+    u >>= 1;
+    Console.writeLine(u);
+}
+// expect-stdout: 15
+// expect-stdout: -5
+// expect-stdout: 15
+// expect-stdout: 3
+// expect-stdout: 0
+// expect-stdout: 24

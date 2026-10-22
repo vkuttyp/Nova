@@ -1,0 +1,24 @@
+fn main() {
+    let big: i32 = 300;
+    Console.writeLine(truncate<u8>(big));
+    let high: u8 = 200;
+    Console.writeLine(truncate<i8>(high));
+    let minusOne: i32 = -1;
+    Console.writeLine(truncate<u16>(minusOne));
+    let max: u64 = 18446744073709551615;
+    Console.writeLine(truncate<i64>(max));
+    let minusOneWide: i64 = -1;
+    Console.writeLine(truncate<u32>(minusOneWide));
+    let twoTo31: u64 = 2147483648;
+    Console.writeLine(truncate<i32>(twoTo31));
+    Console.writeLine(truncate<u64>(minusOne));
+    Console.writeLine(truncate<i16>(high));
+}
+// expect-stdout: 44
+// expect-stdout: -56
+// expect-stdout: 65535
+// expect-stdout: -1
+// expect-stdout: 4294967295
+// expect-stdout: -2147483648
+// expect-stdout: 18446744073709551615
+// expect-stdout: 200

@@ -1,0 +1,21 @@
+// FNV-1a (32-bit). Multiplication wraps via truncate, since '*' panics on overflow.
+const OFFSET: u32 = 2166136261;
+const PRIME: u64 = 16777619;
+
+fn step(h: u32, byte: u32) -> u32 => truncate<u32>((h ^ byte) as u64 * PRIME);
+
+fn main() {
+    Console.writeLine(OFFSET);
+    Console.writeLine(step(OFFSET, 97));
+    var h = OFFSET;
+    h = step(h, 102);
+    h = step(h, 111);
+    h = step(h, 111);
+    h = step(h, 98);
+    h = step(h, 97);
+    h = step(h, 114);
+    Console.writeLine(h);
+}
+// expect-stdout: 2166136261
+// expect-stdout: 3826002220
+// expect-stdout: 3214735720

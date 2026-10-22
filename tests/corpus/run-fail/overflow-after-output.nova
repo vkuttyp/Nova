@@ -1,0 +1,10 @@
+fn main() {
+    var x: i8 = 120;
+    loop {
+        Console.writeLine(x);
+        x += 3; // expect-panic: integer overflow
+    }
+}
+// expect-stdout: 120
+// expect-stdout: 123
+// expect-stdout: 126

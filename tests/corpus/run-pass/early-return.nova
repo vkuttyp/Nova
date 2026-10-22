@@ -1,0 +1,15 @@
+fn indexOfFirstMultiple(step: u32) -> i32 {
+    var i: u32 = 1;
+    while (i < 100) {
+        if (i % step == 0) { return truncate<i32>(i); }
+        i += 1;
+    }
+    return -1;
+}
+
+fn main() {
+    Console.writeLine(indexOfFirstMultiple(7));
+    Console.writeLine(indexOfFirstMultiple(1000));
+}
+// expect-stdout: 7
+// expect-stdout: -1

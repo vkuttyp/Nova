@@ -1,0 +1,16 @@
+fn main() {
+    let a: i64 = 1000000007;
+    let b: i64 = -998244353;
+    Console.writeLine(a + b);
+    Console.writeLine(a - b);
+    Console.writeLine(a * b);
+    Console.writeLine(a / b);
+    Console.writeLine(a % b);
+    Console.writeLine(-a);
+}
+// expect-stdout: 1755654
+// expect-stdout: 1998244360
+// expect-stdout: -998244359987710471
+// expect-stdout: -1
+// expect-stdout: 1755654
+// expect-stdout: -1000000007

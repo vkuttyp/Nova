@@ -1,0 +1,7 @@
+fn main() {
+    let max: i32 = 2147483647;
+    Console.writeLine("before");
+    let x = max + 1; // expect-panic: integer overflow
+    Console.writeLine(x);
+}
+// expect-stdout: before

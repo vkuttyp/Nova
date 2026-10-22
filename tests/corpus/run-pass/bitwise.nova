@@ -1,0 +1,17 @@
+fn main() {
+    let a: u8 = 0xF0;
+    let b: u8 = 0x3C;
+    Console.writeLine(a & b);
+    Console.writeLine(a | b);
+    Console.writeLine(a ^ b);
+    var flags: u32 = 0;
+    flags |= 1 << 4;
+    flags |= 1;
+    flags ^= 0x10;
+    flags &= 0xFFFF;
+    Console.writeLine(flags);
+}
+// expect-stdout: 48
+// expect-stdout: 252
+// expect-stdout: 204
+// expect-stdout: 1

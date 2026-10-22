@@ -1,0 +1,26 @@
+fn main() {
+    let one: u32 = 1;
+    Console.writeLine(one << 31);
+    let byte: u8 = 0xFF;
+    Console.writeLine(byte << 4);
+    Console.writeLine(byte >> 7);
+    let wide: u64 = 1;
+    Console.writeLine(wide << 63);
+    let amount: i32 = 3;
+    Console.writeLine(byte >> amount);
+    let big: u64 = 40;
+    Console.writeLine(wide << big);
+    var x: u16 = 1;
+    x <<= 15;
+    Console.writeLine(x);
+    x >>= 14;
+    Console.writeLine(x);
+}
+// expect-stdout: 2147483648
+// expect-stdout: 240
+// expect-stdout: 1
+// expect-stdout: 9223372036854775808
+// expect-stdout: 31
+// expect-stdout: 1099511627776
+// expect-stdout: 32768
+// expect-stdout: 2

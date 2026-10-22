@@ -1,0 +1,11 @@
+fn moves(disks: u32) -> u64 {
+    if (disks == 0) { return 0; }
+    return 2 * moves(disks - 1) + 1;
+}
+
+fn main() {
+    Console.writeLine(moves(10));
+    Console.writeLine(moves(20));
+}
+// expect-stdout: 1023
+// expect-stdout: 1048575

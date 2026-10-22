@@ -1,0 +1,6 @@
+fn main() {
+    let one: u64 = 1;
+    let amount: i32 = -1;
+    let x = one >> amount; // expect-panic: shift amount out of range
+    Console.writeLine(x);
+}

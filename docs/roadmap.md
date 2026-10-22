@@ -39,7 +39,11 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 
 ## Next highest-priority task
 
-M1 increments 1a (lexer, parser) and 1b (names, types, constants, definite assignment, HIR;
-spec in `type-system.md`) are done (2026-10-22).
-Next: **increment 1c**: NIR (CFG) construction, LIR, C emission, the `nova/rt.h` runtime,
-`novac build`, and run-pass/run-fail tests compiled with clang and gcc (`milestone-1.md` §2–3).
+M1 increments 1a (parser), 1b (type checker, HIR) and 1c (NIR, C backend, runtime,
+`novac build`, run tests) are done (2026-10-22). Nova programs now compile to C and run.
+Next: **increment 1d**:
+- C1: a Nova program running in CosmoOS under QEMU on x86-64 and AArch64, out of tree;
+- compiling the corpus with the exact CosmoOS flags;
+- a GCC differential run.
+
+These close M1 (`milestone-1.md` acceptance table).

@@ -1,0 +1,20 @@
+fn gcd(a: u64, b: u64) -> u64 {
+    var x = a;
+    var y = b;
+    while (y != 0) {
+        let t = x % y;
+        x = y;
+        y = t;
+    }
+    return x;
+}
+
+fn main() -> i32 {
+    Console.writeLine(gcd(1071, 462));
+    Console.writeLine(gcd(17, 5));
+    Console.writeLine(gcd(0, 9));
+    return 0;
+}
+// expect-stdout: 21
+// expect-stdout: 1
+// expect-stdout: 9

@@ -1,0 +1,19 @@
+// Covers: short-circuit lowering, loop/break/continue, else-if, Process.exit, truncate and shifts.
+fn classify(n: i32) -> i32 {
+    if (n < 0) { return -1; } else if (n == 0) { return 0; }
+    return 1;
+}
+
+fn bits(x: u64, n: i32) -> u8 => truncate<u8>(x >> n);
+
+fn main() -> i32 {
+    var i = 0;
+    loop {
+        i += 1;
+        if (i % 2 == 0) { continue; }
+        if (i > 5 && classify(i) == 1) { break; }
+    }
+    if (i == 0 || i > 100) { Process.exit(1); }
+    Console.writeLine(bits(65280, 8));
+    return 0;
+}

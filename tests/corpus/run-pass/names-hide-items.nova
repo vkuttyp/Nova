@@ -1,0 +1,13 @@
+const total: u32 = 100;
+
+fn value() -> u32 => 1;
+
+fn truncate(x: u32) -> u32 => x / 2;
+
+fn main() {
+    let value = total + 1;
+    Console.writeLine(value);
+    Console.writeLine(truncate(value));
+}
+// expect-stdout: 101
+// expect-stdout: 50

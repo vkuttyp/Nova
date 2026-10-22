@@ -1,0 +1,22 @@
+fn classify(n: i32) {
+    if (n < 0) {
+        Console.writeLine("negative");
+    } else if (n == 0) {
+        Console.writeLine("zero");
+    } else if (n < 10) {
+        Console.writeLine("small");
+    } else {
+        Console.writeLine("large");
+    }
+}
+
+fn main() {
+    classify(-5);
+    classify(0);
+    classify(5);
+    classify(50);
+}
+// expect-stdout: negative
+// expect-stdout: zero
+// expect-stdout: small
+// expect-stdout: large

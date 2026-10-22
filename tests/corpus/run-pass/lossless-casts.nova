@@ -1,0 +1,20 @@
+fn main() {
+    let t = true;
+    let f = false;
+    Console.writeLine(t as u8);
+    Console.writeLine(f as i64);
+    let b: u8 = 255;
+    Console.writeLine(b as i16);
+    let s: i8 = -5;
+    Console.writeLine(s as i64);
+    let m: u32 = 4294967295;
+    Console.writeLine(m as u64 + 1);
+    let n: i32 = -2147483648;
+    Console.writeLine(n as i64 - 1);
+}
+// expect-stdout: 1
+// expect-stdout: 0
+// expect-stdout: 255
+// expect-stdout: -5
+// expect-stdout: 4294967296
+// expect-stdout: -2147483649

@@ -1,0 +1,14 @@
+fn firstSquareAbove(limit: u32) -> u32 {
+    var n: u32 = 0;
+    loop {
+        if (n * n > limit) { return n; }
+        n += 1;
+    }
+}
+
+fn main() {
+    Console.writeLine(firstSquareAbove(1000));
+    Console.writeLine(firstSquareAbove(0));
+}
+// expect-stdout: 32
+// expect-stdout: 1

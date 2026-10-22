@@ -8,4 +8,11 @@
     <InternalsVisibleTo Include="Nova.Compiler.Tests" />
   </ItemGroup>
 
+  <!-- The C runtime ships inside the compiler; CBackend writes it next to the generated C. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\runtime\include\nova\rt.h" LogicalName="runtime/include/nova/rt.h" />
+    <EmbeddedResource Include="..\..\runtime\core\nova_rt_core.c" LogicalName="runtime/core/nova_rt_core.c" />
+    <EmbeddedResource Include="..\..\runtime\hosted\nova_rt_hosted.c" LogicalName="runtime/hosted/nova_rt_hosted.c" />
+  </ItemGroup>
+
 </Project>

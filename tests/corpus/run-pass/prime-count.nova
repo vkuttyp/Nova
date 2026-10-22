@@ -1,0 +1,26 @@
+fn isPrime(n: u32) -> bool {
+    if (n < 2) { return false; }
+    var d: u32 = 2;
+    while (d * d <= n) {
+        if (n % d == 0) { return false; }
+        d += 1;
+    }
+    return true;
+}
+
+fn countBelow(limit: u32) -> u32 {
+    var count: u32 = 0;
+    var k: u32 = 0;
+    while (k < limit) {
+        if (isPrime(k)) { count += 1; }
+        k += 1;
+    }
+    return count;
+}
+
+fn main() {
+    Console.writeLine(countBelow(100));
+    Console.writeLine(countBelow(1000));
+}
+// expect-stdout: 25
+// expect-stdout: 168

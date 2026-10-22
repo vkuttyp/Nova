@@ -1,0 +1,26 @@
+// '/' truncates toward zero; '%' takes the dividend's sign; MIN % -1 == 0 (type-system.md §6).
+fn show(a: i32, b: i32) {
+    Console.write(a / b);
+    Console.write(" ");
+    Console.writeLine(a % b);
+}
+
+fn main() {
+    show(-7, 2);
+    show(7, -2);
+    show(-7, -2);
+    show(7, 2);
+    let min = -2147483648;
+    Console.writeLine(min % -1);
+    Console.writeLine(min / 1);
+    Console.writeLine(17u32 / 5);
+    Console.writeLine(17u32 % 5);
+}
+// expect-stdout: -3 -1
+// expect-stdout: -3 1
+// expect-stdout: 3 -1
+// expect-stdout: 3 1
+// expect-stdout: 0
+// expect-stdout: -2147483648
+// expect-stdout: 3
+// expect-stdout: 2

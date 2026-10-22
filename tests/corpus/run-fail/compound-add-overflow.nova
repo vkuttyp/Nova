@@ -1,0 +1,6 @@
+fn main() {
+    var counter: u8 = 250;
+    while (true) {
+        counter += 1; // expect-panic: integer overflow
+    }
+}

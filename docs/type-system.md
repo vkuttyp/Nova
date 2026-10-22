@@ -81,7 +81,7 @@ conversions.
 | Operators | Operand types | Result | Runtime behaviour (implemented in 1c) |
 |---|---|---|---|
 | `+ - *` | integer | same | overflow → panic |
-| `/ %` | integer | same | zero divisor, or `MIN / -1`, → panic. `%` has the sign of the dividend |
+| `/ %` | integer | same | zero divisor → panic. `MIN / -1` → panic (overflow). `/` truncates toward zero, `%` has the sign of the dividend, and `MIN % -1` is `0` |
 | `& \| ^` | **unsigned** integer | same | |
 | `<< >>` | left: **unsigned** integer; right: any integer type | left type | amount `< 0` or `≥ bit width` → panic. `>>` is logical |
 | `== !=` | integer or `bool` | `bool` | |

@@ -1,0 +1,4 @@
+fn main() {
+    Console.writeLine("Hello, Nova!");
+}
+// expect-stdout: Hello, Nova!

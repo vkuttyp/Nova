@@ -1,0 +1,16 @@
+fn main() {
+    let a: u8 = 200;
+    let b: u8 = 55;
+    Console.writeLine(a + b);
+    let c: i8 = -100;
+    let d: i8 = -28;
+    Console.writeLine(c + d);
+    let e: u16 = 256;
+    Console.writeLine(e * 255);
+    let f: i16 = -181;
+    Console.writeLine(f * 181);
+}
+// expect-stdout: 255
+// expect-stdout: -128
+// expect-stdout: 65280
+// expect-stdout: -32761

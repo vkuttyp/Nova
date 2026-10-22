@@ -1,0 +1,5 @@
+fn main() {
+    let min: i32 = -2147483648;
+    let x = -min; // expect-panic: integer overflow
+    Console.writeLine(x);
+}

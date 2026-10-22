@@ -1,0 +1,6 @@
+fn main() {
+    let min: i64 = -9223372036854775808;
+    let minusOne: i64 = -1;
+    let x = min / minusOne; // expect-panic: integer overflow
+    Console.writeLine(x);
+}

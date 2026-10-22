@@ -1,9 +1,10 @@
 # Nova Documentation — Milestone 0 / C0 Deliverable
 
 Date: 2026-10-22. Status: **M0/C0 complete; all decisions accepted ([ADR 0002](decisions/0002-milestone-0-decision-set.md)).**
-M1 increments 1a (lexer, parser) and 1b (type checker, HIR) done; next is increment 1c ([roadmap.md](roadmap.md)).
+M1 increments 1a–1c done (Nova compiles to C and runs); next is increment 1d (C1 in CosmoOS) ([roadmap.md](roadmap.md)).
 Implemented-feature specs: [grammar.md](grammar.md) (M1 grammar), [type-system.md](type-system.md)
-(M1 static semantics) and [diagnostics.md](diagnostics.md) (error codes).
+(M1 static semantics), [intermediate-representation.md](intermediate-representation.md) (HIR/NIR as
+implemented) and [diagnostics.md](diagnostics.md) (error codes).
 
 ## Master prompt §23 deliverables
 
@@ -46,7 +47,7 @@ Primary-source audits: [research/cosmoos-kernel-audit.md](research/cosmoos-kerne
 
 ## Still to be written (scheduled)
 
-`intermediate-representation.md` (M1, increment 1c); `lifetimes.md`
+`lifetimes.md`
 (M2, split from ownership.md); `allocators.md`, `escape-analysis.md` (M3–M5); `runtime.md`,
 `ffi.md`, `unsafe.md` (M8); `benchmarks.md` (M9). Today their content is covered by the
 documents above.

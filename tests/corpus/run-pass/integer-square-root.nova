@@ -1,0 +1,24 @@
+// Binary search without overflow: compare mid against n / mid.
+fn isqrt(n: u64) -> u64 {
+    if (n < 2) { return n; }
+    var low: u64 = 1;
+    var high: u64 = 4294967296;
+    while (high - low > 1) {
+        let mid = low + (high - low) / 2;
+        if (mid <= n / mid) { low = mid; } else { high = mid; }
+    }
+    return low;
+}
+
+fn main() {
+    Console.writeLine(isqrt(0));
+    Console.writeLine(isqrt(15));
+    Console.writeLine(isqrt(16));
+    Console.writeLine(isqrt(1000000));
+    Console.writeLine(isqrt(18446744073709551615));
+}
+// expect-stdout: 0
+// expect-stdout: 3
+// expect-stdout: 4
+// expect-stdout: 1000
+// expect-stdout: 4294967295

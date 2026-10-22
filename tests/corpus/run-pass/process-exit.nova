@@ -1,0 +1,17 @@
+// expect-exit: 3
+fn finish(code: i32) {
+    Console.writeLine("finishing");
+    Process.exit(code);
+}
+
+fn main() -> i32 {
+    Console.writeLine("start");
+    var i = 0;
+    while (true) {
+        if (i == 2) { finish(3); }
+        i += 1;
+    }
+    return 0;
+}
+// expect-stdout: start
+// expect-stdout: finishing

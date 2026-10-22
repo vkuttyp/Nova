@@ -1,0 +1,18 @@
+fn main() {
+    var n = 3;
+    while (n > 0) {
+        Console.write(n);
+        Console.write(" ");
+        n -= 1;
+    }
+    Console.writeLine("liftoff");
+    Console.write(1);
+    Console.write(2);
+    Console.writeLine();
+    Console.writeLine("");
+    Console.writeLine("end");
+}
+// expect-stdout: 3 2 1 liftoff
+// expect-stdout: 12
+// expect-stdout:
+// expect-stdout: end

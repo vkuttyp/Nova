@@ -1,0 +1,16 @@
+fn main() {
+    var total: u32 = 0;
+    var i: u32 = 0;
+    while (i < 10) {
+        var j: u32 = 0;
+        while (j < 10) {
+            if (j == i) { j += 1; continue; }
+            if (j > i + 3) { break; }
+            total += i * 10 + j;
+            j += 1;
+        }
+        i += 1;
+    }
+    Console.writeLine(total);
+}
+// expect-stdout: 3951

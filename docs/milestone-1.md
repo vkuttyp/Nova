@@ -91,5 +91,32 @@ Exit criterion for 1a: parser tests green, AST dumps stable.
 
 Semantic analysis runs only on files that parsed cleanly. Two simplifications, both documented:
 the flow analysis runs on HIR, not NIR (no moves exist yet, so no fixpoint is needed), and all
-files of a compilation share one item scope. 1b (resolution + types + HIR),
+files of a compilation share one item scope.
+
+**Increment 1c — done 2026-10-22.**
+- `intermediate-representation.md` (spec first).
+- NIR (CFG) and the HIR→NIR lowering, with explicit evaluation order and short-circuit branches.
+- The C emitter: labelled blocks, checked helpers, zero-initialised locals, deterministic output.
+- The runtime: `nova/rt.h` (freestanding helpers), `nova_rt_core.c` (formatting, panics) and
+  `nova_rt_hosted.c` (stdio). They are embedded in the compiler and written next to the generated C.
+- `novac build [--emit c|exe] [--dump-nir]`.
+- Tests: run-pass/run-fail corpora, the runtime agreement harness, determinism, C snapshots and
+  freestanding cross-compiles.
+
+Deviation: no separate LIR yet (`intermediate-representation.md` §4).
+
+**Acceptance status (§3), 2026-10-22:**
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Corpus ≥ 40 parse, ≥ 40 check-fail, ≥ 50 run-pass, ≥ 15 run-fail | met: 38 files / 72 cases, 19 files / 99 cases, 51, 19 |
+| 2 | Generated C warning-free under the strict set on clang **and gcc** | clang: met. gcc: **not run** (no GCC on the dev host) |
+| 3 | Differential: {clang, gcc} × {-O0, -O2} × {plain, ASan+UBSan} agree | clang half met (plus the portable-overflow config). gcc and Linux CI: **pending** |
+| 4 | Corpus compiles for both CosmoOS triples with CosmoOS `USER_CFLAGS` | generic freestanding flags met. Exact CosmoOS flags: **pending (1d)** |
+| 5 | Determinism | met (byte-identical C, no host paths) |
+| 6 | Diagnostics tests assert code and position | met (line, and column where annotated) |
+| 7 | Docs | met: grammar, type-system, IR, diagnostics, testing |
+
+**Increment 1d (next):** C1 (`hello` in CosmoOS under QEMU on both arches, stage S0), compiling the
+corpus with the exact CosmoOS flags, and a GCC differential run (Linux CI or a local GCC). 1b (resolution + types + HIR),
 1c (NIR + LIR + C + runtime + run tests) and 1d (C1 script) follow.

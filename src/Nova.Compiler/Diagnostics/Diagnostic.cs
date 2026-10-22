@@ -59,6 +59,9 @@ public static class DiagnosticCodes
     public const string VoidValue = "N0224";
     public const string StatementNotCall = "N0225";
     public const string VoidNotAllowed = "N0226";
+
+    // Build: N0300-N0399
+    public const string MissingMain = "N0300";
 }
 
 public sealed record Diagnostic(string Code, Severity Severity, string Message, SourceText Source, TextSpan Span)

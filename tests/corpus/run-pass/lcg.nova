@@ -1,0 +1,16 @@
+fn next(x: u64) -> u64 => (1103515245 * x + 12345) % 2147483648;
+
+fn main() {
+    var x: u64 = 42;
+    var i = 0;
+    while (i < 5) {
+        x = next(x);
+        Console.writeLine(x);
+        i += 1;
+    }
+}
+// expect-stdout: 1250496027
+// expect-stdout: 1116302264
+// expect-stdout: 1000676753
+// expect-stdout: 1668674806
+// expect-stdout: 908095735

@@ -1,0 +1,5 @@
+fn main() {
+    let zero: i32 = 0;
+    let x = 10 / zero; // expect-panic: division by zero
+    Console.writeLine(x);
+}

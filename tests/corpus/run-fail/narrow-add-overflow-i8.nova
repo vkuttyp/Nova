@@ -1,0 +1,6 @@
+fn main() {
+    let a: i8 = -100;
+    let b: i8 = -29;
+    let x = a + b; // expect-panic: integer overflow
+    Console.writeLine(x);
+}

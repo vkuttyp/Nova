@@ -1,0 +1,16 @@
+fn isLeap(year: u32) -> bool => year % 4 == 0 && year % 100 != 0 || year % 400 == 0;
+
+fn main() {
+    var count = 0;
+    var year: u32 = 1900;
+    while (year <= 2000) {
+        if (isLeap(year)) { count += 1; }
+        year += 1;
+    }
+    Console.writeLine(count);
+    Console.writeLine(isLeap(1900));
+    Console.writeLine(isLeap(2000));
+}
+// expect-stdout: 25
+// expect-stdout: false
+// expect-stdout: true

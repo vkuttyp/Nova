@@ -1,0 +1,8 @@
+fn main() {
+    var ran = false;
+    while (false) { ran = true; }
+    var n = 0;
+    while (n > 0) { ran = true; }
+    Console.writeLine(ran);
+}
+// expect-stdout: false

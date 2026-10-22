@@ -39,8 +39,29 @@ Runner: `tests/Nova.Compiler.Tests/CorpusTests.cs`, run by `dotnet test`.
   semantic diagnostics.
 - Every parse-pass file is also run through the type checker to check that it never crashes
   (semantic errors are expected there).
-- Later kinds (`compile-fail`, `run-*`) reuse the same annotation syntax and add
-  `// expect-stdout:` and `// expect-panic:` directives (from increment 1c on).
+- `tests/corpus/run-pass/*.nova` and `run-fail/*.nova` (`RunCorpusTests`) are compiled to C,
+  built with **every available C configuration** with strict warnings and `-Werror`, then run.
+  Directives:
+  - `// expect-stdout: text` — one per output line, in order. `// expect-stdout:` alone is an empty line.
+  - `// expect-exit: N` — the exit status (default 0).
+  - `// expect-panic: reason` — placed on the line where the panic must be reported. The test
+    requires exit status 134 (SIGABRT) and `nova panic: <reason> at <file>:<line>:` on stderr.
+- C configurations (`CToolchains`), each built with `-Werror`:
+  - clang `-O0`;
+  - clang `-O2`;
+  - clang `-O2 -DNV_NO_BUILTIN_OVERFLOW` (the portable fallback);
+  - clang `-O1` with ASan+UBSan and `-fno-sanitize-recover`;
+  - the same three without sanitizers for a **real GCC** when one is found (`gcc`, `gcc-12`…`gcc-15`),
+    plus `NOVA_TEST_CC` if set.
+
+  Every configuration must match the expectations, so the run corpus is also a differential test.
+- `tests/corpus/emit-c/*.nova` have reviewed `.c` snapshots of the generated `main.c`.
+- `RuntimeSemanticsTests` generates a C harness that calls every checked helper in `nova/rt.h` on
+  edge values of every integer type (~9,000 cases) and compares results and panic kinds with
+  `IntegerSemantics`, under every C configuration. Planting a bug in `nv_rem_*` was checked to
+  fail this test (2026-10-22).
+- `BackendTests`: generated C is byte-identical across runs and contains no host paths. It also
+  compiles freestanding (`-ffreestanding -nostdinc`) for `x86_64-` and `aarch64-unknown-none-elf`.
 
 ## 4. Execution log
 
@@ -48,6 +69,7 @@ Runner: `tests/Nova.Compiler.Tests/CorpusTests.cs`, run by `dotnet test`.
 |---|---|---|
 | 2026-10-22 | `dotnet test` on macOS arm64 (.NET 10.0.401): lexer and parser unit tests, 20 parse-pass and 18 parse-fail corpus files | 151 passed, 0 failed |
 | 2026-10-22 | same, plus 11 check-pass and 19 check-fail files and the checker crash test (increment 1b) | 201 passed, 0 failed |
+| 2026-10-22 | increment 1c: plus 51 run-pass and 19 run-fail programs under 4 clang configurations (Apple clang 21: `-O0`, `-O2`, portable overflow, ASan+UBSan), runtime/semantics agreement harness, determinism, freestanding cross-compiles, 3 C snapshots. **No real GCC on this host**, so the GCC configurations did not run | 379 passed, 0 failed |
 
 ## 2. Acceptance-test matrix
 

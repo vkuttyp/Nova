@@ -1,0 +1,19 @@
+fn pick(flag: bool) -> i32 {
+    var x: i32;
+    if (flag) { x = 10; } else { x = 20; }
+    return x;
+}
+
+fn main() {
+    Console.writeLine(pick(true));
+    Console.writeLine(pick(false));
+    var found: u32;
+    loop {
+        found = 7;
+        break;
+    }
+    Console.writeLine(found);
+}
+// expect-stdout: 10
+// expect-stdout: 20
+// expect-stdout: 7

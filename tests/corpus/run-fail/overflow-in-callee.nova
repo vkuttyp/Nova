@@ -1,0 +1,9 @@
+fn double(x: i16) -> i16 {
+    return x * 2; // expect-panic: integer overflow
+}
+
+fn main() {
+    Console.writeLine(double(100));
+    Console.writeLine(double(20000));
+}
+// expect-stdout: 200

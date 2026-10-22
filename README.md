@@ -4,8 +4,9 @@ Nova is a memory-safe systems programming language with C#/TypeScript-style synt
 compiled ahead of time to portable C, with no garbage collector. Its first target platform is
 [CosmoOS](https://github.com/vkuttyp/CosmoOS).
 
-**Status:** early development. The design is complete (Milestone 0). The compiler currently
-parses and type-checks the Milestone 1 language subset (`novac check`). It does not generate code yet.
+**Status:** early development. The design is complete (Milestone 0). The compiler
+compiles the Milestone 1 subset (integers, booleans, functions, control flow) to portable C and
+builds executables: `novac build hello.nova -o hello`. Ownership, structs and the heap come next.
 
 ```nova
 namespace Demo;

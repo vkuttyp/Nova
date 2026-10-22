@@ -1,0 +1,5 @@
+fn main() {
+    let zero: u8 = 0;
+    let x = zero - 1; // expect-panic: integer overflow
+    Console.writeLine(x);
+}

@@ -1,0 +1,10 @@
+fn main() {
+    var i: u8 = 0;
+    while (i < 255) { i += 1; }
+    Console.writeLine(i);
+    var j: i8 = 0;
+    while (j > -128) { j -= 1; }
+    Console.writeLine(j);
+}
+// expect-stdout: 255
+// expect-stdout: -128

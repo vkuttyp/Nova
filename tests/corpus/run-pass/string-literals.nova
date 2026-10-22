@@ -1,0 +1,8 @@
+fn main() {
+    Console.writeLine("quote \" backslash \\ question ?? mark");
+    Console.writeLine("unicode: h\u{e9}llo \u{20AC} \u{1F600}");
+    Console.writeLine("café");
+}
+// expect-stdout: quote " backslash \ question ?? mark
+// expect-stdout: unicode: héllo € 😀
+// expect-stdout: café

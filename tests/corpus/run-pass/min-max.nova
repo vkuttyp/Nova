@@ -1,0 +1,15 @@
+fn min(a: i64, b: i64) -> i64 {
+    if (a < b) { return a; }
+    return b;
+}
+
+fn max(a: i64, b: i64) -> i64 => -min(-a, -b);
+
+fn main() {
+    Console.writeLine(min(-5, 3));
+    Console.writeLine(max(-5, 3));
+    Console.writeLine(max(-9223372036854775807, -1));
+}
+// expect-stdout: -5
+// expect-stdout: 3
+// expect-stdout: -1

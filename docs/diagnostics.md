@@ -86,3 +86,9 @@ Semantic checks run only when every file parsed without errors.
 | N0224 | Value of type `void` used as a value | `let d = nothing();` |
 | N0225 | Expression statement that is not a call | `1 + 2;` |
 | N0226 | `void` used other than as a return type | `var e: void;` |
+
+### Build (N0300–N0399)
+
+| Code | Meaning | Example |
+|---|---|---|
+| N0300 | `novac build --emit exe` without a `main` function | a library-only file |

@@ -1,0 +1,28 @@
+fn main() {
+    Console.writeLine(-128i8);
+    Console.writeLine(127i8);
+    Console.writeLine(-32768i16);
+    Console.writeLine(32767i16);
+    Console.writeLine(-2147483648);
+    Console.writeLine(2147483647);
+    Console.writeLine(-9223372036854775808i64);
+    Console.writeLine(9223372036854775807i64);
+    Console.writeLine(255u8);
+    Console.writeLine(65535u16);
+    Console.writeLine(4294967295u32);
+    Console.writeLine(18446744073709551615u64);
+    Console.writeLine(0u64);
+}
+// expect-stdout: -128
+// expect-stdout: 127
+// expect-stdout: -32768
+// expect-stdout: 32767
+// expect-stdout: -2147483648
+// expect-stdout: 2147483647
+// expect-stdout: -9223372036854775808
+// expect-stdout: 9223372036854775807
+// expect-stdout: 255
+// expect-stdout: 65535
+// expect-stdout: 4294967295
+// expect-stdout: 18446744073709551615
+// expect-stdout: 0

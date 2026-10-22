@@ -1,0 +1,28 @@
+fn fibRecursive(n: u32) -> u32 {
+    if (n < 2) { return n; }
+    return fibRecursive(n - 1) + fibRecursive(n - 2);
+}
+
+fn fibIterative(n: u32) -> u64 {
+    var a: u64 = 0;
+    var b: u64 = 1;
+    var i: u32 = 0;
+    while (i < n) {
+        let next = a + b;
+        a = b;
+        b = next;
+        i += 1;
+    }
+    return a;
+}
+
+fn main() {
+    Console.writeLine(fibRecursive(0));
+    Console.writeLine(fibRecursive(1));
+    Console.writeLine(fibRecursive(20));
+    Console.writeLine(fibIterative(90));
+}
+// expect-stdout: 0
+// expect-stdout: 1
+// expect-stdout: 6765
+// expect-stdout: 2880067194370816120

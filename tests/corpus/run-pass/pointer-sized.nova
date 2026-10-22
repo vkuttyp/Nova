@@ -1,0 +1,14 @@
+fn main() {
+    let n: usize = 1000;
+    let m: isize = -1000;
+    Console.writeLine(n * 3);
+    Console.writeLine(m * 3);
+    let big: usize = 18446744073709551615;
+    Console.writeLine(big);
+    let wide = n as u64 + 1;
+    Console.writeLine(wide);
+}
+// expect-stdout: 3000
+// expect-stdout: -3000
+// expect-stdout: 18446744073709551615
+// expect-stdout: 1001

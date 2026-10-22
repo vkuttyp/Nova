@@ -22,7 +22,7 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
 
 - Milestone 0 / C0 is complete. All M0 decisions were accepted on 2026-10-22
   (`docs/decisions/0002-milestone-0-decision-set.md`).
-- M1 increments 1a (parser) and 1b (type checker, HIR) are done. Next is increment 1c (`docs/roadmap.md`).
+- M1 increments 1a–1c are done: Nova compiles to C and runs (`novac build`). Next is increment 1d, C1 in CosmoOS (`docs/roadmap.md`).
 
 ## Build and test
 
@@ -32,6 +32,7 @@ dotnet test Nova.slnx                      # unit + corpus tests
 NOVA_BLESS=1 dotnet test Nova.slnx         # rewrite .ast snapshots, then REVIEW the diff
 dotnet run --project src/Nova.Cli -- parse --dump-ast file.nova
 dotnet run --project src/Nova.Cli -- check --dump-hir file.nova
+dotnet run --project src/Nova.Cli -- build file.nova -o program && ./program   # needs clang or cc
 ```
 
 Corpus conventions (`// error[N0100]` annotations, snapshots): `docs/testing.md` §3.

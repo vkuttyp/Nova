@@ -1,0 +1,5 @@
+fn main() {
+    let a: u16 = 256;
+    let x = a * 256; // expect-panic: integer overflow
+    Console.writeLine(x);
+}

@@ -1,0 +1,13 @@
+fn factorial(n: u64) -> u64 {
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+
+fn main() {
+    Console.writeLine(factorial(0));
+    Console.writeLine(factorial(5));
+    Console.writeLine(factorial(20));
+}
+// expect-stdout: 1
+// expect-stdout: 120
+// expect-stdout: 2432902008176640000

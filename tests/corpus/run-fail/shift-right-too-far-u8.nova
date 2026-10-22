@@ -1,0 +1,6 @@
+fn main() {
+    var x: u8 = 255;
+    let amount: u8 = 8;
+    x >>= amount; // expect-panic: shift amount out of range
+    Console.writeLine(x);
+}

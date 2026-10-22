@@ -1,0 +1,16 @@
+fn main() {
+    let a = true;
+    let b = false;
+    Console.writeLine(a);
+    Console.writeLine(!a);
+    Console.writeLine(a == b);
+    Console.writeLine(a != b);
+    Console.writeLine(!(a && b) == (!a || !b));
+    Console.writeLine(3 < 4 && 4 <= 4 && 5 > 4 && 4 >= 4);
+}
+// expect-stdout: true
+// expect-stdout: false
+// expect-stdout: false
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: true

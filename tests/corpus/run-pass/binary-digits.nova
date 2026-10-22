@@ -1,0 +1,16 @@
+fn printBinary(n: u32) {
+    if (n > 1) { printBinary(n / 2); }
+    Console.write(n % 2);
+}
+
+fn main() {
+    printBinary(10);
+    Console.writeLine();
+    printBinary(255);
+    Console.writeLine();
+    printBinary(1);
+    Console.writeLine();
+}
+// expect-stdout: 1010
+// expect-stdout: 11111111
+// expect-stdout: 1

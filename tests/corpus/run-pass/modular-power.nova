@@ -1,0 +1,20 @@
+const MOD: u64 = 1000000007;
+
+fn powMod(base: u64, exponent: u64) -> u64 {
+    var result: u64 = 1;
+    var b = base % MOD;
+    var e = exponent;
+    while (e > 0) {
+        if (e & 1 == 1) { result = result * b % MOD; }
+        b = b * b % MOD;
+        e >>= 1;
+    }
+    return result;
+}
+
+fn main() {
+    Console.writeLine(powMod(2, 10));
+    Console.writeLine(powMod(2, 100));
+}
+// expect-stdout: 1024
+// expect-stdout: 976371285
