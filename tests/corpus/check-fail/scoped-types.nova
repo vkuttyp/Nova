@@ -1,0 +1,13 @@
+// E3/E4 for slices (M2d): slices are scoped like references.
+struct View { items: Slice<i32>; } // error[N0246]
+enum Maybe { Some(SliceMut<u8>), None } // error[N0246]
+const EMPTY: Slice<i32> = 0; // error[N0246]
+fn nested(a: [Slice<i32>; 2]) { } // error[N0246]
+fn sliceOfSlices(a: Slice<Slice<i32>>) { } // error[N0246]
+fn sliceOfRefs(a: Slice<borrow i32>) { } // error[N0246]
+fn varSlice(a: Slice<i32>) {
+    var s = a; // error[N0246]
+}
+fn borrowSlice(a: Slice<i32>) {
+    let r = borrow a; // error[N0246]
+}

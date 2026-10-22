@@ -11,7 +11,10 @@ writes its spec section first, then the code and tests.
 | **2a** | **Structs as plain-data value types**: declarations, struct literals, field read and write, nested structs, methods with a by-value `this`, static functions (`Point.origin()`), target layout with C static asserts | grammar §2, type-system §12 | **done 2026-10-22** |
 | 2b | **References**: `borrow T`, `borrow mut T`, borrow expressions, implicit call-site borrows and `mut x`, `borrow this` / `borrow mut this` receivers, auto-deref of field access. NIR places and loans. **NLL borrow checker** (B1–B5), return elision (E1–E2), no scoped fields (E3) | lifetimes.md, type-system §13 | **done 2026-10-22** |
 | 2c | **Move types and destruction**: `drop { }` blocks, implicit `Copy` (OD-7) versus move types, moves and `move x`, partial moves, init/move analysis on NIR (O2–O5, replacing the HIR flow analysis), drop elaboration with drop flags (O4), `using` (R3), `defer` | ownership.md §2–3, type-system §14 | **done 2026-10-22** |
-| 2d | **Enums and arrays**: `enum` with payloads, exhaustive `match`, fixed arrays `[T; N]`, `Slice<T>` / `SliceMut<T>` from arrays, bounds checks, `for x in slice` | grammar, type-system §15 | planned |
+| 2d | **Enums and arrays**: `enum` with payloads, exhaustive `match`, fixed arrays `[T; N]`, `Slice<T>` / `SliceMut<T>` from arrays, bounds checks, `for` over arrays, slices and ranges; the mutation suite | grammar, type-system §15–§16 | **done 2026-10-22** |
+
+**M2 is complete** (2026-10-22): every acceptance criterion below is met, as recorded in the
+status notes after the criteria.
 
 ## Acceptance criteria (whole milestone; from `roadmap.md`)
 
@@ -25,6 +28,28 @@ writes its spec section first, then the code and tests.
    (`integrations/cosmoos/c1.py --corpus`) on both architectures.
 5. Docs: `lifetimes.md` (the checker algorithm as implemented), plus updated `ownership.md`,
    `type-system.md`, `grammar.md`, `intermediate-representation.md` and `diagnostics.md`.
+
+Status at the end of 2d:
+1. **Met.** 133 must-fail annotations for the ownership and borrowing diagnostics (N0212,
+   N0240–N0259) in `tests/corpus/check-fail/`, plus 26 near-miss functions in
+   `check-pass/{borrows,moves,slice-borrows}-accepted.nova`. The table below maps them to
+   invariants.
+2. **Met.** `run-pass/drop-*.nova`, `drops-*.nova`, `using-and-defer.nova`, `enum-drops.nova` and
+   `for-drops.nova`.
+3. **Met.** `tests/Nova.Compiler.Tests/MutationTests.cs`. Five seed programs of straight-line
+   ownership code are mutated with swaps, moves and removals of statements, added and removed
+   scopes, and duplicated moves. Each mutant's diagnostics, as (code, line) pairs, are predicted
+   by an independent oracle (scope-based name resolution, a move-state simulation, and
+   last-use liveness for loans). The compiler must report exactly those diagnostics. Each run
+   checks 1,152 distinct mutants. 600 of them resolve their names; 325 of those are rejected
+   by move or borrow errors and 275 are accepted. Injected checker bugs (shared loans
+   conflicting with nothing, use-only liveness, piecewise re-initialisation of a drop type) are
+   caught. The suite found one real gap: writing the only field of a moved drop-type struct was
+   accepted (fixed; `type-system.md` §14.4).
+4. **Met.** Local suite under clang `-O0`, `-O2`, portable overflow and ASan+UBSan; CI with GCC
+   13 and clang 18; `c1.py --corpus` runs 99 programs inside CosmoOS on both arches.
+5. **Met.** `type-system.md` §15–§16, `grammar.md`, `lifetimes.md` (slices, index overlap,
+   write after value), `intermediate-representation.md`, `c-backend.md`, `diagnostics.md`.
 
 ## 2a scope details
 
@@ -48,7 +73,7 @@ Not in 2a:
 - `borrow this` (2b);
 - `drop` (2c).
 
-## Invariant coverage (criterion 1), as of 2b
+## Invariant coverage (criterion 1), as of 2d
 
 Must-fail tests are in `tests/corpus/check-fail/`. Near-misses (programs that must be accepted)
 are in `tests/corpus/check-pass/borrows-accepted.nova`.
@@ -69,7 +94,8 @@ are in `tests/corpus/check-pass/borrows-accepted.nova`.
 | O5 partial initialisation | moves: `wholeAfterPartial`; field-of-unassigned | moves-accepted: `reinitializeMovedField`, `movedFieldOtherFieldStillUsable` |
 | R3 using | moves: `fromUsing`, `fieldFromUsing` | moves-accepted: `usingIsBorrowable` |
 | Moves vs borrows (B2) | moves: `moveWhileBorrowed`, `moveFieldWhileWholeBorrowed` | moves-accepted: `borrowEndsThenMove` |
+| E4 no scoped globals | reference-types: constant; scoped-types: `EMPTY` | n/a (a type rule) |
+| 2d: enums | enums, moves: payload moves (N0251, N0258), `movedInArm`, `assignedInSomeArms`, `payloadThroughReference` | enums (check-pass), run-pass/enum-* |
+| 2d: arrays and slices (B1–B4, E1, E3) | slice-borrows: 6; slice-returns: 4; arrays: 31 type errors; scoped-types: 8; ownership-more: `sliceThenMutElement`, `loanAcrossIterations`, `elementReborrow`, `returnsLocalElement` | slice-borrows-accepted: 2 functions (5 near-miss patterns); check-pass/arrays |
 
-Still to do:
-- the mutation suite (criterion 3);
-- raising the compile-fail count to ≥ 120 by 2d.
+`check-fail/ownership-more.nova` adds 24 cases across O2, O3, O5, R3, B1–B4, E1 and temporaries.

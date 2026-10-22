@@ -1,0 +1,159 @@
+// More O/B/E must-fail cases (milestone-2.md criterion 1), including enums and slices (M2d).
+struct Res { id: i32; drop { } }
+struct Owner { res: Res; drop { } }
+struct Plain { res: Res; n: i32; }
+struct Counter {
+    n: i32;
+    fn bump(borrow mut this) { this.n += 1; }
+    fn get(borrow this) -> i32 => this.n;
+}
+enum Slot { Empty, Full(Res) }
+fn consume(r: Res) { }
+fn look(r: borrow Res) { }
+fn make(id: i32) -> Res => Res { id: id };
+fn same(r: borrow Res) -> borrow Res => r;
+fn first(xs: Slice<i32>) -> borrow i32 => borrow xs[0];
+
+// O2: a move on one branch, then a use.
+fn movedInBranch(c: bool) {
+    let r = make(1);
+    if (c) { consume(r); }
+    look(r); // error[N0250]
+}
+// O2: moved into a struct literal.
+fn movedIntoLiteral() {
+    let r = make(1);
+    let p = Plain { res: r, n: 1 };
+    look(r); // error[N0250]
+}
+// O2: moved into an enum payload.
+fn movedIntoPayload() {
+    let r = make(1);
+    let s = Slot.Full(r);
+    consume(r); // error[N0250]
+}
+// O2: moved in one match arm.
+fn movedInArm(s: Slot) {
+    let r = make(1);
+    match (s) {
+        Slot.Empty => { consume(r); }
+        _ => { }
+    }
+    look(r); // error[N0250]
+}
+// O2: a moved parameter.
+fn movedParameter(r: Res) {
+    consume(r);
+    consume(r); // error[N0250]
+}
+// O3: assigned on some match arms only.
+fn assignedInSomeArms(s: borrow Slot) -> i32 {
+    var n: i32;
+    match (s) {
+        Slot.Empty => { n = 0; }
+        Slot.Full(r) => { }
+    }
+    return n; // error[N0212]
+}
+// O5: a field write needs the rest of the struct.
+fn fieldOfUnassigned() {
+    var p: Plain;
+    p.n = 1; // error[N0212]
+}
+// N0252: a field out of a drop type, in an initialiser and in a return.
+fn fieldOfOwner(o: Owner) {
+    let r = o.res; // error[N0252]
+}
+fn fieldOfOwnerReturned(o: Owner) -> Res {
+    return o.res; // error[N0252]
+}
+// R3: using.
+fn usingReturned() -> Res {
+    using u = make(1);
+    return u; // error[N0253]
+}
+fn usingIntoLiteral() {
+    using u = make(1);
+    let p = Plain { res: u, n: 0 }; // error[N0253]
+}
+// N0251: out of a reference.
+fn payloadThroughReference(s: borrow Slot) -> Res {
+    match (s) {
+        Slot.Full(r) => { return r; } // error[N0251]
+        Slot.Empty => { return make(0); }
+    }
+}
+fn derefMove(r: borrow Res) {
+    consume(r); // error[N0251]
+}
+// B2: write while shared.
+fn writeWhileLooked() {
+    var r = make(1);
+    let a = borrow r;
+    r = make(2); // error[N0240]
+    look(a);
+}
+// B1: a shared receiver while mutably borrowed.
+fn readWhileMutMethod() {
+    var c = Counter { n: 0 };
+    let m = borrow mut c;
+    let n = c.get(); // error[N0241] (the receiver is an implicit shared borrow)
+    m.bump();
+}
+// B2: read in a condition while mutably borrowed.
+fn readInCondition() {
+    var x = 1;
+    let m = borrow mut x;
+    if (x > 0) { } // error[N0242]
+    m = 2;
+}
+// B1: two mutable method receivers.
+fn twoMutReceivers() {
+    var c = Counter { n: 0 };
+    let m = borrow mut c;
+    c.bump(); // error[N0241]
+    m.bump();
+}
+// B1: shared then mutable, through a slice.
+fn sliceThenMutElement() {
+    var a = [1, 2, 3];
+    let s = a[..];
+    let e = borrow mut a[2]; // error[N0241]
+    let k = s[0];
+}
+// B3: a loan from the previous iteration is still live.
+fn loanAcrossIterations() {
+    var a = [1, 2, 3];
+    let keep = borrow a[0];
+    for (i in 0..3usize) {
+        let k = keep; // the next iteration reads it again
+        a[i] = 0; // error[N0240]
+    }
+}
+// B4: a reborrow keeps the original loan alive.
+fn reborrowKeepsLoan() {
+    var x = make(1);
+    let r = borrow x;
+    let r2 = same(r);
+    x = make(2); // error[N0240]
+    look(r2);
+}
+fn elementReborrow() {
+    var a = [1, 2, 3];
+    let e = first(a[..]);
+    a[0] = 5; // error[N0240]
+    let k = e;
+}
+// E1: references to locals and temporaries do not escape.
+fn returnsLocalElement(xs: Slice<i32>) -> borrow i32 {
+    let a = [1, 2];
+    return borrow a[0]; // error[N0244]
+}
+fn returnsTemporary(r: borrow Res) -> borrow Res {
+    return same(make(1)); // error[N0244]
+}
+// Temporaries end with their statement.
+fn temporarySlice() {
+    let r = same(make(1)); // error[N0243]
+    look(r);
+}

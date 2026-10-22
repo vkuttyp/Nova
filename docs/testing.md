@@ -10,7 +10,8 @@ the date and result. Tests that were performed are never mixed with proposals.
 |---|---|---|
 | Unit | `tests/Nova.Compiler.Tests` | xUnit assertions per pass |
 | parse/check pass/fail | `tests/corpus/*` | `// error: Nxxxx @line:col` annotations |
-| compile-fail (ownership) | `tests/corpus/compile-fail` | annotations. Mutants carry independently assigned verdicts |
+| compile-fail (ownership) | `tests/corpus/check-fail` | `// error[Nxxxx]` annotations, as for the other check-fail files |
+| Mutation suite (M2) | `tests/Nova.Compiler.Tests/MutationTests.cs` | mutants of seed programs; the expected (code, line) diagnostics come from an independent oracle, not from the checker |
 | run-pass / run-fail | `tests/corpus/run-*` | `// expect-stdout:`, `// expect-panic: overflow`, exit status |
 | IR snapshots | `tests/corpus/*/` + `.nir` files | reviewed text dumps |
 | Differential | runner | clang×gcc×O0/O2×sanitizers agree |
@@ -70,6 +71,7 @@ Runner: `tests/Nova.Compiler.Tests/CorpusTests.cs`, run by `dotnet test`.
 | 2026-10-22 | `dotnet test` on macOS arm64 (.NET 10.0.401): lexer and parser unit tests, 20 parse-pass and 18 parse-fail corpus files | 151 passed, 0 failed |
 | 2026-10-22 | same, plus 11 check-pass and 19 check-fail files and the checker crash test (increment 1b) | 201 passed, 0 failed |
 | 2026-10-22 | Linux CI run 39792099920 (ubuntu-24.04, clang 18.1.3, GCC 13.3.0): every corpus and run test passed under both compilers. The runtime harness failed only on GCC `-Wclobbered` (harness-only; fixed) | 379/380 |
+| 2026-10-22 | M2d (enums, arrays, slices, `for`, mutation suite): local suite on macOS; `c1.py --corpus` on x86-64 and AArch64 | 504 passed (1,152 mutants checked against the oracle); 99/99 corpus programs pass inside CosmoOS on both arches |
 | 2026-10-22 | M2c (moves, drops, using, defer): local suite on macOS; `c1.py --corpus` on x86-64 and AArch64 | 451 passed; 87/87 corpus programs (drop order included) pass inside CosmoOS on both arches |
 | 2026-10-22 | M2b (references + borrow checker): local suite on macOS; `c1.py --corpus` on x86-64 and AArch64 | 428 passed; 81/81 corpus programs pass inside CosmoOS on both arches |
 | 2026-10-22 | M2a (structs): local suite on macOS; `c1.py --corpus` on x86-64 and AArch64 | 405 passed; 77/77 corpus programs pass inside CosmoOS on both arches |

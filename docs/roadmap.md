@@ -45,17 +45,14 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 - All 70 run-corpus programs run natively inside CosmoOS on x86-64 and AArch64
   (`cosmoos/c1-report.md`).
 
-In progress: **M2, ownership and borrowing** (`milestone-2.md`). Increments 2a (structs) and 2b
-(references and the NLL borrow checker), and 2c (move types, `drop`, move checking on NIR, drop
-elaboration with flags, `using`, `defer`) are done. Next is **2d**:
-- enums with payloads and `match`;
-- fixed arrays and slices with bounds checks;
-- the mutation suite.
+**M2, ownership and borrowing, is done** (2026-10-22; `milestone-2.md`). It delivered:
+- 2a, structs;
+- 2b, references and the NLL borrow checker;
+- 2c, move types, `drop`, move checking on NIR, drop elaboration with flags, `using`, `defer`;
+- 2d, enums with payloads and `match`, fixed arrays, slices, bounds checks, `for`, and the
+  mutation suite.
 
-M2 as a whole covers:
-- structs, enums, references, moves;
-- NIR-based init and borrow checking;
-- drop elaboration.
+All 99 run-corpus programs run inside CosmoOS on both arches.
 
-Write `lifetimes.md` and the M2 spec first. In parallel, when the owner wants it: propose the S1
+Next is **M3** (see the table above). In parallel, when the owner wants it: propose the S1
 in-tree port for C1 (OD-20).

@@ -407,7 +407,7 @@ internal sealed class BorrowChecker
                 if (parameter < 0)
                 {
                     _diagnostics.Error(DiagnosticCodes.ReturnsLocalReference, _source, ret.Span,
-                        $"cannot return a reference to '{Describe(loan.Place!)}', which is local to '{_symbols.GetName(_function.Name)}'",
+                        $"cannot return a reference to {Quoted(loan.Place!)}, which is local to '{_symbols.GetName(_function.Name)}'",
                         [new DiagnosticNote(loan.Span, "borrowed here")]);
                 }
                 else if (!allowed.Contains(parameter))
