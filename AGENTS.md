@@ -25,8 +25,11 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
 - M1 and C1 are complete. Nova compiles to C, and its programs run natively in CosmoOS (`integrations/cosmoos/c1.py`).
 - M2 (ownership and borrowing; `docs/milestone-2.md`) and M3 (the safe heap; `docs/milestone-3.md`,
   ADR 0003) are complete, and so is C2 (`docs/cosmoos/c2-report.md`; `integrations/cosmoos/c2.py`).
-  M4 (regions; `docs/milestone-4.md`, ADR 0004) is complete. Next is M6, with M5 possible in
+  M4 (regions; `docs/milestone-4.md`, ADR 0004) is complete. M6 (generics and collections;
+  `docs/milestone-6.md`, ADR 0005) is in progress: 6a–6c are done, next is 6d. M5 may run in
   parallel (`docs/roadmap.md`).
+- Guest checks: `python3 integrations/cosmoos/c2.py --arch x86_64` (QEMU), and for aarch64 either
+  QEMU or a running CosmoOS VM over ssh (`--arch aarch64 --ssh root@<host>`).
 - Test-suite parts to know: the corpus (`docs/testing.md` §3), the M2 mutation suite
   (`MutationTests.cs`), and the M3 fault-injection sweep (`FaultInjectionTests.cs`).
 
