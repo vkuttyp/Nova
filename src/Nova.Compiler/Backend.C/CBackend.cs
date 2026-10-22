@@ -123,10 +123,16 @@ public static class Toolchain
         using var process = Process.Start(info) ?? throw new InvalidOperationException($"cannot start '{fileName}'");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(timeout ?? TimeSpan.FromMinutes(2)))
+        var limit = timeout ?? TimeSpan.FromMinutes(2);
+        if (!process.WaitForExit(limit))
         {
             process.Kill(entireProcessTree: true);
-            throw new TimeoutException($"'{fileName}' did not finish in time");
+            throw new TimeoutException($"'{fileName}' did not finish in {limit.TotalSeconds} s");
+        }
+        // The output ends when every process holding the pipes exits; a leftover child must not hang the caller.
+        if (!Task.WaitAll([stdout, stderr], limit))
+        {
+            throw new TimeoutException($"'{fileName}' exited, but its output did not end within {limit.TotalSeconds} s");
         }
         return new ToolResult(process.ExitCode, stdout.Result, stderr.Result);
     }
