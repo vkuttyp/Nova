@@ -142,6 +142,12 @@ Lowering rules (HIR → NIR, `NirBuilder`):
     loop. When the value written to a vector element contains a call, it is evaluated into a
     temporary and the element's index is checked again just before the write (the call may have
     shrunk the vector).
+  - **Slot maps and stable vectors (M6e)** are built-in calls on a borrow of the container
+    (`insert`, `getMut` and `remove` take `Ref mut`, with `insert` two-phase); `get`'s optional
+    reference carries the map's loan like any built-in result. A stable vector dereferences like
+    a vector, so `sv[i]` is the place `sv.*[i]`; the C backend renders its elements through the
+    chunk table. Liveness treats the targets of `Unpack` as definitions (fixed in M6e: a reference
+    payload bound by a consuming match used to be live from the function's start).
   - **String views (M6c).** A literal is a constant operand of type `StringView` (no loans); a place
     is needed only when it is spilled into a temporary. `s[lo..hi]` always emits a `RangeCheck`
     with `Text`; `s.bytes()` is a `Cast` to `Slice<u8>` that keeps the view's loans.

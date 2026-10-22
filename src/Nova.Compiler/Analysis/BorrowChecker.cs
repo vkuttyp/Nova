@@ -248,8 +248,16 @@ internal sealed class BorrowChecker
                             && !(a.Kind == AccessKind.Write && a.Place.IsLocal))
                 .Select(a => a.Place.Local);
 
-    private static NirLocal? Definition(NirStatement statement) =>
-        statement is NirAssign { Target.IsLocal: true } a && IsReference(a.Target.Local) ? a.Target.Local : null;
+    /// <summary>
+    /// The reference locals a statement defines: an assignment's target, or the payload bindings of an
+    /// `Unpack` (a consuming match binding a reference payload).
+    /// </summary>
+    private static IEnumerable<NirLocal> Definitions(NirStatement statement) => statement switch
+    {
+        NirAssign { Target.IsLocal: true } a when IsReference(a.Target.Local) => [a.Target.Local],
+        NirUnpack u => u.Targets.OfType<NirLocal>().Where(IsReference),
+        _ => [],
+    };
 
     /// <summary>Live-in sets per statement position (index Count is the terminator).</summary>
     private Dictionary<NirBlock, List<HashSet<NirLocal>>> ComputeLiveness()
@@ -274,10 +282,7 @@ internal sealed class BorrowChecker
                 perPosition[block.Statements.Count] = [.. live];
                 for (var i = block.Statements.Count - 1; i >= 0; i--)
                 {
-                    if (Definition(block.Statements[i]) is { } defined)
-                    {
-                        live.Remove(defined);
-                    }
+                    live.ExceptWith(Definitions(block.Statements[i]));
                     live.UnionWith(Uses(StatementAccesses(block.Statements[i])));
                     perPosition[i] = [.. live];
                 }

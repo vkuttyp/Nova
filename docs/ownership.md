@@ -263,7 +263,7 @@ so that v0 programs remain valid.
 | Optional unwrap `!` | Flow-typing after `!= null` | — |
 | Drop flags | Static init state known (most cases) | Drop elaboration |
 | Allocation failure | Never elided (it is a value) | — |
-| Handle generation check (`SlotMap`) | Never in v0 | Library |
+| Handle generation check (`SlotMap`) | Never in v0 | Built-in (M6e; library in M8) |
 | Kernel: stack depth | Static call-graph bound (kernel profile) | Link-time report |
 
 ## 6. Testing obligations (M2 acceptance)

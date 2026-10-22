@@ -1149,3 +1149,77 @@ fn main() -> i32 {
 - **Layout (v0):** as `Vector<u8, A>`.
 
 Diagnostics: none new. The errors reuse N0205, N0209, N0211, N0240–N0251, N0260 and N0263.
+
+## 24. `SlotMap<T, A>`, `Handle<T>` and `StableVector<T, A>` (M6e)
+
+### 24.1 `SlotMap<T, A>` and `Handle<T>`
+```nova
+struct Node { value: i32; next: Handle<Node>?; }
+
+fn main() {
+    var nodes = SlotMap<Node>.create();
+    let a = nodes.insert(Node { value: 1, next: null })!;
+    let b = nodes.insert(Node { value: 2, next: a })!;   // a handle is a plain value, not a loan
+    match (nodes.get(b)) {
+        Some(node) => { Console.writeLine(node.value); }
+        null => { }
+    }
+    let removed = nodes.remove(a);                       // `a` is now stale
+    Console.writeLine(nodes.get(a) == null);              // true: generation mismatch
+}
+```
+- `SlotMap<T, A>` owns values of `T` in reusable slots from allocator type `A` (`SlotMap<T>` means
+  `SlotMap<T, SystemHeap>`; N0263). `T` is any value type except `void` and scoped types (N0246).
+  A slot map is a move type that needs drop, and is not scoped. Destroying it destroys the values
+  it holds, then frees its storage.
+- `Handle<T>` names one inserted value: a slot index and the slot's generation. It is a **Copy
+  value, not a loan**: it can be stored in structs, vectors and other slot maps (unlike a
+  reference, E3), and it outlives inserts, removals and moves of the map. `==` and `!=` compare
+  handles. Handles are only made by `insert`.
+- **Operations:**
+  - `SlotMap<T>.create()`: an empty map; it allocates nothing (type arguments as for vectors,
+    §23.1);
+  - `m.insert(v)`: `Result<Handle<T>, AllocError>`, taking `borrow mut this` (two-phase, B5). If the
+    storage cannot grow, `v` is destroyed and the result is `Err(AllocError.OutOfMemory)`;
+  - `m.get(h)`: `borrow T?` (a loan of `m`), `null` if `h` does not name a live value;
+  - `m.getMut(h)`: `borrow mut T?` (a mutable loan of `m`; needs a mutable map);
+  - `m.remove(h)`: `T?`, the value moved out (or `null`), taking `borrow mut this`;
+  - `m.contains(h)`: `bool`; `m.length`: the number of live values (`usize`).
+- **Validation:** every access compares the handle's generation with the slot's. A removed value's
+  handles never match again: a slot's generation changes on every insert and removal, and a slot
+  whose generation would wrap around is retired instead of reused. A handle used with another map
+  of the same `T` is memory-safe: it yields that map's value in that slot, or `null` (a logic
+  error, as with any index).
+- **Invalidation:** references from `get`/`getMut` are loans of the map, so `insert` and `remove`
+  are rejected while one is live (N0241). The map may reallocate its slots: it promises stable
+  **identity** (handles), not stable addresses.
+- **Layout (v0):** `{ slot *ptr; u64 length; u64 capacity; u64 count; u32 free }` (40 bytes), each
+  slot `{ u32 generation; u32 nextFree; T value }`; `Handle<T>` is `{ u32 index; u32 generation }`.
+
+### 24.2 `StableVector<T, A>`
+```nova
+fn main() {
+    let names = StableVector<i32>.create();   // `let`: push needs only `borrow this`
+    names.push(10)!;
+    let first = borrow names[0];
+    names.push(20)!;                           // fine: elements never move
+    Console.writeLine(first);
+}
+```
+- `StableVector<T, A>` is a **grow-only** sequence whose elements never move (`memory-model.md` §4):
+  it allocates chunks of 8, 16, 32, … elements and never reallocates them. Ownership, element
+  types, `create()` and destruction are as for `Vector` (§23.1).
+- `sv.push(x)`: `Result<usize, AllocError>` (the new element's index). It takes **`borrow this`**:
+  appending changes only the length and the chunk table, never an existing element, so element
+  borrows stay valid across it (interior mutability; like region allocation, §19.2). On failure
+  `x` is destroyed and the vector is unchanged.
+- `sv.length` (`usize`) and `sv[i]` (a bounds-checked place, as for vectors: read, `borrow`,
+  `borrow mut` and assignment, the last two needing a mutable vector).
+- No `pop`, `clear`, views or `for` (the elements are not contiguous): iterate with
+  `for (i in 0..sv.length)`. A `borrow mut sv[i]` is a mutable loan of `sv`, so `push` is rejected
+  while one is live (N0241).
+- Not `Sync` (concurrency is later work). **Layout (v0):** `{ void *chunks[32]; u64 length }` (264
+  bytes); element `i` is in chunk `⌊log2(i + 8)⌋ − 3`. At most `8 · (2³² − 1)` elements; beyond that
+  `push` fails with `OutOfMemory`.
+
+Diagnostics: none new. The errors reuse N0205, N0209, N0240–N0251, N0260 and N0263.

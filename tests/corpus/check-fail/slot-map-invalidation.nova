@@ -1,0 +1,62 @@
+// SlotMap and StableVector invalidation (type-system.md §24): handles are not loans; references from
+// get/getMut and element borrows are.
+struct Res { id: i32; drop { } }
+fn look(r: borrow i32) { }
+
+fn insertWhileBorrowed() {
+    var m = SlotMap<i32>.create();
+    let h = m.insert(1)!;
+    let r = m.get(h)!;
+    m.insert(2)!; // error[N0241]
+    look(r);
+}
+
+fn removeWhileBorrowed() {
+    var m = SlotMap<i32>.create();
+    let h = m.insert(1)!;
+    let r = m.get(h)!;
+    let gone = m.remove(h); // error[N0241]
+    look(r);
+}
+
+fn twoMutable() {
+    var m = SlotMap<i32>.create();
+    let h = m.insert(1)!;
+    let a = m.getMut(h)!;
+    let b = m.getMut(h)!; // error[N0241]
+    a = 2;
+}
+
+fn moveWhileBorrowed() {
+    var m = SlotMap<i32>.create();
+    let h = m.insert(1)!;
+    let r = m.get(h)!;
+    let moved = m; // error[N0240]
+    look(r);
+}
+
+fn handlesAreNotLoans() {
+    var m = SlotMap<i32>.create();
+    let h = m.insert(1)!;
+    m.insert(2)!;                // fine: a handle holds no loan
+    let gone = m.remove(h);
+    let moved = m;               // fine too
+}
+
+fn pushWhileMutablyBorrowed() {
+    var sv = StableVector<i32>.create();
+    sv.push(1)!;
+    let r = borrow mut sv[0];
+    sv.push(2)!; // error[N0241]
+    r = 3;
+}
+
+fn pushWhileSharedIsFine() {
+    let sv = StableVector<i32>.create();
+    sv.push(1)!;
+    let r = borrow sv[0];
+    sv.push(2)!;
+    look(r);
+}
+
+fn main() { }

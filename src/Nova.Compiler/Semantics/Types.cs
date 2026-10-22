@@ -49,6 +49,15 @@ public enum TypeKind
     /// it dereferences to, like a box: elements are places of the vector.
     /// </summary>
     Vector,
+    /// <summary>
+    /// <c>StableVector&lt;T, A&gt;</c> (type-system.md §24.2): grow-only chunks; dereferences like a vector to the
+    /// unsized <c>[T]</c> (<see cref="NovaType.Pointee"/>), but its elements are not contiguous.
+    /// </summary>
+    StableVector,
+    /// <summary><c>SlotMap&lt;T, A&gt;</c> (§24.1): values of <see cref="NovaType.Element"/> in generation-checked slots.</summary>
+    SlotMap,
+    /// <summary><c>Handle&lt;T&gt;</c> (§24.1): a Copy (index, generation) naming a slot-map value of <see cref="NovaType.Element"/>.</summary>
+    Handle,
     /// <summary>A type parameter inside a generic declaration (type-system.md §20.3): opaque.</summary>
     TypeParameter,
 }
@@ -298,12 +307,23 @@ public sealed class NovaType
         Allocator = allocator;
     }
 
-    internal NovaType(NovaType elements, NovaType allocator, string name)
-        : this(TypeKind.Vector, name)
+    internal NovaType(NovaType elements, NovaType allocator, string name, TypeKind kind = TypeKind.Vector)
+        : this(kind, name)
     {
-        Pointee = elements;
+        if (kind == TypeKind.SlotMap)
+        {
+            Element = elements;
+        }
+        else
+        {
+            Pointee = elements;
+        }
         Allocator = allocator;
     }
+
+    /// <summary><c>Handle&lt;T&gt;</c>.</summary>
+    internal NovaType(NovaType element, string name)
+        : this(TypeKind.Handle, name) => Element = element;
 
     internal NovaType(NovaType element, long length, bool isStr = false)
         : this(TypeKind.Array, isStr ? "str" : length < 0 ? $"[{element.Name}]" : $"[{element.Name}; {length}]")
@@ -370,6 +390,9 @@ public sealed class NovaType
 
     /// <summary><c>Vector&lt;T, A&gt;</c> or <c>String&lt;A&gt;</c> (§23).</summary>
     public bool IsVector => Kind == TypeKind.Vector;
+
+    /// <summary><c>StableVector&lt;T, A&gt;</c> (§24.2).</summary>
+    public bool IsStableVector => Kind == TypeKind.StableVector;
 
     /// <summary><c>String&lt;A&gt;</c> (§23.2): a vector of UTF-8 text.</summary>
     public bool IsString => Kind == TypeKind.Vector && Pointee!.IsStr;
@@ -578,6 +601,36 @@ public sealed class TypeTable
         return vector;
     }
 
+    private readonly Dictionary<(TypeKind, NovaType, NovaType?), NovaType> _containers = [];
+
+    /// <summary>The unique <c>StableVector&lt;T, A&gt;</c> or <c>SlotMap&lt;T, A&gt;</c> (§24).</summary>
+    public NovaType ContainerOf(TypeKind kind, NovaType element, NovaType allocator, bool isDefault)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        ArgumentNullException.ThrowIfNull(allocator);
+        if (!_containers.TryGetValue((kind, element, allocator), out var container))
+        {
+            var baseName = kind == TypeKind.SlotMap ? "SlotMap" : "StableVector";
+            var name = isDefault ? $"{baseName}<{element.Name}>" : $"{baseName}<{element.Name}, {allocator.Name}>";
+            container = new NovaType(kind == TypeKind.SlotMap ? element : ArrayOf(element, -1), allocator, name, kind);
+            _containers.Add((kind, element, allocator), container);
+            _composites.Add(container);
+        }
+        return container;
+    }
+
+    /// <summary>The unique <c>Handle&lt;T&gt;</c> (§24.1).</summary>
+    public NovaType HandleOf(NovaType element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        if (!_containers.TryGetValue((TypeKind.Handle, element, null), out var handle))
+        {
+            handle = new NovaType(element, $"Handle<{element.Name}>");
+            _containers.Add((TypeKind.Handle, element, null), handle);
+        }
+        return handle;
+    }
+
     public NovaType BoxOf(NovaType contents, NovaType allocator, bool isDefault)
     {
         ArgumentNullException.ThrowIfNull(contents);
@@ -655,6 +708,12 @@ public sealed class TypeTable
                 return type.IsPoolBox ? (16, 8) : (8, 8); // a pool box also points to its pool
             case TypeKind.Vector:
                 return (24, 8); // (pointer, u64 length, u64 capacity)
+            case TypeKind.StableVector:
+                return (264, 8); // 32 chunk pointers, u64 length
+            case TypeKind.SlotMap:
+                return (40, 8); // pointer, u64 length, capacity, count, u32 free head
+            case TypeKind.Handle:
+                return (8, 4); // u32 index, u32 generation
             case TypeKind.Region:
                 // nv_arena, nv_fba, nv_scratch in nova/rt.h (8-byte fields; asserted there).
                 return type.Region switch
@@ -769,7 +828,7 @@ public sealed class TypeTable
             TypeKind.Enum when type.Enum!.OptionType is { } value => IsCopy(value),
             TypeKind.Enum => type.Enum!.IsCopy,
             TypeKind.Reference => !type.IsMutableReference,
-            TypeKind.Box or TypeKind.Region or TypeKind.Vector => false,
+            TypeKind.Box or TypeKind.Region or TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap => false,
             _ => true,
         };
     }
@@ -781,7 +840,7 @@ public sealed class TypeTable
         {
             return !type.IsCopyBound;
         }
-        if (type.IsBox || type.IsVector || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
+        if (type.IsBox || type.Kind is TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
         {
             return true;
         }

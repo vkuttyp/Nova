@@ -1,0 +1,87 @@
+// SlotMap<T, A> and Handle<T> (type-system.md §24.1).
+struct Node { value: i32; next: Handle<Node>?; }
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+
+// Walks a list linked by handles: handles are values, not loans.
+fn sum(nodes: borrow SlotMap<Node>, start: Handle<Node>?) -> i32 {
+    var total = 0;
+    var at = start;
+    while (at != null) {
+        match (nodes.get(at!)) {
+            Some(node) => {
+                total += node.value;
+                at = node.next;
+            }
+            null => { at = null; }
+        }
+    }
+    return total;
+}
+
+fn tryInsert(map: borrow mut SlotMap<i32, FailingAllocator>, v: i32) {
+    match (map.insert(v)) {
+        Ok(_) => { Console.writeLine("inserted"); }
+        Err(_) => { Console.writeLine("out of memory"); }
+    }
+}
+
+fn main() {
+    var nodes = SlotMap<Node>.create();
+    Console.writeLine(nodes.length);
+    let a = nodes.insert(Node { value: 1, next: null })!;
+    let b = nodes.insert(Node { value: 2, next: a })!;
+    let c = nodes.insert(Node { value: 3, next: b })!;
+    Console.writeLine(sum(nodes, c));
+    Console.writeLine(nodes.length);
+
+    let removed = nodes.remove(b)!;            // b is stale from here on
+    Console.writeLine(removed.value);
+    Console.writeLine(nodes.get(b) == null);
+    Console.writeLine(nodes.remove(b) == null);
+    Console.writeLine(sum(nodes, c));           // stops at the stale handle
+    let d = nodes.insert(Node { value: 4, next: null })!; // reuses b's slot
+    Console.writeLine(d == b);
+    Console.writeLine(nodes.contains(b));
+    Console.writeLine(nodes.contains(d));
+    match (nodes.getMut(d)) {
+        Some(node) => { node.value = 40; }
+        null => { }
+    }
+    Console.writeLine(nodes.get(d)!.value);
+
+    var owned = SlotMap<Res>.create();
+    let r1 = owned.insert(Res { id: 1 })!;
+    let r2 = owned.insert(Res { id: 2 })!;
+    let r3 = owned.insert(Res { id: 3 })!;
+    match (owned.remove(r2)) {
+        Some(res) => { Console.writeLine(res.id); }
+        null => { }
+    }
+    Console.writeLine("before end");
+
+    var limited = SlotMap<i32, FailingAllocator>.create();
+    tryInsert(mut limited, 1);
+    FailingAllocator.failAfter(0u64);
+    tryInsert(mut limited, 2);                  // fits in the first block: no allocation
+    FailingAllocator.reset();
+    Console.writeLine(limited.length);
+}
+// expect-stdout: 0
+// expect-stdout: 6
+// expect-stdout: 3
+// expect-stdout: 2
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: 3
+// expect-stdout: false
+// expect-stdout: false
+// expect-stdout: true
+// expect-stdout: 40
+// expect-stdout: 2
+// expect-stdout: drop 2
+// expect-stdout: before end
+// expect-stdout: inserted
+// expect-stdout: inserted
+// expect-stdout: 2
+// expect-stdout: drop 1
+// expect-stdout: drop 3

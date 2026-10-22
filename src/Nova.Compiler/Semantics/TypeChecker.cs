@@ -85,6 +85,8 @@ internal sealed class TypeChecker
         Pool,
         Vector,
         String,
+        SlotMap,
+        StableVector,
     }
 
     private readonly IReadOnlyList<CompilationUnit> _units;
@@ -131,7 +133,7 @@ internal sealed class TypeChecker
     /// <summary>Built-in items (AllocError, the allocators): emitted only if the program uses them.</summary>
     private readonly HashSet<object> _builtinItems = [];
     private readonly HashSet<object> _usedBuiltins = [];
-    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch", "Pool", "PoolBox", "Vector", "String"];
+    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch", "Pool", "PoolBox", "Vector", "String", "SlotMap", "StableVector", "Handle"];
 
     public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics)
     {
@@ -151,6 +153,8 @@ internal sealed class TypeChecker
             [symbols.Intern("Pool")] = Builtin.Pool,
             [symbols.Intern("Vector")] = Builtin.Vector,
             [symbols.Intern("String")] = Builtin.String,
+            [symbols.Intern("SlotMap")] = Builtin.SlotMap,
+            [symbols.Intern("StableVector")] = Builtin.StableVector,
         };
         _thisSymbol = symbols.Intern("this");
         _frameMemory = new StructField(symbols.Intern("memory"), types.ScratchFrame, 0, default) { IsRegionPart = true };
@@ -783,6 +787,12 @@ internal sealed class TypeChecker
                 return OptionOf(Substitute(value, map));
             case TypeKind.Vector:
                 return VectorType(type.IsString ? null : Substitute(type.Pointee!.Element!, map), type.Allocator!);
+            case TypeKind.StableVector:
+                return ContainerType(TypeKind.StableVector, Substitute(type.Pointee!.Element!, map), type.Allocator!);
+            case TypeKind.SlotMap:
+                return ContainerType(TypeKind.SlotMap, Substitute(type.Element!, map), type.Allocator!);
+            case TypeKind.Handle:
+                return _types.HandleOf(Substitute(type.Element!, map));
             case TypeKind.Struct when _items.GetValueOrDefault(type.Struct!.Syntax.Name.Name) is StructEntry template:
                 return InstantiateStruct(template, [.. type.Struct.TypeArguments.Select(a => Substitute(a, map))]).Type;
             case TypeKind.Enum when _items.GetValueOrDefault(type.Enum!.Syntax!.Name.Name) is EnumEntry enumTemplate:
@@ -1263,6 +1273,25 @@ internal sealed class TypeChecker
             {
                 return ResolveVectorType(genericName == "String", generic.Arguments, generic.Span);
             }
+            if (genericName is "SlotMap" or "StableVector" && generic.Arguments.Length is 1 or 2)
+            {
+                return ResolveContainerType(genericName == "SlotMap" ? TypeKind.SlotMap : TypeKind.StableVector, generic.Arguments);
+            }
+            if (genericName == "Handle" && generic.Arguments.Length == 1)
+            {
+                var handled = ResolveType(generic.Arguments[0], allowVoid: false);
+                if (handled.IsBottom)
+                {
+                    return _types.Error;
+                }
+                if (TypeTable.IsScoped(handled))
+                {
+                    Error(DiagnosticCodes.ReferenceNotAllowed, generic.Arguments[0].Span,
+                        "a 'Handle' names a slot-map value, which cannot be a reference or other scoped value in v0");
+                    return _types.Error;
+                }
+                return _types.HandleOf(handled);
+            }
             if (genericName == "Result" && generic.Arguments.Length == 2)
             {
                 var ok = ResolveType(generic.Arguments[0], allowVoid: true);
@@ -1279,6 +1308,8 @@ internal sealed class TypeChecker
                     : genericName is "Pool" or "PoolBox" ? $"'{genericName}' takes one type argument: '{genericName}<T>'"
                     : genericName == "Vector" ? "'Vector' takes one or two type arguments: 'Vector<T>' or 'Vector<T, A>'"
                     : genericName == "String" ? "'String' takes at most one type argument: 'String' or 'String<A>'"
+                    : genericName is "SlotMap" or "StableVector" ? $"'{genericName}' takes one or two type arguments: '{genericName}<T>' or '{genericName}<T, A>'"
+                    : genericName == "Handle" ? "'Handle' takes one type argument: 'Handle<T>'"
                     : "only 'Slice<T>', 'SliceMut<T>', 'Result<T, E>', 'Box<T, A>', 'Pool<T>', 'PoolBox<T>', 'Vector<T, A>' and 'String<A>' take type arguments");
                 return _types.Error;
             }
@@ -1302,11 +1333,11 @@ internal sealed class TypeChecker
             return parameter; // a type parameter in scope, or what it is instantiated with (§20)
         }
         var text = Name(named.Name.Parts[0].Name);
-        if (text is "String" or "Vector" && _items.GetValueOrDefault(named.Name.Parts[0].Name) is null)
+        if (text is "String" or "Vector" or "SlotMap" or "StableVector" or "Handle" && _items.GetValueOrDefault(named.Name.Parts[0].Name) is null)
         {
-            if (text == "Vector")
+            if (text != "String")
             {
-                Error(DiagnosticCodes.UnknownType, named.Span, "'Vector' needs its element type: 'Vector<T>'");
+                Error(DiagnosticCodes.UnknownType, named.Span, $"'{text}' needs its element type: '{text}<T>'");
                 return _types.Error;
             }
             return ResolveVectorType(isString: true, [], named.Span);
@@ -1369,6 +1400,48 @@ internal sealed class TypeChecker
             return _types.Error;
         }
         return VectorType(element, allocator);
+    }
+
+    /// <summary><c>SlotMap&lt;T, A&gt;</c> or <c>StableVector&lt;T, A&gt;</c> from type syntax (§24).</summary>
+    private NovaType ResolveContainerType(TypeKind kind, ImmutableArray<TypeSyntax> arguments)
+    {
+        var element = ResolveType(arguments[0], allowVoid: false);
+        var allocator = arguments.Length > 1 ? ResolveType(arguments[1], allowVoid: false) : Used(_systemHeap).Type;
+        if (element.IsBottom || allocator.IsBottom)
+        {
+            return _types.Error;
+        }
+        var name = kind == TypeKind.SlotMap ? "SlotMap" : "StableVector";
+        if (!IsAllocatorType(allocator))
+        {
+            Error(DiagnosticCodes.NotAnAllocator, arguments[1].Span, $"'{allocator}' is not an allocator type; use 'SystemHeap' or 'FailingAllocator'");
+            return _types.Error;
+        }
+        if (TypeTable.IsScoped(element))
+        {
+            Error(DiagnosticCodes.ReferenceNotAllowed, arguments[0].Span,
+                $"a '{name}' cannot hold a reference or other scoped value in v0 (references in aggregates are OD-3)");
+            return _types.Error;
+        }
+        return ContainerType(kind, element, allocator);
+    }
+
+    /// <summary>The slot map or stable vector, with the types its built-in operations return (§24).</summary>
+    private NovaType ContainerType(TypeKind kind, NovaType element, NovaType allocator)
+    {
+        var allocError = Used(_allocError).Type;
+        if (kind == TypeKind.SlotMap)
+        {
+            ResultOf(_types.HandleOf(element), allocError);
+            OptionOf(_types.ReferenceTo(element, isMutable: false));
+            OptionOf(_types.ReferenceTo(element, isMutable: true));
+            OptionOf(element);
+        }
+        else
+        {
+            ResultOf(_types.USize, allocError);
+        }
+        return _types.ContainerOf(kind, element, allocator, allocator == _systemHeap.Type);
     }
 
     /// <summary>
@@ -1989,7 +2062,11 @@ internal sealed class TypeChecker
                 Unify(value, actualValue, parameters, found);
                 break;
             case TypeKind.Vector when declared.IsString == actual.IsString:
+            case TypeKind.StableVector:
                 Unify(declared.Pointee!.Element!, actual.Pointee!.Element!, parameters, found);
+                break;
+            case TypeKind.SlotMap or TypeKind.Handle:
+                Unify(declared.Element!, actual.Element!, parameters, found);
                 break;
             case TypeKind.Enum when declared.Enum!.Syntax is not null && declared.Enum.Syntax == actual.Enum!.Syntax:
                 foreach (var (d, a) in declared.Enum.TypeArguments.Zip(actual.Enum.TypeArguments))
@@ -2375,7 +2452,13 @@ internal sealed class TypeChecker
             {
                 vector = new HirDeref(vector, vector.Span);
             }
-            if (vector.Type.IsVector && !vector.Type.IsString)
+            if (vector.Type.IsStableVector)
+            {
+                Error(DiagnosticCodes.TypeMismatch, forStmt.Start.Span,
+                    "'for' does not iterate over a 'StableVector' (its elements are not contiguous); use 'for (i in 0..sv.length)'");
+                start = ErrorResult(forStmt.Start.Span);
+            }
+            else if (vector.Type.IsVector && !vector.Type.IsString)
             {
                 // Over a view, which keeps the vector borrowed for the whole loop (§23.1).
                 var view = BorrowPlace(new HirDeref(vector, vector.Span), isMutable: false, forStmt.Start.Span);
@@ -2826,7 +2909,7 @@ internal sealed class TypeChecker
             {
                 return "the bytes of a 'String' cannot be modified: they must stay valid UTF-8 (add text with 'append')";
             }
-            if (projection.IsDeref && !type.IsBox && !type.IsVector) // a box's or vector's contents are as mutable as it is (§18.2, §23.1)
+            if (projection.IsDeref && !type.IsBox && !type.IsVector && !type.IsStableVector) // a box's or vector's contents are as mutable as it is (§18.2, §23.1)
             {
                 mutable = type.IsMutableReference;
                 throughShared = !mutable;
@@ -2871,7 +2954,7 @@ internal sealed class TypeChecker
     /// </summary>
     private static HirExpr AutoDeref(HirExpr expr)
     {
-        while (expr.Type.IsReference || expr.Type.IsBox || expr.Type.IsVector)
+        while (expr.Type.IsReference || expr.Type.IsBox || expr.Type.IsVector || expr.Type.IsStableVector)
         {
             expr = new HirDeref(expr, expr.Span); // a vector reaches its elements (§23.1)
         }
@@ -3097,7 +3180,7 @@ internal sealed class TypeChecker
 
     /// <summary>Checks <paramref name="expr"/> against an optional expected type (type-system.md §5).</summary>
     private HirExpr CheckExpr(Expr expr, NovaType? expected) =>
-        Coerce(Synth(expr, expected is { IsVector: true } ? expected : expected?.Pointee ?? expected), expected, expr.Span);
+        Coerce(Synth(expr, expected is { IsVector: true } or { IsStableVector: true } ? expected : expected?.Pointee ?? expected), expected, expr.Span);
 
     /// <summary>
     /// The <c>StringView</c> an auto-dereferenced value reads, if it is the text of one: auto-deref goes
@@ -3243,6 +3326,10 @@ internal sealed class TypeChecker
             case CallExpr { Callee: MemberExpr { Target: NameExpr vectorName } vectorMember } vectorCall
                 when Lookup(vectorName.Name.Name) is Builtin.Vector or Builtin.String:
                 return CheckVectorCreate(vectorCall, vectorMember, vectorName, Lookup(vectorName.Name.Name) is Builtin.String, expected);
+            case CallExpr { Callee: MemberExpr { Target: NameExpr containerName } containerMember } containerCall
+                when Lookup(containerName.Name.Name) is Builtin.SlotMap or Builtin.StableVector:
+                return CheckContainerCreate(containerCall, containerMember, containerName,
+                    Lookup(containerName.Name.Name) is Builtin.SlotMap ? TypeKind.SlotMap : TypeKind.StableVector, expected);
             case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } arenaName } arenaMember } arenaCall
                 when Lookup(arenaName.Name.Name) is Builtin.Arena:
                 return CheckArenaCreate(arenaCall, arenaMember);
@@ -3350,6 +3437,16 @@ internal sealed class TypeChecker
         {
             vector = new HirDeref(vector, vector.Span);
         }
+        if (vector.Type.Kind == TypeKind.SlotMap)
+        {
+            if (Name(member.Member.Name) != "length")
+            {
+                Error(DiagnosticCodes.UnknownField, member.Member.Span, $"'{vector.Type}' has no field '{Name(member.Member.Name)}'; it has 'length'");
+                return ErrorResult(member.Span);
+            }
+            var map = BorrowPlace(vector, isMutable: false, member.Target.Span);
+            return map.Type.IsBottom ? map : new HirBuiltinCall(BuiltinFunction.SlotMapLength, [map], _types.USize, member.Span);
+        }
         if (vector.Type.IsVector && Name(member.Member.Name) == "capacity")
         {
             var borrowed = BorrowPlace(vector, isMutable: false, member.Target.Span);
@@ -3360,8 +3457,8 @@ internal sealed class TypeChecker
         {
             if (Name(member.Member.Name) != "length")
             {
-                Error(DiagnosticCodes.UnknownField, member.Member.Span, vector.Type.IsVector
-                    ? $"'{vector.Type}' has no field '{Name(member.Member.Name)}'; it has 'length' and 'capacity'"
+                Error(DiagnosticCodes.UnknownField, member.Member.Span, vector.Type.IsVector || vector.Type.IsStableVector
+                    ? $"'{vector.Type}' has no field '{Name(member.Member.Name)}'; it has 'length'{(vector.Type.IsVector ? " and 'capacity'" : "")}"
                     : $"'{value.Type}' has no member '{Name(member.Member.Name)}'; arrays and slices only have 'length'");
                 return ErrorResult(member.Span);
             }
@@ -3659,7 +3756,7 @@ internal sealed class TypeChecker
         {
             _ when IsArithmetic(op) => type.IsInteger,
             _ when IsBitwise(op) || IsShift(op) => type.IsUnsignedInteger,
-            BinaryOp.Equal or BinaryOp.NotEqual => type.IsInteger || type.Kind == TypeKind.Bool,
+            BinaryOp.Equal or BinaryOp.NotEqual => type.IsInteger || type.Kind is TypeKind.Bool or TypeKind.Handle,
             _ when IsComparison(op) => type.IsInteger,
             _ => type.Kind == TypeKind.Bool,
         };
@@ -3977,6 +4074,88 @@ internal sealed class TypeChecker
             : new HirBuiltinCall(BuiltinFunction.VectorCreate, [], vector, call.Span);
     }
 
+    /// <summary><c>SlotMap&lt;T&gt;.create()</c> / <c>StableVector&lt;T&gt;.create()</c> (§24): type arguments as for vectors.</summary>
+    private HirExpr CheckContainerCreate(CallExpr call, MemberExpr member, NameExpr name, TypeKind kind, NovaType? expected)
+    {
+        var kindName = kind == TypeKind.SlotMap ? "SlotMap" : "StableVector";
+        if (Name(member.Member.Name) != "create" || call.Arguments.Length != 0)
+        {
+            Error(Name(member.Member.Name) != "create" ? DiagnosticCodes.UndefinedName : DiagnosticCodes.ArgumentCount, call.Span,
+                $"a '{kindName}' is made with '{kindName}<T>.create()'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        NovaType? container;
+        if (!name.TypeArguments.IsEmpty)
+        {
+            if (name.TypeArguments.Length > 2)
+            {
+                Error(DiagnosticCodes.UnknownType, name.Span, $"'{kindName}' takes one or two type arguments: '{kindName}<T>' or '{kindName}<T, A>'");
+                return ErrorResult(call.Span);
+            }
+            container = ResolveContainerType(kind, name.TypeArguments);
+        }
+        else
+        {
+            container = expected?.Kind == kind ? expected : null;
+        }
+        if (container is null)
+        {
+            if (expected is null || !expected.IsBottom)
+            {
+                Error(DiagnosticCodes.ResultTypeUnknown, call.Span,
+                    $"the element type of '{kindName}.create()' is unknown here; write '{kindName}<T>.create()' or give the variable a type");
+            }
+            return ErrorResult(call.Span);
+        }
+        return container.IsBottom ? ErrorResult(call.Span) : new HirBuiltinCall(BuiltinFunction.VectorCreate, [], container, call.Span);
+    }
+
+    /// <summary>
+    /// A method of a slot map (§24.1) or stable vector (§24.2) place. <c>insert</c>, <c>getMut</c> and <c>remove</c>
+    /// take <c>borrow mut this</c>; <c>get</c>, <c>contains</c> and a stable vector's <c>push</c> take <c>borrow this</c>.
+    /// </summary>
+    private HirExpr CheckContainerMethod(CallExpr call, MemberExpr member, HirExpr container)
+    {
+        var type = container.Type;
+        var isMap = type.Kind == TypeKind.SlotMap;
+        var element = isMap ? type.Element! : type.Pointee!.Element!;
+        var text = Name(member.Member.Name);
+        var methods = isMap
+            ? new Dictionary<string, int> { ["insert"] = 1, ["get"] = 1, ["getMut"] = 1, ["remove"] = 1, ["contains"] = 1 }
+            : new Dictionary<string, int> { ["push"] = 1 };
+        if (!methods.TryGetValue(text, out var arity))
+        {
+            Error(DiagnosticCodes.UndefinedName, member.Member.Span, $"'{type}' has no method '{text}'; it has {string.Join(", ", methods.Keys.Select(k => $"'{k}'"))}");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (call.Arguments.Length != arity)
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, $"'{text}' takes one argument");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        // The argument first: for `insert`, two-phase (B5).
+        var argument = text is "insert" or "push" ? CheckExpr(call.Arguments[0], element) : CheckExpr(call.Arguments[0], _types.HandleOf(element));
+        var isMutable = text is "insert" or "getMut" or "remove";
+        var receiver = BorrowPlace(container, isMutable, member.Target.Span);
+        if (receiver.Type.IsBottom || argument.Type.IsBottom)
+        {
+            return ErrorResult(call.Span);
+        }
+        var allocError = Used(_allocError).Type;
+        return text switch
+        {
+            "push" => new HirBuiltinCall(BuiltinFunction.StableVectorPush, [receiver, argument], ResultOf(_types.USize, allocError), call.Span),
+            "insert" => new HirBuiltinCall(BuiltinFunction.SlotMapInsert, [receiver, argument], ResultOf(_types.HandleOf(element), allocError), call.Span),
+            "get" => new HirBuiltinCall(BuiltinFunction.SlotMapGet, [receiver, argument], OptionOf(_types.ReferenceTo(element, isMutable: false)), call.Span),
+            "getMut" => new HirBuiltinCall(BuiltinFunction.SlotMapGet, [receiver, argument], OptionOf(_types.ReferenceTo(element, isMutable: true)), call.Span),
+            "remove" => new HirBuiltinCall(BuiltinFunction.SlotMapRemove, [receiver, argument], OptionOf(element), call.Span),
+            _ => new HirBuiltinCall(BuiltinFunction.SlotMapContains, [receiver, argument], _types.Bool, call.Span),
+        };
+    }
+
     /// <summary>
     /// A method of a vector or string place (§23): <c>push</c>, <c>pop</c>, <c>clear</c>, <c>append</c> take
     /// <c>borrow mut this</c>; <c>view</c> and <c>viewMut</c> borrow the elements; <c>bytes</c> reads a string's text.
@@ -4063,6 +4242,10 @@ internal sealed class TypeChecker
         if (vector.Type.IsVector)
         {
             return CheckVectorMethod(call, member, vector);
+        }
+        if (vector.Type.Kind is TypeKind.SlotMap or TypeKind.StableVector)
+        {
+            return CheckContainerMethod(call, member, vector);
         }
         if (receiver.Type.IsBox || receiver.Type.Pointee is { IsBox: true })
         {

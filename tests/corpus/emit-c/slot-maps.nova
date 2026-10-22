@@ -1,0 +1,8 @@
+fn main() {
+    var m = SlotMap<i32>.create();
+    let h = m.insert(5)!;
+    Console.writeLine(m.get(h) != null);
+    let sv = StableVector<i32>.create();
+    sv.push(1)!;
+    Console.writeLine(sv[0]);
+}

@@ -993,7 +993,7 @@ public sealed class NirBuilder
                 }
                 return null;
             }
-            case HirBuiltinCall { Function: BuiltinFunction.VectorPush or BuiltinFunction.StringAppend } mutation:
+            case HirBuiltinCall { Function: BuiltinFunction.VectorPush or BuiltinFunction.StringAppend or BuiltinFunction.SlotMapInsert } mutation:
             {
                 // B5, as for a `borrow mut this` method: the receiver's loan starts after the argument (§23.1).
                 var argument = LowerOperand(mutation.Arguments[1]);

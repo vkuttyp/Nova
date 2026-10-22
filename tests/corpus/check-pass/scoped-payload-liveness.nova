@@ -1,0 +1,13 @@
+// A reference payload bound by a consuming match is defined there: its loan does not reach
+// statements before the match (BorrowChecker liveness, fixed in M6e).
+fn pick(x: borrow mut i32) -> borrow mut i32? { return x; }
+
+fn main() {
+    var v = 1;
+    v = 2;
+    match (pick(mut v)) {
+        Some(r) => { r = 3; }
+        null => { }
+    }
+    v = 4;
+}

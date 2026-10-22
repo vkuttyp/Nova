@@ -1,0 +1,38 @@
+// StableVector<T, A> (type-system.md §24.2): elements never move, so borrows survive push.
+struct Res { id: i32; drop { Console.write("drop "); Console.writeLine(this.id); } }
+
+fn fill(sv: borrow StableVector<u64>, count: u64) -> Result<void, AllocError> {
+    for (i in 0u64..count) { sv.push(i * i)?; }   // push needs only `borrow this`
+    return Ok();
+}
+
+fn main() {
+    let squares = StableVector<u64>.create();
+    squares.push(100u64)!;
+    let first = borrow squares[0];
+    fill(squares, 1000u64)!;                     // three chunk allocations later...
+    Console.writeLine(first);                    // ...the borrow is still valid
+    Console.writeLine(squares.length);
+    Console.writeLine(squares[1000]);
+    var total: u64 = 0;
+    for (i in 0..squares.length) { total += squares[i]; }
+    Console.writeLine(total);
+
+    var items = StableVector<Res>.create();
+    let index = items.push(Res { id: 1 })!;
+    items.push(Res { id: 2 })!;
+    Console.writeLine(index);
+    items[0] = Res { id: 10 };
+    let r = borrow mut items[1];
+    r.id = 20;
+    Console.writeLine(items[1].id);
+}
+// expect-stdout: 100
+// expect-stdout: 1001
+// expect-stdout: 998001
+// expect-stdout: 332833600
+// expect-stdout: 0
+// expect-stdout: drop 1
+// expect-stdout: 20
+// expect-stdout: drop 10
+// expect-stdout: drop 20

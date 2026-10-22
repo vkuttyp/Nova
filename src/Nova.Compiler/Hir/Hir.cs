@@ -296,6 +296,18 @@ public enum BuiltinFunction
     VectorCapacity,
     /// <summary><c>s.append(text)</c>: a mutable reference to the string, then the view.</summary>
     StringAppend,
+    /// <summary><c>sv.push(x)</c> (§24.2): a shared reference to the stable vector, then the value.</summary>
+    StableVectorPush,
+    /// <summary><c>m.insert(v)</c> (§24.1): a mutable reference to the map, then the value.</summary>
+    SlotMapInsert,
+    /// <summary><c>m.get(h)</c> / <c>m.getMut(h)</c>: a shared or mutable reference to the map, then the handle.</summary>
+    SlotMapGet,
+    /// <summary><c>m.remove(h)</c>: a mutable reference to the map, then the handle.</summary>
+    SlotMapRemove,
+    /// <summary><c>m.contains(h)</c>: a shared reference to the map, then the handle.</summary>
+    SlotMapContains,
+    /// <summary><c>m.length</c>: a shared reference to the map.</summary>
+    SlotMapLength,
 }
 
 public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<HirExpr> Arguments, NovaType Type, TextSpan Span) : HirExpr(Type, Span);

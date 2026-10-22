@@ -1,0 +1,27 @@
+// SlotMap, Handle and StableVector misuse (type-system.md §24).
+struct Res { id: i32; drop { } }
+
+fn misuse() {
+    let a = SlotMap.create(); // error[N0260]
+    let b: SlotMap<borrow i32> = SlotMap.create(); // error[N0246]
+    var c: Handle<borrow i32>; // error[N0246]
+    let d: SlotMap<i32, Arena> = SlotMap.create(); // error[N0263]
+    let e: Handle = a; // error[N0204]
+    let m = SlotMap<i32>.create();
+    m.insert(1)!; // error[N0248]
+    var w = SlotMap<i32>.create();
+    w.push(1)!; // error[N0200]
+    let h = w.insert(1)!;
+    w.get(1); // error[N0205]
+    let x: i32 = w.get(h); // error[N0205]
+    let other = SlotMap<u8>.create();
+    let y = other.get(h); // error[N0205]
+    Console.writeLine(h < h); // error[N0207]
+    let sv = StableVector<i32>.create();
+    for (v in sv) { } // error[N0205]
+    let s = sv.view(); // error[N0200]
+    sv[0] = 1; // error[N0211]
+    let z = w.capacity; // error[N0230]
+}
+
+fn main() { }

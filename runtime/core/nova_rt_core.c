@@ -63,6 +63,26 @@ void *nova_vec_grow(void *ptr, uint64_t len, uint64_t *cap, uint64_t extra, uint
     return fresh;
 }
 
+void *nova_svec_slot(void **chunks, uint64_t len, uint64_t size, uint32_t allocator) {
+    if (len > UINT64_MAX - 8u) return NULL;
+    uint64_t j = len + 8u;
+    unsigned k = (unsigned)(60 - __builtin_clzll(j));
+    if (k >= NV_SVEC_CHUNKS) return NULL;
+    if (chunks[k] == NULL) {
+        uint64_t count = (uint64_t)8u << k;
+        if (size == 0u || count > (uint64_t)SIZE_MAX / size) return NULL;
+        chunks[k] = nova_alloc((size_t)(count * size), allocator);
+        if (chunks[k] == NULL) return NULL;
+    }
+    return (uint8_t *)chunks[k] + (j - ((uint64_t)8u << k)) * size;
+}
+
+void nova_svec_free(void **chunks, uint32_t allocator) {
+    for (unsigned k = 0; k < NV_SVEC_CHUNKS; k++) {
+        if (chunks[k] != NULL) nova_free(chunks[k], allocator);
+    }
+}
+
 void nova_write_view(nv_str text) {
     nova_platform_write_stdout(text.ptr, (size_t)text.len);
 }

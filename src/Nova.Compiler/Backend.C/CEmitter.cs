@@ -70,6 +70,7 @@ public sealed class CEmitter
         EmitBoxCreatePrototypes();
         EmitArenaHelperPrototypes();
         EmitVectorHelperPrototypes();
+        EmitContainerHelperPrototypes();
         foreach (var result in PoolTakeResults)
         {
             Line($"static NV_UNUSED {PoolTakeSignature(result)};");
@@ -85,6 +86,7 @@ public sealed class CEmitter
         EmitBoxCreate();
         EmitArenaHelpers();
         EmitVectorHelpers();
+        EmitContainerHelpers();
         EmitPoolTake();
 
         EmitMainWrapper();
@@ -120,7 +122,7 @@ public sealed class CEmitter
                 EmitEnum(type, Emit);
                 return;
             }
-            if (type.Kind is TypeKind.Array or TypeKind.Reference or TypeKind.Vector || type.IsPoolBox)
+            if (type.Kind is TypeKind.Array or TypeKind.Reference or TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap || type.IsPoolBox)
             {
                 EmitComposite(type, Emit);
                 return;
@@ -184,6 +186,21 @@ public sealed class CEmitter
         {
             Line($"struct {name} {{ {CType(type.Pointee!.Element!)} *ptr; uint64_t len; uint64_t cap; }};");
         }
+        else if (type.IsStableVector)
+        {
+            Line($"struct {name} {{ void *chunks[NV_SVEC_CHUNKS]; uint64_t len; }};");
+        }
+        else if (type.Kind == TypeKind.SlotMap)
+        {
+            // Slots hold values by value: the element type is complete first.
+            if (IsAggregate(type.Element!))
+            {
+                emitDependency(type.Element!);
+            }
+            var slot = SlotName(type);
+            Line($"typedef struct {slot} {{ uint32_t gen; uint32_t next; {CType(type.Element!)} value; }} {slot};");
+            Line($"struct {name} {{ {slot} *ptr; uint64_t len; uint64_t cap; uint64_t count; uint32_t free; }};");
+        }
         else
         {
             var element = CType(type.Pointee!.Element!);
@@ -237,7 +254,7 @@ public sealed class CEmitter
     /// </summary>
     private static string DropGlueName(NovaType type) => type.Kind == TypeKind.Region
             ? type.Region switch { RegionKind.Arena => "nova_arena_drop", RegionKind.Pool => "nova_pool_drop", _ => "nova_scratch_drop" }
-        : type.Enum?.ResultTypes is not null || type.Enum?.OptionType is not null || type.IsBox || type.IsVector || IsInstance(type) ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
+        : type.Enum?.ResultTypes is not null || type.Enum?.OptionType is not null || type.IsBox || type.Kind is TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap || IsInstance(type) ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
 
     /// <summary>An instantiation of a generic struct or enum (§20.4); its C names come from <see cref="Mangle"/>.</summary>
     private static bool IsInstance(NovaType type) =>
@@ -486,6 +503,132 @@ public sealed class CEmitter
 
     private NovaType VoidAllocResult => Composites.First(t => t.Enum?.ResultTypes is ({ Kind: TypeKind.Void }, { Name: "AllocError" }));
 
+    private static string SlotName(NovaType map) => $"nvKS_{Mangle(map)}";
+
+    private IEnumerable<NovaType> Containers => Composites.Where(t => t.Kind is TypeKind.StableVector or TypeKind.SlotMap);
+
+    private static string AllocErrorResult(NovaType result) =>
+        $"(({CTypeName(result)}){{ .tag = 1, .u.v_Err = {{ .f__0 = (({CTypeName(result.Enum!.ResultTypes!.Value.Err)}){{ .tag = 0 }}) }} }})";
+
+    private NovaType ResultOfOk(NovaType ok) => Composites.First(t => t.Enum?.ResultTypes is var (o, e) && o == ok && e.Name == "AllocError");
+
+    private NovaType OptionFor(NovaType value) => _types.Composites.First(t => t.Enum?.OptionType == value);
+
+    private void EmitContainerHelperPrototypes()
+    {
+        foreach (var type in Containers)
+        {
+            var (name, m) = (CTypeName(type), Mangle(type));
+            if (type.IsStableVector)
+            {
+                var element = CType(type.Pointee!.Element!);
+                Line($"static NV_UNUSED {element} *nvSVE_{m}({name} *, uint64_t);");
+                Line($"static NV_UNUSED {CTypeName(ResultOfOk(_types.USize))} nvSVP_{m}({name} *, {element});");
+                continue;
+            }
+            var value = type.Element!;
+            Line($"static NV_UNUSED bool nvKV_{m}(const {name} *, nv_handle);");
+            Line($"static NV_UNUSED {CTypeName(ResultOfOk(_types.HandleOf(value)))} nvKI_{m}({name} *, {CType(value)});");
+            Line($"static NV_UNUSED {CTypeName(OptionFor(_types.ReferenceTo(value, false)))} nvKG_{m}(const {name} *, nv_handle);");
+            Line($"static NV_UNUSED {CTypeName(OptionFor(_types.ReferenceTo(value, true)))} nvKM_{m}({name} *, nv_handle);");
+            Line($"static NV_UNUSED {CTypeName(OptionFor(value))} nvKR_{m}({name} *, nv_handle);");
+        }
+    }
+
+    /// <summary>
+    /// Stable vectors (§24.2: chunks from <c>nova_svec_slot</c>, never moved) and slot maps (§24.1: slots with
+    /// generations, odd while live; a slot whose generation would wrap is retired, never reused).
+    /// </summary>
+    private void EmitContainerHelpers()
+    {
+        foreach (var type in Containers)
+        {
+            var (name, m) = (CTypeName(type), Mangle(type));
+            var allocator = AllocatorId(type.Allocator!);
+            if (type.IsStableVector)
+            {
+                var elementType = type.Pointee!.Element!;
+                var element = CType(elementType);
+                var result = ResultOfOk(_types.USize);
+                Line($"static {element} *nvSVE_{m}({name} *v, uint64_t i) {{");
+                Line($"    return ({element} *)nova_svec_at(v->chunks, i, sizeof({element}));");
+                Line("}");
+                Line();
+                Line($"static {CTypeName(result)} nvSVP_{m}({name} *v, {element} x) {{");
+                Line($"    _Static_assert(_Alignof({element}) <= _Alignof(max_align_t), \"novac: {type} needs over-aligned memory\");");
+                Line($"    {element} *slot = ({element} *)nova_svec_slot(v->chunks, v->len, sizeof({element}), {allocator});");
+                Line("    if (slot == NULL) {");
+                if (TypeTable.NeedsDrop(elementType))
+                {
+                    Line($"        {DropGlueName(elementType)}(&x);");
+                }
+                Line($"        return {AllocErrorResult(result)};");
+                Line("    }");
+                Line("    *slot = x;");
+                Line("    v->len += 1u;");
+                Line($"    return (({CTypeName(result)}){{ .tag = 0, .u.v_Ok = {{ .f__0 = v->len - 1u }} }});");
+                Line("}");
+                Line();
+                continue;
+            }
+            var valueType = type.Element!;
+            var value = CType(valueType);
+            var slot = SlotName(type);
+            var insertResult = ResultOfOk(_types.HandleOf(valueType));
+            Line($"static bool nvKV_{m}(const {name} *map, nv_handle h) {{");
+            Line("    return h.index < map->len && map->ptr[h.index].gen == h.gen;");
+            Line("}");
+            Line();
+            Line($"static {CTypeName(insertResult)} nvKI_{m}({name} *map, {value} v) {{");
+            Line($"    _Static_assert(_Alignof({slot}) <= _Alignof(max_align_t), \"novac: {type} needs over-aligned memory\");");
+            Line("    uint32_t index;");
+            Line("    if (map->free != UINT32_MAX) {");
+            Line("        index = map->free;");
+            Line("        map->free = map->ptr[index].next;");
+            Line("    } else {");
+            Line($"        void *p = map->len < UINT32_MAX - 1u ? nova_vec_grow(map->ptr, map->len, &map->cap, 1u, sizeof({slot}), {allocator}) : NULL;");
+            Line("        if (p == NULL) {");
+            if (TypeTable.NeedsDrop(valueType))
+            {
+                Line($"            {DropGlueName(valueType)}(&v);");
+            }
+            Line($"            return {AllocErrorResult(insertResult)};");
+            Line("        }");
+            Line($"        map->ptr = ({slot} *)p;");
+            Line("        index = (uint32_t)map->len;");
+            Line("        map->ptr[index].gen = 0u;");
+            Line("        map->len += 1u;");
+            Line("    }");
+            Line("    map->ptr[index].gen += 1u;");
+            Line("    map->ptr[index].value = v;");
+            Line("    map->count += 1u;");
+            Line($"    return (({CTypeName(insertResult)}){{ .tag = 0, .u.v_Ok = {{ .f__0 = ((nv_handle){{ .index = index, .gen = map->ptr[index].gen }}) }} }});");
+            Line("}");
+            Line();
+            foreach (var (letter, mutable) in new[] { ("G", false), ("M", true) })
+            {
+                var option = CTypeName(OptionFor(_types.ReferenceTo(valueType, mutable)));
+                Line($"static {option} nvK{letter}_{m}({(mutable ? "" : "const ")}{name} *map, nv_handle h) {{");
+                Line($"    if (!nvKV_{m}(map, h)) return (({option}){{ .tag = 0 }});");
+                Line($"    return (({option}){{ .tag = 1, .u.v_Some = {{ .f__0 = &map->ptr[h.index].value }} }});");
+                Line("}");
+                Line();
+            }
+            var removed = CTypeName(OptionFor(valueType));
+            Line($"static {removed} nvKR_{m}({name} *map, nv_handle h) {{");
+            Line($"    if (!nvKV_{m}(map, h)) return (({removed}){{ .tag = 0 }});");
+            Line("    map->ptr[h.index].gen += 1u;");
+            Line("    map->count -= 1u;");
+            Line("    if (map->ptr[h.index].gen != UINT32_MAX - 1u) {");
+            Line("        map->ptr[h.index].next = map->free;");
+            Line("        map->free = h.index;");
+            Line("    }");
+            Line($"    return (({removed}){{ .tag = 1, .u.v_Some = {{ .f__0 = map->ptr[h.index].value }} }});");
+            Line("}");
+            Line();
+        }
+    }
+
     private void EmitVectorHelperPrototypes()
     {
         foreach (var vector in Vectors)
@@ -639,6 +782,37 @@ public sealed class CEmitter
                 Line();
                 continue;
             }
+            if (type.IsStableVector)
+            {
+                // Destroys the elements from index 0 upward, then frees the chunks (§24.2).
+                var element = type.Pointee!.Element!;
+                Line($"static void {DropGlueName(type)}({CTypeName(type)} *p) {{");
+                if (TypeTable.NeedsDrop(element))
+                {
+                    Line("    for (uint64_t i = 0; i < p->len; i++) {");
+                    Line($"        {DropGlueName(element)}(nvSVE_{Mangle(type)}(p, i));");
+                    Line("    }");
+                }
+                Line($"    nova_svec_free(p->chunks, {AllocatorId(type.Allocator!)});");
+                Line("}");
+                Line();
+                continue;
+            }
+            if (type.Kind == TypeKind.SlotMap)
+            {
+                // Destroys the live values (odd generations), then frees the slots (§24.1).
+                Line($"static void {DropGlueName(type)}({CTypeName(type)} *p) {{");
+                if (TypeTable.NeedsDrop(type.Element!))
+                {
+                    Line("    for (uint64_t i = 0; i < p->len; i++) {");
+                    Line($"        if ((p->ptr[i].gen & 1u) != 0u) {DropGlueName(type.Element!)}(&p->ptr[i].value);");
+                    Line("    }");
+                }
+                Line($"    if (p->cap != 0u) nova_free(p->ptr, {AllocatorId(type.Allocator!)});");
+                Line("}");
+                Line();
+                continue;
+            }
             if (type.IsVector)
             {
                 // Destroys the elements from index 0 upward, then returns the buffer (§23.1).
@@ -745,7 +919,8 @@ public sealed class CEmitter
             var zero = local.Type.Kind switch
             {
                 TypeKind.Bool => "false",
-                TypeKind.Struct or TypeKind.Enum or TypeKind.Array or TypeKind.Region or TypeKind.Vector => "{0}",
+                TypeKind.Struct or TypeKind.Enum or TypeKind.Array or TypeKind.Region or TypeKind.Vector
+                    or TypeKind.StableVector or TypeKind.SlotMap or TypeKind.Handle => "{0}",
                 TypeKind.Reference when local.Type.IsSlice => "{0}",
                 TypeKind.Box when local.Type.IsPoolBox => "{0}",
                 TypeKind.Reference or TypeKind.Box => "NULL",
@@ -827,6 +1002,9 @@ public sealed class CEmitter
             case NirEval { Value: NirBuiltin builtin }:
                 EmitBuiltin(builtin);
                 break;
+            case NirEval { Value: NirUse discarded }:
+                Line($"    (void){Operand(discarded.Operand)};"); // e.g. the Copy payload of a discarded `e!`
+                break;
             case NirEval { Value: NirCall call }:
                 Line(call.Type.Kind == TypeKind.Void ? $"    {Rvalue(call)};" : $"    (void){Rvalue(call)};");
                 break;
@@ -840,7 +1018,9 @@ public sealed class CEmitter
         switch (builtin.Function)
         {
             case BuiltinFunction.VectorPush or BuiltinFunction.StringAppend or BuiltinFunction.VectorPop
-                or BuiltinFunction.VectorClear or BuiltinFunction.VectorWithCapacity:
+                or BuiltinFunction.VectorClear or BuiltinFunction.VectorWithCapacity or BuiltinFunction.StableVectorPush
+                or BuiltinFunction.SlotMapInsert or BuiltinFunction.SlotMapGet or BuiltinFunction.SlotMapRemove
+                or BuiltinFunction.SlotMapContains:
                 Line(builtin.Type.Kind == TypeKind.Void ? $"    {Rvalue(builtin)};" : $"    (void){Rvalue(builtin)};");
                 return;
             case BuiltinFunction.FailAfter:
@@ -945,6 +1125,20 @@ public sealed class CEmitter
             $"nova_pool_create({AllocatorId(pool.Arguments[0].Type)}, (uint64_t){Operand(pool.Arguments[1])})",
         NirBuiltin { Function: BuiltinFunction.PoolTake } take => $"nvPT_{Mangle(take.Arguments[1].Type)}({Operand(take.Arguments[0])}, {Operand(take.Arguments[1])})",
         NirBuiltin { Function: BuiltinFunction.ScratchNest } nest => $"nova_scratch_enter_child({Operand(nest.Arguments[0])})",
+        NirBuiltin { Function: BuiltinFunction.VectorCreate, Type.IsStableVector: true } create => $"(({CTypeName(create.Type)}){{ .len = 0u }})",
+        NirBuiltin { Function: BuiltinFunction.VectorCreate, Type.Kind: TypeKind.SlotMap } create =>
+            $"(({CTypeName(create.Type)}){{ .ptr = ({SlotName(create.Type)} *)(void *)&nova_vec_empty, .len = 0u, .cap = 0u, .count = 0u, .free = UINT32_MAX }})",
+        NirBuiltin { Function: BuiltinFunction.StableVectorPush } push =>
+            $"nvSVP_{Mangle(push.Arguments[0].Type.Pointee!)}({Operand(push.Arguments[0])}, {Operand(push.Arguments[1])})",
+        NirBuiltin { Function: BuiltinFunction.SlotMapInsert } insert =>
+            $"nvKI_{Mangle(insert.Arguments[0].Type.Pointee!)}({Operand(insert.Arguments[0])}, {Operand(insert.Arguments[1])})",
+        NirBuiltin { Function: BuiltinFunction.SlotMapGet } get =>
+            $"nvK{(get.Arguments[0].Type.IsMutableReference ? "M" : "G")}_{Mangle(get.Arguments[0].Type.Pointee!)}({Operand(get.Arguments[0])}, {Operand(get.Arguments[1])})",
+        NirBuiltin { Function: BuiltinFunction.SlotMapRemove } remove =>
+            $"nvKR_{Mangle(remove.Arguments[0].Type.Pointee!)}({Operand(remove.Arguments[0])}, {Operand(remove.Arguments[1])})",
+        NirBuiltin { Function: BuiltinFunction.SlotMapContains } contains =>
+            $"nvKV_{Mangle(contains.Arguments[0].Type.Pointee!)}({Operand(contains.Arguments[0])}, {Operand(contains.Arguments[1])})",
+        NirBuiltin { Function: BuiltinFunction.SlotMapLength } length => $"{Operand(length.Arguments[0])}->count",
         NirBuiltin { Function: BuiltinFunction.VectorCreate } create =>
             $"(({CTypeName(create.Type)}){{ .ptr = ({CType(create.Type.Pointee!.Element!)} *)(void *)&nova_vec_empty, .len = 0u, .cap = 0u }})",
         NirBuiltin { Function: BuiltinFunction.VectorWithCapacity } create =>
@@ -969,6 +1163,10 @@ public sealed class CEmitter
         var right = Operand(binary.Right);
         var operandType = binary.Left.Type;
         var loc = Location(binary.Source, binary.Span);
+        if (operandType.Kind == TypeKind.Handle)
+        {
+            return $"{(binary.Op == BinaryOp.NotEqual ? "!" : "")}nova_handle_eq({left}, {right})";
+        }
         if (operandType.IsStringView)
         {
             return $"{(binary.Op == BinaryOp.NotEqual ? "!" : "")}nova_str_eq({left}, {right})";
@@ -1058,10 +1256,13 @@ public sealed class CEmitter
     {
         var text = LocalName(place.Local);
         var type = place.Local.Type;
+        NovaType? stable = null; // the stable vector whose elements `type` is (§24.2)
         foreach (var projection in place.Projections)
         {
             text = projection.Kind switch
             {
+                ProjectionKind.Deref when type.IsStableVector => text,
+                ProjectionKind.Index when stable is not null => $"(*nvSVE_{Mangle(stable)}(&{text}, {Operand((NirOperand)projection.Index!)}))",
                 ProjectionKind.Deref when type.IsSlice || type.IsVector => text, // the elements' (ptr, len) are the value's
                 ProjectionKind.Deref when type.IsPoolBox => $"(*{text}.ptr)",
                 ProjectionKind.Deref => $"(*{text})",
@@ -1071,6 +1272,7 @@ public sealed class CEmitter
                 _ when type.IsUnsized => $"{text}.ptr[{Operand((NirOperand)projection.Index!)}]",
                 _ => $"{text}.e[{Operand((NirOperand)projection.Index!)}]",
             };
+            stable = projection.IsDeref && type.IsStableVector ? type : null;
             type = projection.Apply(type);
         }
         return text;
@@ -1126,13 +1328,16 @@ public sealed class CEmitter
         TypeKind.Reference when type.IsSlice => $"nvS{(type.IsMutableReference ? "m" : "l")}_{Mangle(type.Pointee!.Element!)}",
         // A shared reference to a box is a pointer to a const pointer (`T *const *`), not to a const T.
         // Region methods mutate through a shared reference (allocation is interior mutability, §19.2).
-        TypeKind.Reference when type.Pointee!.Kind == TypeKind.Region => $"{CTypeName(type.Pointee)} *",
+        TypeKind.Reference when type.Pointee!.Kind is TypeKind.Region or TypeKind.StableVector => $"{CTypeName(type.Pointee)} *",
         TypeKind.Reference when type.Pointee!.IsBox => type.IsMutableReference ? $"{CTypeName(type.Pointee)}*" : $"{CTypeName(type.Pointee)}const *",
         TypeKind.Reference => type.IsMutableReference ? $"{CTypeName(type.Pointee!)} *" : $"const {CTypeName(type.Pointee!)} *",
         TypeKind.Array => $"nvA{type.ArrayLength}_{Mangle(type.Element!)}",
         TypeKind.Box when type.IsPoolBox => $"nvPB_{Mangle(type.Pointee!)}",
         TypeKind.Box => $"{CTypeName(type.Pointee!)} *",
         TypeKind.Vector => $"nvV_{Mangle(type)[1..]}",
+        TypeKind.StableVector => $"nvSV_{Mangle(type)[1..]}",
+        TypeKind.SlotMap => $"nvK_{Mangle(type)[1..]}",
+        TypeKind.Handle => "nv_handle",
         TypeKind.Region => type.Region switch
         {
             RegionKind.Arena => "nv_arena",
@@ -1163,6 +1368,9 @@ public sealed class CEmitter
         TypeKind.Box when type.IsPoolBox => $"Y{Mangle(type.Pointee!)}",
         TypeKind.Box => $"X{Mangle(type.Pointee!)}{Mangle(type.Allocator!)}",
         TypeKind.Vector => $"V{Mangle(type.Pointee!)}{Mangle(type.Allocator!)}",
+        TypeKind.StableVector => $"W{Mangle(type.Pointee!.Element!)}{Mangle(type.Allocator!)}",
+        TypeKind.SlotMap => $"K{Mangle(type.Element!)}{Mangle(type.Allocator!)}",
+        TypeKind.Handle => $"H{Mangle(type.Element!)}",
         TypeKind.Reference => $"{(type.IsMutableReference ? "Q" : "P")}{Mangle(type.Pointee!)}",
         TypeKind.Region when type.Region == RegionKind.Pool => $"G4Pool{Mangle(type.Element!)}",
         TypeKind.Region => $"G{type.Name.Length}{type.Name}",

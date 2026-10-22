@@ -299,6 +299,29 @@ extern max_align_t nova_vec_empty;
  * NULL, with nothing changed, if the size overflows or the allocation fails.
  */
 void *nova_vec_grow(void *ptr, uint64_t len, uint64_t *cap, uint64_t extra, uint64_t size, uint32_t allocator);
+
+/* ---- Stable vectors and slot maps (type-system.md §24) ------------------------------------ */
+
+/* A StableVector's 32 chunks hold 8, 16, 32, ... elements: element i is in chunk log2(i + 8) - 3. */
+#define NV_SVEC_CHUNKS 32u
+
+/* The address of element `i` (i < length) of a stable vector with elements of `size` bytes. */
+static inline void *nova_svec_at(void *const *chunks, uint64_t i, uint64_t size) {
+    uint64_t j = i + 8u;
+    unsigned k = (unsigned)(60 - __builtin_clzll(j));
+    return (uint8_t *)chunks[k] + (j - ((uint64_t)8u << k)) * size;
+}
+
+/* The slot for element `len`, allocating its chunk if it is the chunk's first; NULL if full or out of memory. */
+void *nova_svec_slot(void **chunks, uint64_t len, uint64_t size, uint32_t allocator);
+
+/* Destroys nothing: frees every chunk of a stable vector. */
+void nova_svec_free(void **chunks, uint32_t allocator);
+
+/* `Handle<T>`: a slot index and the generation it was given (odd: a live value). */
+typedef struct nv_handle { uint32_t index; uint32_t gen; } nv_handle;
+
+static inline bool nova_handle_eq(nv_handle a, nv_handle b) { return a.index == b.index && a.gen == b.gen; }
 /* ---- Arena (type-system.md §19.2; runtime/core/nova_rt_core.c) ---------------------------- */
 
 /*
