@@ -1,0 +1,38 @@
+// Many allocations and frees in waves, so the allocator reuses memory (C2; docs/cosmoos/c2-report.md).
+enum List { Nil, Cons(u64, Box<List>) }
+struct Block { data: [u64; 8]; next: List; }
+
+fn list(n: u64, seed: u64) -> Result<List, AllocError> {
+    var l = List.Nil;
+    for (i in 0u64..n) { l = List.Cons(seed + i, Box.create(move l)?); }
+    return Ok(l);
+}
+
+fn total(l: borrow List) -> u64 {
+    var sum = 0u64;
+    match (l) {
+        List.Nil => { }
+        List.Cons(v, rest) => { sum = v; }
+    }
+    return sum;
+}
+
+fn wave(round: u64) -> Result<u64, AllocError> {
+    let a = list(2000u64, round)?;
+    let blocks = Box.create(Block { data: [round; 8], next: list(500u64, round)? })?;
+    let b = list(1000u64, round * 2u64)?;
+    return Ok(total(a) + total(b) + blocks.data[7]);
+}
+
+fn main() -> i32 {
+    var checksum = 0u64;
+    for (round in 0u64..30u64) {
+        match (wave(round)) {
+            Ok(v) => { checksum += v; }
+            Err(_) => { Console.writeLine("out of memory"); return 0; }
+        }
+    }
+    Console.writeLine(checksum);
+    return 0;
+}
+// expect-stdout: 91680

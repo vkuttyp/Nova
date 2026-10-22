@@ -2,7 +2,7 @@
 
 Date: 2026-10-22. Status: **M0/C0 complete; all decisions accepted ([ADR 0002](decisions/0002-milestone-0-decision-set.md)).**
 **M1 and C1 complete**: Nova compiles to C and runs, including natively inside CosmoOS on x86-64 and AArch64.
-**M2 (ownership and borrowing) and M3 (safe heap) complete** ([milestone-2.md](milestone-2.md), [milestone-3.md](milestone-3.md), [ADR 0003](decisions/0003-m3-built-in-generic-types.md)). Next: C2, then M4 ([roadmap.md](roadmap.md)).
+**M2 (ownership and borrowing) and M3 (safe heap) complete** ([milestone-2.md](milestone-2.md), [milestone-3.md](milestone-3.md), [ADR 0003](decisions/0003-m3-built-in-generic-types.md)). **C2 complete** ([cosmoos/c2-report.md](cosmoos/c2-report.md)). Next: M4 ([roadmap.md](roadmap.md)).
 Implemented-feature specs: [grammar.md](grammar.md) (M1 grammar), [type-system.md](type-system.md)
 (M1 static semantics), [intermediate-representation.md](intermediate-representation.md) (HIR/NIR as
 implemented) and [diagnostics.md](diagnostics.md) (error codes).

@@ -21,7 +21,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **C1** ✅ 2026-10-22 Native Hello World | M1 output linked against CosmoOS libc and run in QEMU (S0, out of tree) | `NOVATEST: PASS` printed by the Nova program inside CosmoOS on **x86-64 and AArch64**. `.note.cosmo` present. `llvm-nm -u` shows only libc symbols. Exact flags recorded. No CosmoOS file modified (`git status` clean) |
 | **M2** Ownership & borrowing | Structs, enums, references, moves, init check, NLL borrow check, drop elaboration, `drop`, `using`, `defer`, slices of arrays | Each of O1–O5, B1–B5, E1–E4 has ≥ 2 compile-fail and ≥ 1 near-miss compile-pass test (≥ 120 total). Drop-order run tests. Mutation suite. ASan/UBSan clean |
 | **M3** ✅ 2026-10-22 Safe heap (ADR 0003: built-in `Result`/`Box`/allocators) | `Allocator`, `SystemHeap`, `Box`, `AllocError`, `Result`/`?`, `FailingAllocator`, recursive types, iterative drops | Fault-injection sweep: for every test that allocates *n* times, run with failure at each *k ≤ n*; no leaks/double frees under ASan. Ex4, Ex5, Ex11, Ex14 pass |
-| **C2** Safe allocation in CosmoOS | M2+M3 features in Profile A | Allocation, destruction and fault-injection tests pass inside QEMU on both arches |
+| **C2** ✅ 2026-10-22 Safe allocation in CosmoOS ([report](cosmoos/c2-report.md)) | M2+M3 features in Profile A | Allocation, destruction and fault-injection tests pass inside QEMU on both arches |
 | **M4** Regions | `Arena`, `Scratch`, `FixedBufferAllocator`, `Pool` | Compile-fail: every arena-escape form (return, store in Box, outlive via `reset`/drop). Run tests for bulk release. R2 enforced |
 | **M5** Escape/placement analysis | CFG analysis, classification, `--explain-allocations`, Box→stack demotion | Optimised vs unoptimised outputs equal on the whole run-pass corpus. Drop timing identical (instrumented). Report snapshots. No program accepted only because of placement |
 | **M6** Generics & collections | Monomorphisation, interfaces, `Vector`, `String`, `StringView`, `StableVector`, `SlotMap`, iterators. OD-3 design | Invalidation compile-fail tests. Property tests of collections against a model. Ex9, Ex10, Ex12, Ex13 |
@@ -60,7 +60,8 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 
 Heap programs run inside CosmoOS on both arches with its libc `malloc`.
 
-Next is **C2** (safe allocation in CosmoOS: allocation, destruction and fault-injection tests
-inside QEMU on both arches). Much of it already runs via `c1.py --corpus`; the guest-side
-fault-injection sweep is the remaining work. After C2 comes M4 (regions). In parallel, when the
-owner wants it: propose the S1 in-tree port for C1 (OD-20).
+**C2 is done** (2026-10-22; `cosmoos/c2-report.md`): `integrations/cosmoos/c2.py` runs the whole
+corpus and a guest-side fault-injection sweep inside CosmoOS on both arches.
+
+Next is **M4** (regions: `Arena`, `Scratch`, `FixedBufferAllocator`, `Pool`). In parallel, when
+the owner wants it: propose the S1 in-tree port for C1 (OD-20).

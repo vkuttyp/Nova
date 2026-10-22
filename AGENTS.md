@@ -24,7 +24,8 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
   (`docs/decisions/0002-milestone-0-decision-set.md`).
 - M1 and C1 are complete. Nova compiles to C, and its programs run natively in CosmoOS (`integrations/cosmoos/c1.py`).
 - M2 (ownership and borrowing; `docs/milestone-2.md`) and M3 (the safe heap; `docs/milestone-3.md`,
-  ADR 0003) are complete. Next is C2, then M4 (`docs/roadmap.md`).
+  ADR 0003) are complete, and so is C2 (`docs/cosmoos/c2-report.md`; `integrations/cosmoos/c2.py`).
+  Next is M4 (`docs/roadmap.md`).
 - Test-suite parts to know: the corpus (`docs/testing.md` §3), the M2 mutation suite
   (`MutationTests.cs`), and the M3 fault-injection sweep (`FaultInjectionTests.cs`).
 
