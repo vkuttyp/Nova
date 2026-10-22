@@ -10,27 +10,22 @@ then boots CosmoOS in QEMU and runs, at the shell prompt:
    - a baseline run with NOVA_ALLOC_REPORT=1, which must report the host's attempt count and live=0;
    - runs with NOVA_FAIL_ALLOC_AT=k, each ending with live=0 or the unwrap panic (status 134).
 
-With --parallels VM, the programs run instead in an already running CosmoOS virtual machine in
-Parallels Desktop (aarch64): they are served over HTTP from the host, fetched with the guest's
-`wget` into /tmp/nova, and run through the VM's serial socket. Nothing in the VM is changed
-except /tmp (a ramfs).
+With --ssh USER@HOST, the programs run instead on an already running CosmoOS machine reachable
+over ssh (for example the aarch64 VM in Parallels Desktop): they are copied to /tmp/nova (a ramfs)
+with scp and run in one ssh session, with stdout, stderr and the exit status kept apart. Nothing
+on the machine is changed except /tmp/nova.
 
 Usage:
     python3 integrations/cosmoos/c2.py --arch x86_64 [--cosmoos ~/dev/CosmoOS]
     python3 integrations/cosmoos/c2.py --arch aarch64
-    python3 integrations/cosmoos/c2.py --arch aarch64 --parallels "CosmoOS 1.0.7" [--host-ip 10.211.55.2]
+    python3 integrations/cosmoos/c2.py --arch aarch64 --ssh root@10.211.55.14
 """
 
 import argparse
-import functools
-import http.server
 import re
 import shlex
-import socket
 import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -111,78 +106,66 @@ def check_sweep(serial, commands, attempts):
     return failures
 
 
-def parallels_serial_socket(vm):
-    """The path of the VM's serial port socket (Parallels: serial0 in server mode)."""
-    info = subprocess.run(["prlctl", "list", "-i", vm], check=True, capture_output=True, text=True).stdout
-    if not re.search(r"^State:\s*running", info, re.MULTILINE) and "running" not in info:
-        raise SystemExit(f"Parallels VM '{vm}' is not running")
-    match = re.search(r"serial\d+ \(\+\) socket='([^']+)' mode=server", info)
-    if not match:
-        raise SystemExit(f"Parallels VM '{vm}' has no serial port in socket server mode")
-    return match.group(1)
-
-
-def run_in_parallels(vm, host_ip, bin_dir, commands, timeout, serial_log):
+def run_over_ssh(target, bin_dir, jobs):
     """
-    Serves `bin_dir` over HTTP, fetches every ELF into the guest's /tmp/nova, then types each command at
-    the prompt and waits for the next prompt. Returns the guest output (as c1.boot does).
+    Copies every ELF in `bin_dir` to the guest's /tmp/nova (scp), then runs each job there in one ssh
+    session. A job is (name, environment, program). Returns {name: (stdout, stderr, status)}.
     """
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(bin_dir))
-    handler.log_message = lambda *args: None
-    server = http.server.ThreadingHTTPServer((host_ip, 0), handler)
-    port = server.server_address[1]
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target]
+    # `rm -rf` on CosmoOS's ramfs can leave entries behind (c2-report.md, findings): repeat until gone.
+    subprocess.run([*ssh, "for i in 1 2 3 4 5 6 7 8; do rm -rf /tmp/nova 2>/dev/null; [ -e /tmp/nova ] || break; done; "
+                          "mkdir /tmp/nova"], check=True)
+    elves = sorted(str(p) for p in Path(bin_dir).iterdir())
+    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", *elves, f"{target}:/tmp/nova/"], check=True)
+    log(f"copied {len(elves)} programs to {target}:/tmp/nova")
+    script = ["cd /tmp/nova"]
+    for index, (name, environment, program) in enumerate(jobs):
+        variables = " ".join(f"{k}={v}" for k, v in environment.items())
+        # `env -i`: nothing from the login session leaks into the program (c2-report.md, findings).
+        script.append(f"env -i {variables} ./{program} >out.{index} 2>err.{index}; status=$?")
+        script.append(f"echo '@@job {index}'; cat out.{index}; echo '@@stderr'; cat err.{index}; echo \"@@status $status\"")
+    result = subprocess.run([*ssh, "sh -s"], input="\n".join(script) + "\n", capture_output=True, text=True, timeout=3600)
+    results = {}
+    for chunk in result.stdout.split("@@job ")[1:]:
+        header, _, rest = chunk.partition("\n")
+        stdout, _, rest = rest.partition("@@stderr\n")
+        stderr, _, status = rest.rpartition("@@status ")
+        results[jobs[int(header)][0]] = (stdout, stderr, int(status.split()[0]))
+    if len(results) != len(jobs):
+        raise SystemExit(f"ssh run incomplete: {len(results)} of {len(jobs)} jobs reported\n{result.stderr}")
+    return results
 
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(parallels_serial_socket(vm))
-    received = bytearray()
-    lock = threading.Lock()
 
-    def reader():
-        while True:
-            try:
-                data = sock.recv(65536)
-            except OSError:
-                return
-            if not data:
-                return
-            with lock:
-                received.extend(data)
-
-    threading.Thread(target=reader, daemon=True).start()
-
-    def prompts():
-        with lock:
-            return bytes(received).count(c1.PROMPT)
-
-    def type_command(command):
-        before = prompts()
-        sock.sendall(command.encode() + b"\n")
-        deadline = time.monotonic() + timeout
-        while prompts() <= before:
-            if time.monotonic() > deadline:
-                raise SystemExit(f"no prompt after '{command}' in the Parallels VM; see {serial_log}")
-            time.sleep(0.05)
-
-    try:
-        type_command("")  # a fresh prompt
-        # The shell is long-lived: clear what earlier sessions may have set (c2-report.md, findings).
-        setup = ["unset NOVA_ALLOC_REPORT NOVA_FAIL_ALLOC_AT", "rm -rf /tmp/nova", "mkdir /tmp/nova",
-                 "export PATH=/tmp/nova:$PATH"]
-        fetches = [f"wget -q http://{host_ip}:{port}/{elf.name} -O /tmp/nova/{elf.name} && chmod +x /tmp/nova/{elf.name}"
-                   for elf in sorted(Path(bin_dir).iterdir())]
-        for command in setup + fetches:
-            type_command(command)
-        log(f"fetched {len(fetches)} programs into the VM's /tmp/nova")
-        for command in commands:
-            type_command(command)
-    finally:
-        sock.close()
-        server.shutdown()
-    with lock:
-        output = bytes(received)
-    Path(serial_log).write_bytes(output)
-    return output.decode("utf-8", "replace")
+def check_ssh_results(results, programs, sweep, attempts):
+    """The corpus and sweep checks of the QEMU path, on separate stdout, stderr and exit status."""
+    failures = []
+    for program in programs:
+        stdout, stderr, status = results[program.guest_name]
+        lines = stdout.splitlines()
+        if lines != program.stdout:
+            failures.append(f"{program.relative}: stdout {lines!r}, expected {program.stdout!r}")
+        if status != program.exit_code:
+            failures.append(f"{program.relative}: exit status {status}, expected {program.exit_code}")
+        if program.panic and not stderr.startswith(program.panic):
+            failures.append(f"{program.relative}: stderr {stderr!r}, expected {program.panic!r}...")
+        if not program.panic and stderr:
+            failures.append(f"{program.relative}: unexpected stderr {stderr!r}")
+    for command in sweep:
+        stdout, stderr, status = results[command.guest_name]
+        where = f"{command.program.relative} (fail at {command.fail_at})"
+        report = REPORT.search(stderr)
+        if command.fail_at == 0:
+            if report is None or int(report.group(1)) != attempts[command.program] or report.group(2) != "0":
+                failures.append(f"{where}: baseline report {report and report.group(0)!r}, expected "
+                                f"attempts={attempts[command.program]} live=0")
+        elif "nova panic: " in stderr:
+            if not stderr.startswith("nova panic: unwrapped an Err value") or status != 134:
+                failures.append(f"{where}: unexpected panic {stderr!r} (status {status})")
+        elif report is None:
+            failures.append(f"{where}: no allocation report (status {status})")
+        elif report.group(2) != "0":
+            failures.append(f"{where}: {report.group(2)} allocation(s) leaked")
+    return failures
 
 
 def main():
@@ -190,17 +173,14 @@ def main():
     parser.add_argument("--arch", choices=["x86_64", "aarch64"], required=True)
     parser.add_argument("--cosmoos", type=Path, default=Path.home() / "dev" / "CosmoOS")
     parser.add_argument("--timeout", type=int, default=3600, help="seconds for the QEMU boot")
-    parser.add_argument("--parallels", metavar="VM", help="run in this running Parallels VM instead of QEMU (aarch64)")
-    parser.add_argument("--host-ip", default="10.211.55.2", help="the host's address on the VM's shared network")
+    parser.add_argument("--ssh", metavar="USER@HOST", help="run on this running CosmoOS machine over ssh instead of QEMU")
     args = parser.parse_args()
-    if args.parallels and args.arch != "aarch64":
-        raise SystemExit("--parallels: the CosmoOS VMs in Parallels on Apple silicon are aarch64")
 
     root = args.cosmoos.resolve()
     status_before = c1.git_status(root)
     head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     out = c1.NOVA_ROOT / "out" / "cosmoos" / f"{args.arch}-release"
-    work = c1.NOVA_ROOT / "out" / "cosmoos" / (f"c2-parallels" if args.parallels else f"c2-{args.arch}")
+    work = c1.NOVA_ROOT / "out" / "cosmoos" / (f"c2-ssh-{args.arch}" if args.ssh else f"c2-{args.arch}")
     work.mkdir(parents=True, exist_ok=True)
     cosmo = c1.Cosmo(root, args.arch, out)
     log(f"CosmoOS {head}, ARCH={args.arch}, BUILD=release, OUT={out}")
@@ -226,29 +206,37 @@ def main():
     for elf in elves:
         c1.check_elf(elf, prefix)
     # The plain runs come first: the shell keeps leading assignments set (c2-report.md, findings).
-    commands = [*programs, *sweep]
-    if args.parallels:
-        log(f"running in the Parallels VM '{args.parallels}'")
-        serial = run_in_parallels(args.parallels, args.host_ip, work / "bin", [c.guest_name for c in commands],
-                                  timeout=300, serial_log=work / "serial.log")
+    if args.ssh:
+        machine = subprocess.run(["ssh", "-o", "BatchMode=yes", args.ssh, "uname -m -r -v"], check=True,
+                                 capture_output=True, text=True).stdout.strip()
+        log(f"running on {args.ssh}: {machine}")
+        if args.arch not in machine and not (args.arch == "aarch64" and "arm64" in machine):
+            raise SystemExit(f"{args.ssh} is not an {args.arch} machine: {machine}")
+        jobs = [(p.guest_name, {}, p.guest_name) for p in programs]
+        jobs += [(c.guest_name, {"NOVA_ALLOC_REPORT": "1", "NOVA_FAIL_ALLOC_AT": str(c.fail_at)}, c.program.guest_name)
+                 for c in sweep]
+        results = run_over_ssh(args.ssh, work / "bin", jobs)
+        failures = check_ssh_results(results, programs, sweep, attempts)
+        corpus_failures = [f for f in failures if "(fail at " not in f]
+        sweep_failures = [f for f in failures if "(fail at " in f]
         qemu_status = None
     else:
         image = c1.make_image(cosmo, work, elves)
-        serial, qemu_status = c1.boot(cosmo, work, image, commands, args.timeout)
-
-    corpus_failures = c1.check_corpus(serial, programs)
-    sweep_failures = check_sweep(serial, sweep, attempts)
+        serial, qemu_status = c1.boot(cosmo, work, image, [*programs, *sweep], args.timeout)
+        corpus_failures = c1.check_corpus(serial, programs)
+        sweep_failures = check_sweep(serial, sweep, attempts)
     for failure in corpus_failures + sweep_failures:
         log(f"failure: {failure}")
     checks = {
         f"corpus runs in the guest ({len(programs)} programs)": not corpus_failures,
         f"guest fault-injection sweep ({len(attempts)} programs, {len(sweep)} runs)": not sweep_failures,
-        **({} if args.parallels else {"CosmoOS shut down cleanly (QEMU exit status 33)": qemu_status == 33}),
+        **({} if args.ssh else {"CosmoOS shut down cleanly (QEMU exit status 33)": qemu_status == 33}),
         "CosmoOS working tree unchanged": c1.git_status(root) == status_before,
     }
     for name, ok in checks.items():
         log(f"{'PASS' if ok else 'FAIL'}  {name}")
-    log(f"QEMU exit status {qemu_status}; serial log {work / 'serial.log'}")
+    if not args.ssh:
+        log(f"QEMU exit status {qemu_status}; serial log {work / 'serial.log'}")
     return 0 if all(checks.values()) else 1
 
 

@@ -73,25 +73,38 @@ to 200 attempts. The guest sweep confirms the same behaviour with CosmoOS's `mal
 - real-exhaustion behaviour of userland `malloc` (see "Not in C2");
 - the kernel profile's allocator (C5).
 
-## Parallels mode (added 2026-10-22, during M6b)
+## SSH mode: the Parallels VM (added 2026-10-22, during M6b)
 
-`c2.py --arch aarch64 --parallels "CosmoOS 1.0.7"` runs the same checks in an already running
-CosmoOS VM in Parallels Desktop, instead of a fresh QEMU boot:
-- the ELFs are served over HTTP from the host (on the VM's shared network, host address
-  `10.211.55.2`);
-- the guest's busybox `wget` fetches them into `/tmp/nova` (a ramfs), and the checks run
-  through the VM's serial socket (`prlctl` `serial0` in socket server mode);
-- nothing else in the VM changes, and there is no shutdown check;
-- the same corpus and sweep checks apply. The VM's busybox shell reports `Aborted` after an
-  abort, which the checker ignores like CosmoOS's own `abort()` note.
+`c2.py --arch aarch64 --ssh root@10.211.55.14` runs the same checks on an already running CosmoOS
+machine over ssh, here the aarch64 VM "CosmoOS 1.0.7" in Parallels Desktop:
+- all ELFs are copied to `/tmp/nova` (a ramfs) with one `scp`;
+- one ssh session runs every program with `env -i` plus the job's variables, and keeps each
+  program's stdout, stderr and exit status apart;
+- the checks are those of the QEMU path, applied to separate streams. That is stricter: any
+  stderr output from a program that should not panic is a failure;
+- nothing on the machine changes except `/tmp/nova`, and there is no shutdown check.
 
-Facts recorded on 2026-10-22: the VM named "CosmoOS 1.0.7" reports
-`Linux cosmo 6.0.0-cosmo CosmoOS 0.0.1 v1.0.10 aarch64` (`uname -a`), so its name probably
-predates an upgrade (inferred). The Nova ELFs, built against CosmoOS `c4ac584b`'s libc, ran
-unchanged.
+A first version drove the VM's serial console and fetched the programs with `wget`; ssh replaced
+it once root ssh access was set up.
+
+Facts recorded on 2026-10-22:
+- The VM named "CosmoOS 1.0.7" reports `6.0.0-cosmo CosmoOS 0.0.1 v1.0.10 aarch64`, so its name
+  probably predates an upgrade (inferred). Nova's ELFs, linked against CosmoOS `c4ac584b`'s libc,
+  ran unchanged.
+- **ssh was not available at first, and was fixed in the VM.** `svc status` reported `dropbear`
+  running as pid 13, but that pid had been reused by `syslogd`, and nothing listened on port
+  22. `svc start dropbear` refused ("already running"). `svc restart` would have signalled the
+  reused pid, so dropbear was started by hand (`/sbin/dropbear -p 22 -r <its host key>`), outside
+  svc. **CosmoOS finding:** svc trusts a stale pid without checking that it is still its process.
+- `/root/.ssh/authorized_keys` was empty; the host's `~/.ssh/id_rsa.pub` was appended (owner's
+  instruction: root ssh with that key).
+- **CosmoOS finding:** on `/tmp` (ramfs), busybox `rm -rf` of a directory with many entries left
+  some behind ("Directory not empty"); entries are probably skipped while deleting during a
+  directory read (inferred). `c2.py` repeats the removal until the directory is gone.
+- The VM's busybox shell prints `Aborted` after an abort (only relevant to the serial version).
 
 | Run | Result | Wall time |
 |---|---|---|
-| Parallels VM, aarch64 (M6b corpus) | 120/120 programs, 179/179 sweep runs | 76 s, against about 15 min per arch in QEMU TCG |
+| ssh, Parallels VM, aarch64 (M6b corpus) | 120/120 programs, 179/179 sweep runs | 50 s, against about 15 min per arch in QEMU TCG |
 
-x86-64 has no Parallels VM on this host, so it still runs in QEMU.
+x86-64 has no such VM on this host, so it still runs in QEMU (`c2.py --arch x86_64`).
