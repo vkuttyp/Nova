@@ -28,9 +28,7 @@ jobs:
         run: dotnet build Nova.slnx -c Release
       - name: Test
         run: |
-          # Resource log, printed below even if the job fails or is killed (diagnoses stalls).
-          (while true; do date -u +%T; free -m | sed -n 2,3p; ps -eo rss,etime,args --sort=-rss | head -6 | cut -c1-160; sleep 20; done) > "$RUNNER_TEMP/resources.log" 2>&1 &
+          echo "cores: $(nproc)"; free -m; ulimit -a | grep -E "core|processes|open files"
+          # Resource samples go to this step's own log, so they survive a killed job (diagnoses stalls).
+          (while true; do echo "[res] $(date -u +%T) $(free -m | awk '/Mem/{print "used=" $3 "MB avail=" $7 "MB"}') load=$(cut -d' ' -f1-3 /proc/loadavg) zombies=$(ps -eo stat | grep -c '^Z')"; ps -eo rss,pcpu,etime,comm --sort=-pcpu | sed -n 2,4p | sed 's/^/[res]   /'; sleep 15; done) &
           dotnet test Nova.slnx -c Release --no-build --logger "console;verbosity=normal"
-      - name: Resource log
-        if: always()
-        run: tail -n 400 "$RUNNER_TEMP/resources.log" || true
