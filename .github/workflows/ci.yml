@@ -26,8 +26,16 @@ jobs:
           gcc --version | head -1
       - name: Build
         run: dotnet build Nova.slnx -c Release
+      - name: No crash reports
+        # Panics abort, and the run-fail tests and fault-injection sweeps abort hundreds of times. Ubuntu
+        # pipes each abort to apport/systemd-coredump, which exhausted the runner's memory (M6e). A pipe
+        # ignores `ulimit -c 0`, so switch to a plain core pattern, which the limit below then disables.
+        run: |
+          sudo systemctl stop apport.service || true
+          sudo sysctl -w kernel.core_pattern=core
       - name: Test
         run: |
+          ulimit -c 0
           echo "cores: $(nproc)"; free -m; ulimit -a | grep -E "core|processes|open files"
           # Resource samples go to this step's own log, so they survive a killed job (diagnoses stalls).
           (while true; do echo "[res] $(date -u +%T) $(free -m | awk '/Mem/{print "used=" $3 "MB avail=" $7 "MB"}') load=$(cut -d' ' -f1-3 /proc/loadavg) zombies=$(ps -eo stat | grep -c '^Z')"; ps -eo rss,pcpu,etime,comm --sort=-pcpu | sed -n 2,4p | sed 's/^/[res]   /'; sleep 15; done) &
