@@ -414,6 +414,60 @@ void nova_write_u64(uint64_t value);
 void nova_write_bool(bool value);
 void nova_write_str(const char *text, size_t length);
 void nova_write_view(nv_str text);
+/* Console.writeBytes: raw bytes to standard output, in order with the other writes. */
+void nova_write_bytes(const uint8_t *bytes, uint64_t length);
+/* Console.writeError: text to standard error (standard output is flushed first). */
+void nova_write_error(nv_str text);
+
+/* ---- Program arguments, files and sockets (type-system.md §26; runtime/hosted/nova_rt_io.c) ---- */
+
+/* The outcome of an I/O call: `error` is 0 on success (then `value` is the result), else the C library's errno. */
+typedef struct nv_io_result { int64_t value; int32_t error; } nv_io_result;
+
+/* IoError's variants, in declaration order (the checker declares the enum in this order). */
+#define NV_IO_NOT_FOUND 0u
+#define NV_IO_PERMISSION_DENIED 1u
+#define NV_IO_ALREADY_EXISTS 2u
+#define NV_IO_IS_DIRECTORY 3u
+#define NV_IO_NOT_DIRECTORY 4u
+#define NV_IO_INVALID_INPUT 5u
+#define NV_IO_BROKEN_PIPE 6u
+#define NV_IO_CONNECTION_REFUSED 7u
+#define NV_IO_ADDRESS_IN_USE 8u
+#define NV_IO_OUT_OF_MEMORY 9u
+#define NV_IO_OTHER 10u
+
+/* The IoError variant for an errno value (hosted), and its message (core: static text). */
+uint32_t nova_io_kind(int32_t error);
+nv_str nova_io_message(uint32_t kind);
+
+/* Called by the generated `main` before anything else: keeps argv for Process.argument (never copied). */
+void nova_rt_args(int32_t count, const uint8_t *const *arguments);
+uint64_t nova_arg_count(void);
+/* Argument `index` as a view; false if out of range or not valid UTF-8. */
+bool nova_arg(uint64_t index, nv_str *out);
+bool nova_utf8_valid(const uint8_t *bytes, uint64_t length);
+
+/* Files: `mode` 0 opens for reading, 1 creates or truncates for writing; `value` is the descriptor. */
+nv_io_result nova_file_open(nv_str path, uint32_t mode);
+nv_io_result nova_file_remove(nv_str path);
+/* Reads up to `length` bytes (0 at the end); retries interrupted calls. */
+nv_io_result nova_fd_read(int32_t fd, uint8_t *buffer, uint64_t length);
+/* Writes all `length` bytes, or fails. */
+nv_io_result nova_fd_write(int32_t fd, const uint8_t *bytes, uint64_t length);
+/* The drop glue of File, TcpListener and TcpStream: closes the descriptor, ignoring errors. */
+void nova_fd_drop(int32_t *fd);
+
+/* TCP over IPv4: `address` is dotted text ("127.0.0.1"); `port` 0 binds any free port. */
+nv_io_result nova_tcp_listen(nv_str address, uint16_t port);
+nv_io_result nova_tcp_port(int32_t fd);
+nv_io_result nova_tcp_accept(int32_t fd);
+nv_io_result nova_tcp_connect(nv_str address, uint16_t port);
+nv_io_result nova_tcp_shutdown_write(int32_t fd);
+
+/* Process.run: starts `program` (searched on PATH) with `arguments`, waits, and returns its exit status
+   (128 + the signal number if a signal ended it). Standard output is flushed first. */
+nv_io_result nova_process_run(nv_str program, const nv_str *arguments, uint64_t count);
 void nova_write_newline(void);
 _Noreturn void nova_exit(int32_t code);
 

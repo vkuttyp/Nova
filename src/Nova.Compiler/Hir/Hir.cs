@@ -317,6 +317,42 @@ public enum BuiltinFunction
     SlotMapContains,
     /// <summary><c>m.length</c>: a shared reference to the map.</summary>
     SlotMapLength,
+    /// <summary><c>File.open(path)</c> (type-system.md §26.3).</summary>
+    FileOpen,
+    /// <summary><c>File.create(path)</c>.</summary>
+    FileCreate,
+    /// <summary><c>File.remove(path)</c>.</summary>
+    FileRemove,
+    /// <summary><c>f.read(mut buffer)</c> on a file or stream: a mutable reference to it, then the buffer.</summary>
+    ResourceRead,
+    /// <summary><c>f.write(bytes)</c> on a file or stream: a mutable reference to it, then the bytes.</summary>
+    ResourceWrite,
+    /// <summary><c>Console.read(mut buffer)</c>: standard input.</summary>
+    ConsoleRead,
+    /// <summary><c>Console.writeBytes(bytes)</c>.</summary>
+    ConsoleWriteBytes,
+    /// <summary><c>Console.writeError(text)</c>: standard error.</summary>
+    ConsoleWriteError,
+    /// <summary><c>Console.writeErrorLine(text?)</c>: standard error, then a newline.</summary>
+    ConsoleWriteErrorLine,
+    /// <summary><c>TcpListener.bind(address, port)</c> (§26.4).</summary>
+    TcpListen,
+    /// <summary><c>listener.port()</c>: a shared reference to the listener.</summary>
+    TcpPort,
+    /// <summary><c>listener.accept()</c>: a shared reference to the listener.</summary>
+    TcpAccept,
+    /// <summary><c>TcpStream.connect(address, port)</c>.</summary>
+    TcpConnect,
+    /// <summary><c>stream.shutdownWrite()</c>: a mutable reference to the stream.</summary>
+    TcpShutdownWrite,
+    /// <summary><c>e.message()</c> on an <c>IoError</c> value (§26.2).</summary>
+    IoErrorMessage,
+    /// <summary><c>Process.argumentCount()</c> (§26.1).</summary>
+    ArgumentCount,
+    /// <summary><c>Process.argument(i)</c>.</summary>
+    Argument,
+    /// <summary><c>Process.run(program, arguments)</c> (§26.5): the program, then a shared reference to a <c>Vector&lt;StringView&gt;</c>.</summary>
+    ProcessRun,
 }
 
 public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<HirExpr> Arguments, NovaType Type, TextSpan Span) : HirExpr(Type, Span);

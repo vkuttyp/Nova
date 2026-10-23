@@ -261,7 +261,8 @@ static nvR_Xi32S16FailingAllocatorE10AllocError nvB_Xi32S16FailingAllocator(int3
     return ((nvR_Xi32S16FailingAllocatorE10AllocError){ .tag = 0, .u.v_Ok = { .f__0 = p } });
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
     return (int)nova_rt_finish(nv_main());
 }

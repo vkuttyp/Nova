@@ -26,10 +26,12 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
 - M2 (ownership and borrowing; `docs/milestone-2.md`) and M3 (the safe heap; `docs/milestone-3.md`,
   ADR 0003) are complete, and so is C2 (`docs/cosmoos/c2-report.md`; `integrations/cosmoos/c2.py`).
   M4 (regions; `docs/milestone-4.md`, ADR 0004) is complete. M6 (generics and collections;
-  `docs/milestone-6.md`, ADR 0005) is complete, and so is M6x (region parameters, OD-3; `docs/milestone-6x.md`, ADR 0006). Next is C3. M5 may run in
+  `docs/milestone-6.md`, ADR 0005) is complete, and so is M6x (region parameters, OD-3; `docs/milestone-6x.md`, ADR 0006). C3
+  (files, sockets, processes and the `nwc` utility; `docs/cosmoos/c3-report.md`) is complete. Next is M7. M5 may run in
   parallel (`docs/roadmap.md`).
 - Guest checks: `python3 integrations/cosmoos/c2.py --arch x86_64` (QEMU), and for aarch64 either
-  QEMU or a running CosmoOS VM over ssh (`--arch aarch64 --ssh root@<host>`).
+  QEMU or a running CosmoOS VM over ssh (`--arch aarch64 --ssh root@<host>`). `c3.py` takes the same
+  options. Run them one at a time: each rebuilds the Release compiler.
 - Test-suite parts to know: the corpus (`docs/testing.md` §3), the M2 mutation suite
   (`MutationTests.cs`), and the M3 fault-injection sweep (`FaultInjectionTests.cs`).
 
@@ -89,6 +91,7 @@ Every new diagnostic needs a code in `DiagnosticCodes` and a row in `docs/diagno
 src/Nova.Compiler, src/Nova.Cli      compiler (C# / .NET 10)
 runtime/                             C runtime: core (freestanding), hosted, cosmoos
 lib/core, lib/std                    Nova standard libraries
+programs/                            utilities written in Nova (nwc)
 tests/                               unit tests + corpus (parse/check/compile-fail/run)
 integrations/cosmoos/                CosmoOS build glue, C1 script, binding files
 docs/                                specs, research, ADRs

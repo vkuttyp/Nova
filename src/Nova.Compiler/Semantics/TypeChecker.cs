@@ -87,6 +87,9 @@ internal sealed class TypeChecker
         String,
         SlotMap,
         StableVector,
+        File,
+        TcpListener,
+        TcpStream,
     }
 
     private readonly IReadOnlyList<CompilationUnit> _units;
@@ -130,12 +133,13 @@ internal sealed class TypeChecker
     /// <summary>Nesting depth of deferred statements being checked: `?` may not appear in them (N0254).</summary>
     private int _deferDepth;
     private EnumEntry _allocError = null!;
+    private EnumEntry _ioError = null!;
     private StructEntry _systemHeap = null!;
     private StructEntry _failingAllocator = null!;
     /// <summary>Built-in items (AllocError, the allocators): emitted only if the program uses them.</summary>
     private readonly HashSet<object> _builtinItems = [];
     private readonly HashSet<object> _usedBuiltins = [];
-    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch", "Pool", "PoolBox", "Vector", "String", "SlotMap", "StableVector", "Handle"];
+    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch", "Pool", "PoolBox", "Vector", "String", "SlotMap", "StableVector", "Handle", "File", "TcpListener", "TcpStream"];
 
     public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics)
     {
@@ -157,6 +161,9 @@ internal sealed class TypeChecker
             [symbols.Intern("String")] = Builtin.String,
             [symbols.Intern("SlotMap")] = Builtin.SlotMap,
             [symbols.Intern("StableVector")] = Builtin.StableVector,
+            [symbols.Intern("File")] = Builtin.File,
+            [symbols.Intern("TcpListener")] = Builtin.TcpListener,
+            [symbols.Intern("TcpStream")] = Builtin.TcpStream,
         };
         _thisSymbol = symbols.Intern("this");
         _frameMemory = new StructField(symbols.Intern("memory"), types.ScratchFrame, 0, default) { IsRegionPart = true };
@@ -277,8 +284,25 @@ internal sealed class TypeChecker
         _items.Add(name.Name, _allocError);
         _enums.Add(_allocError);
         _builtinItems.Add(_allocError);
+        _ioError = DeclareIoError();
         _systemHeap = DeclareAllocatorType("SystemHeap");
         _failingAllocator = DeclareAllocatorType("FailingAllocator");
+    }
+
+    /// <summary>
+    /// <c>IoError</c> (type-system.md §26.2), parsed from built-in source. The variant order is the runtime's
+    /// (<c>NV_IO_*</c> in nova/rt.h).
+    /// </summary>
+    private EnumEntry DeclareIoError()
+    {
+        var source = new SourceText("<built-in>", "enum IoError { NotFound, PermissionDenied, AlreadyExists, IsDirectory, NotDirectory, "
+            + "InvalidInput, BrokenPipe, ConnectionRefused, AddressInUse, OutOfMemory, Other(i32) }");
+        var decl = (EnumDecl)Parser.ParseText(source, _symbols, new DiagnosticBag()).Items[0];
+        var entry = new EnumEntry(decl, source, TypeTable.CreateEnum("IoError", decl, source));
+        _items.Add(decl.Name.Name, entry);
+        _enums.Add(entry);
+        _builtinItems.Add(entry);
+        return entry;
     }
 
     /// <summary>A built-in allocator type (type-system.md §18.1): a field-less struct.</summary>
@@ -3602,6 +3626,9 @@ internal sealed class TypeChecker
             case CallExpr { Callee: MemberExpr { Target: NameExpr vectorName } vectorMember } vectorCall
                 when Lookup(vectorName.Name.Name) is Builtin.Vector or Builtin.String:
                 return CheckVectorCreate(vectorCall, vectorMember, vectorName, Lookup(vectorName.Name.Name) is Builtin.String, expected);
+            case CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } resourceName } resourceMember } resourceCall
+                when Lookup(resourceName.Name.Name) is Builtin.File or Builtin.TcpListener or Builtin.TcpStream:
+                return CheckResourceFunction(resourceCall, resourceMember, (Builtin)Lookup(resourceName.Name.Name)!);
             case CallExpr { Callee: MemberExpr { Target: NameExpr containerName } containerMember } containerCall
                 when Lookup(containerName.Name.Name) is Builtin.SlotMap or Builtin.StableVector:
                 return CheckContainerCreate(containerCall, containerMember, containerName,
@@ -4128,7 +4155,7 @@ internal sealed class TypeChecker
     {
         foreach (var argument in call.Arguments)
         {
-            Synth(argument, null);
+            Synth(argument is MutArgExpr marked ? marked.Operand : argument, null); // the call is already rejected
         }
     }
 
@@ -4387,6 +4414,83 @@ internal sealed class TypeChecker
         return container.IsBottom ? ErrorResult(call.Span) : new HirBuiltinCall(BuiltinFunction.VectorCreate, [], container, call.Span);
     }
 
+    private NovaType IoResult(NovaType ok) => ResultOf(ok, Used(_ioError).Type);
+
+    /// <summary><c>File.open</c>, <c>File.create</c>, <c>File.remove</c>, <c>TcpListener.bind</c>, <c>TcpStream.connect</c> (§26).</summary>
+    private HirExpr CheckResourceFunction(CallExpr call, MemberExpr member, Builtin owner)
+    {
+        var text = Name(member.Member.Name);
+        (BuiltinFunction Function, string Usage, NovaType Result)? signature = (owner, text) switch
+        {
+            (Builtin.File, "open") => (BuiltinFunction.FileOpen, "File.open(path)", IoResult(_types.File)),
+            (Builtin.File, "create") => (BuiltinFunction.FileCreate, "File.create(path)", IoResult(_types.File)),
+            (Builtin.File, "remove") => (BuiltinFunction.FileRemove, "File.remove(path)", IoResult(_types.Void)),
+            (Builtin.TcpListener, "bind") => (BuiltinFunction.TcpListen, "TcpListener.bind(address, port)", IoResult(_types.TcpListener)),
+            (Builtin.TcpStream, "connect") => (BuiltinFunction.TcpConnect, "TcpStream.connect(address, port)", IoResult(_types.TcpStream)),
+            _ => null,
+        };
+        if (signature is not { } sig)
+        {
+            Error(DiagnosticCodes.UndefinedName, member.Member.Span, $"'{owner}' has no function '{text}'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var withPort = sig.Function is BuiltinFunction.TcpListen or BuiltinFunction.TcpConnect;
+        if (call.Arguments.Length != (withPort ? 2 : 1))
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, $"write '{sig.Usage}'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var arguments = ImmutableArray.CreateBuilder<HirExpr>();
+        arguments.Add(CheckArgument(call.Arguments[0], _types.StringView));
+        if (withPort)
+        {
+            arguments.Add(CheckExpr(call.Arguments[1], _types.U16));
+        }
+        return arguments.Any(a => a.Type.IsBottom) ? ErrorResult(call.Span) : new HirBuiltinCall(sig.Function, arguments.ToImmutable(), sig.Result, call.Span);
+    }
+
+    /// <summary>Methods of a file or socket place (§26.3, §26.4).</summary>
+    private HirExpr CheckResourceMethod(CallExpr call, MemberExpr member, HirExpr resource)
+    {
+        var kind = resource.Type.Resource;
+        var text = Name(member.Member.Name);
+        (BuiltinFunction Function, int Arity, bool Mutable, NovaType Result)? signature = (kind, text) switch
+        {
+            (ResourceKind.File or ResourceKind.TcpStream, "read") => (BuiltinFunction.ResourceRead, 1, true, IoResult(_types.USize)),
+            (ResourceKind.File or ResourceKind.TcpStream, "write") => (BuiltinFunction.ResourceWrite, 1, true, IoResult(_types.Void)),
+            (ResourceKind.TcpStream, "shutdownWrite") => (BuiltinFunction.TcpShutdownWrite, 0, true, IoResult(_types.Void)),
+            (ResourceKind.TcpListener, "accept") => (BuiltinFunction.TcpAccept, 0, false, IoResult(_types.TcpStream)),
+            (ResourceKind.TcpListener, "port") => (BuiltinFunction.TcpPort, 0, false, IoResult(_types.U16)),
+            _ => null,
+        };
+        if (signature is not { } sig)
+        {
+            Error(DiagnosticCodes.UndefinedName, member.Member.Span, $"'{resource.Type}' has no method '{text}'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (call.Arguments.Length != sig.Arity)
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, sig.Arity == 0 ? $"'{text}' takes no arguments" : $"'{text}' takes one argument");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var argument = sig.Function switch
+        {
+            BuiltinFunction.ResourceRead => CheckArgument(call.Arguments[0], _types.SliceOf(_types.U8, isMutable: true)),
+            BuiltinFunction.ResourceWrite => CheckArgument(call.Arguments[0], _types.SliceOf(_types.U8, isMutable: false)),
+            _ => null,
+        };
+        var receiver = BorrowPlace(resource, sig.Mutable, member.Target.Span);
+        if (receiver.Type.IsBottom || argument is { Type.IsBottom: true })
+        {
+            return ErrorResult(call.Span);
+        }
+        return new HirBuiltinCall(sig.Function, argument is null ? [receiver] : [receiver, argument], sig.Result, call.Span);
+    }
+
     /// <summary>
     /// A method of a slot map (§24.1) or stable vector (§24.2) place. <c>insert</c>, <c>getMut</c> and <c>remove</c>
     /// take <c>borrow mut this</c>; <c>get</c>, <c>contains</c> and a stable vector's <c>push</c> take <c>borrow this</c>.
@@ -4523,6 +4627,15 @@ internal sealed class TypeChecker
         {
             return CheckContainerMethod(call, member, vector);
         }
+        if (vector.Type.Kind == TypeKind.Resource)
+        {
+            return CheckResourceMethod(call, member, vector);
+        }
+        if (vector.Type == _ioError.Type && Name(member.Member.Name) == "message" && call.Arguments.IsEmpty)
+        {
+            // e.message() (§26.2): static text for the variant.
+            return new HirBuiltinCall(BuiltinFunction.IoErrorMessage, [AutoDeref(receiver)], _types.StringView, call.Span);
+        }
         if (receiver.Type.IsBox || receiver.Type.Pointee is { IsBox: true })
         {
             receiver = AutoDeref(receiver); // the method receives the box's contents (§18.2)
@@ -4634,6 +4747,13 @@ internal sealed class TypeChecker
             (Builtin.Console, "write") => (BuiltinFunction.ConsoleWrite, 1, 1),
             (Builtin.Console, "writeLine") => (BuiltinFunction.ConsoleWriteLine, 0, 1),
             (Builtin.Process, "exit") => (BuiltinFunction.ProcessExit, 1, 1),
+            (Builtin.Process, "argumentCount") => (BuiltinFunction.ArgumentCount, 0, 0),
+            (Builtin.Process, "argument") => (BuiltinFunction.Argument, 1, 1),
+            (Builtin.Process, "run") => (BuiltinFunction.ProcessRun, 2, 2),
+            (Builtin.Console, "read") => (BuiltinFunction.ConsoleRead, 1, 1),
+            (Builtin.Console, "writeBytes") => (BuiltinFunction.ConsoleWriteBytes, 1, 1),
+            (Builtin.Console, "writeError") => (BuiltinFunction.ConsoleWriteError, 1, 1),
+            (Builtin.Console, "writeErrorLine") => (BuiltinFunction.ConsoleWriteErrorLine, 0, 1),
             _ => null,
         };
         if (signature is not { } sig)
@@ -4657,6 +4777,30 @@ internal sealed class TypeChecker
         {
             var code = CheckExpr(call.Arguments[0], _types.I32);
             return new HirBuiltinCall(sig.Function, [code], _types.Never, call.Span);
+        }
+        switch (sig.Function)
+        {
+            case BuiltinFunction.ArgumentCount:
+                return new HirBuiltinCall(sig.Function, [], _types.USize, call.Span);
+            case BuiltinFunction.ProcessRun:
+            {
+                var program = CheckArgument(call.Arguments[0], _types.StringView);
+                var views = _types.ReferenceTo(VectorType(_types.StringView, Used(_systemHeap).Type), isMutable: false);
+                var argumentList = CheckArgument(call.Arguments[1], views);
+                return program.Type.IsBottom || argumentList.Type.IsBottom
+                    ? ErrorResult(call.Span)
+                    : new HirBuiltinCall(sig.Function, [program, argumentList], IoResult(_types.I32), call.Span);
+            }
+            case BuiltinFunction.Argument:
+                return new HirBuiltinCall(sig.Function, [CheckExpr(call.Arguments[0], _types.USize)], OptionOf(_types.StringView), call.Span);
+            case BuiltinFunction.ConsoleRead:
+                return new HirBuiltinCall(sig.Function, [CheckArgument(call.Arguments[0], _types.SliceOf(_types.U8, isMutable: true))],
+                    IoResult(_types.USize), call.Span);
+            case BuiltinFunction.ConsoleWriteBytes:
+                return new HirBuiltinCall(sig.Function, [CheckArgument(call.Arguments[0], _types.SliceOf(_types.U8, isMutable: false))],
+                    _types.Void, call.Span);
+            case BuiltinFunction.ConsoleWriteError or BuiltinFunction.ConsoleWriteErrorLine:
+                return new HirBuiltinCall(sig.Function, [.. call.Arguments.Select(a => CheckArgument(a, _types.StringView))], _types.Void, call.Span);
         }
 
         var arguments = ImmutableArray.CreateBuilder<HirExpr>(count);

@@ -83,6 +83,50 @@ void nova_svec_free(void **chunks, uint32_t allocator) {
     }
 }
 
+void nova_write_bytes(const uint8_t *bytes, uint64_t length) {
+    nova_platform_write_stdout(bytes, (size_t)length);
+}
+
+void nova_write_error(nv_str text) {
+    nova_platform_write_stderr(text.ptr, (size_t)text.len);
+}
+
+nv_str nova_io_message(uint32_t kind) {
+    static const char *const messages[] = {
+        "No such file or directory", "Permission denied", "File exists", "Is a directory",
+        "Not a directory", "Invalid argument", "Broken pipe", "Connection refused",
+        "Address already in use", "Out of memory", "Input/output error",
+    };
+    const char *text = messages[kind <= NV_IO_OTHER ? kind : NV_IO_OTHER];
+    uint64_t length = 0;
+    while (text[length] != 0) length++;
+    return (nv_str){ .ptr = (const uint8_t *)text, .len = length };
+}
+
+bool nova_utf8_valid(const uint8_t *bytes, uint64_t length) {
+    uint64_t i = 0;
+    while (i < length) {
+        uint8_t b = bytes[i];
+        uint64_t extra;
+        uint32_t min;
+        uint32_t code;
+        if (b < 0x80u) { i++; continue; }
+        if ((b & 0xE0u) == 0xC0u) { extra = 1; min = 0x80u; code = b & 0x1Fu; }
+        else if ((b & 0xF0u) == 0xE0u) { extra = 2; min = 0x800u; code = b & 0x0Fu; }
+        else if ((b & 0xF8u) == 0xF0u) { extra = 3; min = 0x10000u; code = b & 0x07u; }
+        else return false;
+        if (extra > length - i - 1) return false;
+        for (uint64_t k = 1; k <= extra; k++) {
+            uint8_t c = bytes[i + k];
+            if ((c & 0xC0u) != 0x80u) return false;
+            code = (code << 6) | (c & 0x3Fu);
+        }
+        if (code < min || code > 0x10FFFFu || (code >= 0xD800u && code <= 0xDFFFu)) return false;
+        i += extra + 1;
+    }
+    return true;
+}
+
 void nova_write_view(nv_str text) {
     nova_platform_write_stdout(text.ptr, (size_t)text.len);
 }

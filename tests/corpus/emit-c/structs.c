@@ -88,7 +88,8 @@ static nvT_Point nvM_5Point_origin(void) {
     return t_1;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
     return (int)nova_rt_finish(nv_main());
 }

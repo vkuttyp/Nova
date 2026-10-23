@@ -135,7 +135,8 @@ static nvR_QUu16E10AllocError nvAR_u16(void *r, uint32_t kind, uint64_t n, uint1
     return ((nvR_QUu16E10AllocError){ .tag = 0, .u.v_Ok = { .f__0 = ((nvSm_u16){ .ptr = p, .len = n }) } });
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
     return (int)nova_rt_finish(nv_main());
 }

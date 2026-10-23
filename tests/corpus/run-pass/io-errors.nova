@@ -1,0 +1,40 @@
+// I/O errors and argument edge cases that are the same on every machine (type-system.md §26).
+fn main() {
+    Console.writeLine(Process.argumentCount() == 1);
+    Console.writeLine(Process.argument(1) == null);
+    Console.writeLine(Process.argument(0) != null);
+    match (File.open("/nonexistent-nova-dir/file")) {
+        Ok(f) => { Console.writeLine("unexpected"); }
+        Err(e) => {
+            match (e) {
+                IoError.NotFound => { Console.writeLine("not found"); }
+                _ => { Console.writeLine("other"); }
+            }
+            Console.writeLine(e.message());
+        }
+    }
+    match (File.create("bad\u{0}name")) {
+        Ok(f) => { Console.writeLine("unexpected"); }
+        Err(e) => { Console.writeLine(e.message()); }
+    }
+    match (TcpListener.bind("999.0.0.1", 0u16)) {
+        Ok(l) => { Console.writeLine("unexpected"); }
+        Err(e) => { Console.writeLine(e.message()); }
+    }
+    match (TcpStream.connect("1.2.3", 80u16)) {
+        Ok(s) => { Console.writeLine("unexpected"); }
+        Err(e) => { Console.writeLine(e.message()); }
+    }
+    Console.writeBytes("bytes".bytes());
+    Console.writeLine();
+    Console.writeError("");
+}
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: not found
+// expect-stdout: No such file or directory
+// expect-stdout: Invalid argument
+// expect-stdout: Invalid argument
+// expect-stdout: Invalid argument
+// expect-stdout: bytes

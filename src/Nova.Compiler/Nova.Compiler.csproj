@@ -13,6 +13,7 @@
     <EmbeddedResource Include="..\..\runtime\include\nova\rt.h" LogicalName="runtime/include/nova/rt.h" />
     <EmbeddedResource Include="..\..\runtime\core\nova_rt_core.c" LogicalName="runtime/core/nova_rt_core.c" />
     <EmbeddedResource Include="..\..\runtime\hosted\nova_rt_hosted.c" LogicalName="runtime/hosted/nova_rt_hosted.c" />
+    <EmbeddedResource Include="..\..\runtime\hosted\nova_rt_io.c" LogicalName="runtime/hosted/nova_rt_io.c" />
   </ItemGroup>
 
 </Project>

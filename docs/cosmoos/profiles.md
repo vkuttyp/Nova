@@ -56,7 +56,9 @@ allowed or not, and the list below is normative.
 - Arenas and scratch regions take chunks from `mmap(MAP_ANONYMOUS)` (a public libc
   function, consistent with L1).
 - Console/IO: `write`/`read` on fds. Files: `open/read/write/close/stat/dirent`.
-  Processes: `spawn*` + `waitpid` (no fork/exec). Time: `clock_gettime`
+  Processes: `spawn*` + `waitpid` (no fork/exec). **Implemented in C3** (type-system.md §26,
+  `runtime/hosted/nova_rt_io.c`): files (`open/read/write/close/unlink`), TCP over IPv4, `spawnvp` +
+  `waitpid`, and argv; `stat`/`dirent` and time are not yet. Time: `clock_gettime`
   (monotonic + realtime). Sockets: CosmoOS-shaped socket API. Absent in libc:
   math, poll/select, DNS, `setjmp`, sigaltstack [PA impl 2]. Nova's std
   omits them in v0.

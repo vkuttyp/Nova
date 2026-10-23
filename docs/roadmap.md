@@ -25,7 +25,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **M4** ✅ 2026-10-22 Regions (ADR 0004) | `Arena`, `Scratch`, `FixedBufferAllocator`, `Pool` | Compile-fail: every arena-escape form (return, store in Box, outlive via `reset`/drop). Run tests for bulk release. R2 enforced |
 | **M5** Escape/placement analysis | CFG analysis, classification, `--explain-allocations`, Box→stack demotion | Optimised vs unoptimised outputs equal on the whole run-pass corpus. Drop timing identical (instrumented). Report snapshots. No program accepted only because of placement |
 | **M6** ✅ 2026-10-23 Generics & collections (ADR 0005) | Monomorphisation, interfaces, `Vector`, `String`, `StringView`, `StableVector`, `SlotMap`, iterators. OD-3 design | Invalidation compile-fail tests. Property tests of collections against a model. Ex9, Ex10, Ex12, Ex13 |
-| **C3** Collections & syscalls | Files, sockets, processes in Profile A; a useful utility (candidate: a `wc`/`sha256sum`-class tool or a hexdump) | The utility runs in QEMU on both arches, with output compared to the C/BusyBox equivalent on a test corpus |
+| **C3** ✅ 2026-10-23 Collections & syscalls ([report](cosmoos/c3-report.md)) | Files, sockets, processes in Profile A; a useful utility (candidate: a `wc`/`sha256sum`-class tool or a hexdump) | The utility runs in QEMU on both arches, with output compared to the C/BusyBox equivalent on a test corpus |
 | **M7** Production C backend | Source maps, structured C, Csmith-style fuzzer, NIR reference interpreter, MSVC best-effort | 24 h fuzz campaign with no miscompile across clang/gcc × O0/O2. Interpreter agrees with native output |
 | **M8** Systems/freestanding | core library split, FFI, raw pointers, MMIO types, custom entry points, `freestanding` profile | Freestanding object with no libc: verified by `llvm-nm -u` allowlist |
 | **C4** Freestanding in CosmoOS | Nova kernel-profile object built with kernel flags | Symbols, relocations and sections checked against the module loader allowlist. Frame sizes ≤ 2 KiB. No FP registers (disassembly check) |
@@ -83,7 +83,11 @@ corpus and a guest-side fault-injection sweep inside CosmoOS on both arches.
 in structs, enums, generic instances and collections, checked by signature flows and one loan set
 per value.
 
-Next, in the order above: **C3** (collections and syscalls in CosmoOS: a useful utility). **M5**
-(escape and placement analysis) may run in parallel. **M5** (escape and
+**C3 is done** (2026-10-23; `cosmoos/c3-report.md`): files, TCP sockets, processes and program
+arguments (type-system §26), and `nwc`, a Nova word counter that matches BusyBox `wc` byte for byte
+inside CosmoOS on both arches (`integrations/cosmoos/c3.py`).
+
+Next, in the order above: **M7** (production C backend: source maps, structured C, a Csmith-style
+fuzzer, the NIR reference interpreter). **M5** (escape and placement analysis) may run in parallel. **M5** (escape and
 placement analysis) may follow M4 in parallel. In parallel, when the owner wants it: propose the
 S1 in-tree port for C1 (OD-20).

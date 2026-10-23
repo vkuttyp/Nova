@@ -98,7 +98,8 @@ bb3:
     nova_panic(NV_PANIC_UNREACHABLE, NV_LOC(nv_file_0, 4u, 4u));
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
     return (int)nova_rt_finish(nv_main());
 }

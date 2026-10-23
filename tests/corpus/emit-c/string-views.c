@@ -47,7 +47,8 @@ bb2:
     return;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
     nv_main();
     return (int)nova_rt_finish(0);

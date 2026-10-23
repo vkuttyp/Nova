@@ -71,6 +71,7 @@ public sealed class CEmitter
         EmitArenaHelperPrototypes();
         EmitVectorHelperPrototypes();
         EmitContainerHelperPrototypes();
+        EmitIoHelperPrototypes();
         foreach (var result in PoolTakeResults)
         {
             Line($"static NV_UNUSED {PoolTakeSignature(result)};");
@@ -87,6 +88,7 @@ public sealed class CEmitter
         EmitArenaHelpers();
         EmitVectorHelpers();
         EmitContainerHelpers();
+        EmitIoHelpers();
         EmitPoolTake();
 
         EmitMainWrapper();
@@ -258,7 +260,8 @@ public sealed class CEmitter
     /// The drop glue of a type that needs drop: <c>nvD_&lt;length&gt;&lt;Name&gt;</c> for user structs and enums,
     /// <c>nvD_&lt;mangled&gt;</c> for built-in instantiations (which start with a letter, so they cannot collide).
     /// </summary>
-    private static string DropGlueName(NovaType type) => type.Kind == TypeKind.Region
+    private static string DropGlueName(NovaType type) => type.Kind == TypeKind.Resource ? "nova_fd_drop"
+        : type.Kind == TypeKind.Region
             ? type.Region switch { RegionKind.Arena => "nova_arena_drop", RegionKind.Pool => "nova_pool_drop", _ => "nova_scratch_drop" }
         : type.Enum?.ResultTypes is not null || type.Enum?.OptionType is not null || type.IsBox || type.Kind is TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap || IsInstance(type) ? $"nvD_{Mangle(type)}" : $"nvD_{type.Name.Length}{type.Name}";
 
@@ -508,6 +511,61 @@ public sealed class CEmitter
     private IEnumerable<NovaType> VectorWithCapacityResults => Composites.Where(t => t.Enum?.ResultTypes is ({ IsVector: true }, { Name: "AllocError" }));
 
     private NovaType VoidAllocResult => Composites.First(t => t.Enum?.ResultTypes is ({ Kind: TypeKind.Void }, { Name: "AllocError" }));
+
+    private static string IoHelper(NovaType result) => $"nvIOR_{Mangle(result)}";
+
+    /// <summary>The <c>Result&lt;X, IoError&gt;</c> types that I/O built-ins produce (§26).</summary>
+    private IEnumerable<NovaType> IoResults => Composites.Where(t => t.Enum?.ResultTypes is (_, { Name: "IoError" }));
+
+    private void EmitIoHelperPrototypes()
+    {
+        foreach (var result in IoResults)
+        {
+            Line($"static NV_UNUSED {CTypeName(result)} {IoHelper(result)}(nv_io_result);");
+        }
+        if (OptionOfView is { } option)
+        {
+            Line($"static NV_UNUSED {CTypeName(option)} nvARG(uint64_t);");
+        }
+    }
+
+    private NovaType? OptionOfView => _types.Composites.FirstOrDefault(t => t.Enum?.OptionType is { IsStringView: true });
+
+    /// <summary>
+    /// The conversions from the runtime's <c>nv_io_result</c> to Nova results (§26): <c>Err</c> with the
+    /// <c>IoError</c> variant for the errno (its number kept for <c>Other</c>), or <c>Ok</c> with the value.
+    /// </summary>
+    private void EmitIoHelpers()
+    {
+        foreach (var result in IoResults)
+        {
+            var (ok, error) = result.Enum!.ResultTypes!.Value;
+            var name = CTypeName(result);
+            var other = error.Enum!.Variants[^1];
+            Line($"static {name} {IoHelper(result)}(nv_io_result r) {{");
+            Line("    if (r.error != 0) {");
+            var (_, _, tagSize, _) = TypeTable.EnumLayout(error);
+            Line($"        {CTypeName(error)} e = {{ .tag = (uint{tagSize * 8}_t)nova_io_kind(r.error) }};");
+            Line($"        if (e.tag == NV_IO_OTHER) e.u.{VariantName(other)}.{FieldName(other.Payload[0])} = r.error;");
+            Line($"        return (({name}){{ .tag = 1, .u.v_Err = {{ .f__0 = e }} }});");
+            Line("    }");
+            Line(ok.Kind == TypeKind.Void
+                ? $"    return (({name}){{ .tag = 0 }});"
+                : $"    return (({name}){{ .tag = 0, .u.v_Ok = {{ .f__0 = ({CType(ok)})r.value }} }});");
+            Line("}");
+            Line();
+        }
+        if (OptionOfView is { } option)
+        {
+            var name = CTypeName(option);
+            Line($"static {name} nvARG(uint64_t index) {{");
+            Line("    nv_str text;");
+            Line($"    if (!nova_arg(index, &text)) return (({name}){{ .tag = 0 }});");
+            Line($"    return (({name}){{ .tag = 1, .u.v_Some = {{ .f__0 = text }} }});");
+            Line("}");
+            Line();
+        }
+    }
 
     private static string SlotName(NovaType map) => $"nvKS_{Mangle(map)}";
 
@@ -1026,7 +1084,11 @@ public sealed class CEmitter
             case BuiltinFunction.VectorPush or BuiltinFunction.StringAppend or BuiltinFunction.VectorPop
                 or BuiltinFunction.VectorClear or BuiltinFunction.VectorWithCapacity or BuiltinFunction.StableVectorPush
                 or BuiltinFunction.SlotMapInsert or BuiltinFunction.SlotMapGet or BuiltinFunction.SlotMapRemove
-                or BuiltinFunction.SlotMapContains:
+                or BuiltinFunction.SlotMapContains or BuiltinFunction.FileOpen or BuiltinFunction.FileCreate or BuiltinFunction.FileRemove
+                or BuiltinFunction.ResourceRead or BuiltinFunction.ResourceWrite or BuiltinFunction.ConsoleRead
+                or BuiltinFunction.TcpListen or BuiltinFunction.TcpConnect or BuiltinFunction.TcpPort or BuiltinFunction.TcpAccept
+                or BuiltinFunction.TcpShutdownWrite or BuiltinFunction.Argument or BuiltinFunction.ArgumentCount or BuiltinFunction.ProcessRun
+                or BuiltinFunction.IoErrorMessage:
                 Line(builtin.Type.Kind == TypeKind.Void ? $"    {Rvalue(builtin)};" : $"    (void){Rvalue(builtin)};");
                 return;
             case BuiltinFunction.FailAfter:
@@ -1037,6 +1099,19 @@ public sealed class CEmitter
                 return;
             case BuiltinFunction.ArenaReset:
                 Line($"    nova_arena_reset({Operand(builtin.Arguments[0])});");
+                return;
+            case BuiltinFunction.ConsoleWriteBytes:
+                Line($"    nova_write_bytes({Operand(builtin.Arguments[0])}.ptr, {Operand(builtin.Arguments[0])}.len);");
+                return;
+            case BuiltinFunction.ConsoleWriteError or BuiltinFunction.ConsoleWriteErrorLine:
+                foreach (var text in builtin.Arguments)
+                {
+                    Line($"    nova_write_error({Operand(text)});");
+                }
+                if (builtin.Function == BuiltinFunction.ConsoleWriteErrorLine)
+                {
+                    Line("    nova_write_error(((nv_str){ .ptr = (const uint8_t *)\"\\n\", .len = 1u }));");
+                }
                 return;
         }
         foreach (var argument in builtin.Arguments)
@@ -1131,6 +1206,26 @@ public sealed class CEmitter
             $"nova_pool_create({AllocatorId(pool.Arguments[0].Type)}, (uint64_t){Operand(pool.Arguments[1])})",
         NirBuiltin { Function: BuiltinFunction.PoolTake } take => $"nvPT_{Mangle(take.Arguments[1].Type)}({Operand(take.Arguments[0])}, {Operand(take.Arguments[1])})",
         NirBuiltin { Function: BuiltinFunction.ScratchNest } nest => $"nova_scratch_enter_child({Operand(nest.Arguments[0])})",
+        NirBuiltin { Function: BuiltinFunction.FileOpen or BuiltinFunction.FileCreate } open =>
+            $"{IoHelper(open.Type)}(nova_file_open({Operand(open.Arguments[0])}, {(open.Function == BuiltinFunction.FileOpen ? "0u" : "1u")}))",
+        NirBuiltin { Function: BuiltinFunction.FileRemove } remove => $"{IoHelper(remove.Type)}(nova_file_remove({Operand(remove.Arguments[0])}))",
+        NirBuiltin { Function: BuiltinFunction.ResourceRead } read =>
+            $"{IoHelper(read.Type)}(nova_fd_read(*{Operand(read.Arguments[0])}, {Operand(read.Arguments[1])}.ptr, {Operand(read.Arguments[1])}.len))",
+        NirBuiltin { Function: BuiltinFunction.ConsoleRead } read =>
+            $"{IoHelper(read.Type)}(nova_fd_read(0, {Operand(read.Arguments[0])}.ptr, {Operand(read.Arguments[0])}.len))",
+        NirBuiltin { Function: BuiltinFunction.ResourceWrite } write =>
+            $"{IoHelper(write.Type)}(nova_fd_write(*{Operand(write.Arguments[0])}, {Operand(write.Arguments[1])}.ptr, {Operand(write.Arguments[1])}.len))",
+        NirBuiltin { Function: BuiltinFunction.TcpListen or BuiltinFunction.TcpConnect } open =>
+            $"{IoHelper(open.Type)}(nova_tcp_{(open.Function == BuiltinFunction.TcpListen ? "listen" : "connect")}({Operand(open.Arguments[0])}, {Operand(open.Arguments[1])}))",
+        NirBuiltin { Function: BuiltinFunction.TcpPort } port => $"{IoHelper(port.Type)}(nova_tcp_port(*{Operand(port.Arguments[0])}))",
+        NirBuiltin { Function: BuiltinFunction.TcpAccept } accept => $"{IoHelper(accept.Type)}(nova_tcp_accept(*{Operand(accept.Arguments[0])}))",
+        NirBuiltin { Function: BuiltinFunction.TcpShutdownWrite } shutdown =>
+            $"{IoHelper(shutdown.Type)}(nova_tcp_shutdown_write(*{Operand(shutdown.Arguments[0])}))",
+        NirBuiltin { Function: BuiltinFunction.IoErrorMessage } message => $"nova_io_message((uint32_t){Operand(message.Arguments[0])}.tag)",
+        NirBuiltin { Function: BuiltinFunction.ArgumentCount } => "nova_arg_count()",
+        NirBuiltin { Function: BuiltinFunction.ProcessRun } run =>
+            $"{IoHelper(run.Type)}(nova_process_run({Operand(run.Arguments[0])}, {Operand(run.Arguments[1])}->ptr, {Operand(run.Arguments[1])}->len))",
+        NirBuiltin { Function: BuiltinFunction.Argument } argument => $"nvARG({Operand(argument.Arguments[0])})",
         NirBuiltin { Function: BuiltinFunction.VectorCreate, Type.IsStableVector: true } create => $"(({CTypeName(create.Type)}){{ .len = 0u }})",
         NirBuiltin { Function: BuiltinFunction.VectorCreate, Type.Kind: TypeKind.SlotMap } create =>
             $"(({CTypeName(create.Type)}){{ .ptr = ({SlotName(create.Type)} *)(void *)&nova_vec_empty, .len = 0u, .cap = 0u, .count = 0u, .free = UINT32_MAX }})",
@@ -1344,6 +1439,7 @@ public sealed class CEmitter
         TypeKind.StableVector => $"nvSV_{Mangle(type)[1..]}",
         TypeKind.SlotMap => $"nvK_{Mangle(type)[1..]}",
         TypeKind.Handle => "nv_handle",
+        TypeKind.Resource => "int32_t", // a descriptor (§26)
         TypeKind.Region => type.Region switch
         {
             RegionKind.Arena => "nv_arena",
@@ -1377,6 +1473,7 @@ public sealed class CEmitter
         TypeKind.StableVector => $"W{Mangle(type.Pointee!.Element!)}{Mangle(type.Allocator!)}",
         TypeKind.SlotMap => $"K{Mangle(type.Element!)}{Mangle(type.Allocator!)}",
         TypeKind.Handle => $"H{Mangle(type.Element!)}",
+        TypeKind.Resource => type.Resource switch { ResourceKind.File => "IF", ResourceKind.TcpListener => "IL", _ => "IS" },
         TypeKind.Reference => $"{(type.IsMutableReference ? "Q" : "P")}{Mangle(type.Pointee!)}",
         TypeKind.Region when type.Region == RegionKind.Pool => $"G4Pool{Mangle(type.Element!)}",
         TypeKind.Region => $"G{type.Name.Length}{type.Name}",
@@ -1394,7 +1491,9 @@ public sealed class CEmitter
         {
             return;
         }
-        Line("int main(void) {");
+        // C's signature for `main` is the one place plain `char` appears; argv goes to the runtime as bytes.
+        Line("int main(int argc, char **argv) {");
+        Line("    nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);");
         Line("    nova_rt_start();");
         Line(main.ReturnType.Kind == TypeKind.Void
             ? "    nv_main();\n    return (int)nova_rt_finish(0);"

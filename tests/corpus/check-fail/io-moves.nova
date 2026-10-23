@@ -1,0 +1,12 @@
+// Files and sockets are move types that close when destroyed (type-system.md §26.3, §26.4).
+fn consume(f: File) { }
+fn main() {
+    let f = File.open("x")!;
+    consume(f);
+    consume(f); // error[N0250]
+    var g = File.open("y")!;
+    var buffer = [0u8; 4];
+    let view = buffer[..];
+    let n = g.read(mut buffer[..]); // error[N0241]
+    Console.writeLine(view.length);
+}

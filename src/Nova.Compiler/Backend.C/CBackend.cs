@@ -34,6 +34,7 @@ public static class CBackend
         new("nova/rt.h", ReadResource("runtime/include/nova/rt.h")),
         new("nova_rt_core.c", ReadResource("runtime/core/nova_rt_core.c")),
         new("nova_rt_hosted.c", ReadResource("runtime/hosted/nova_rt_hosted.c")),
+        new("nova_rt_io.c", ReadResource("runtime/hosted/nova_rt_io.c")),
     ];
 
     /// <summary>
@@ -110,13 +111,15 @@ public static class Toolchain
     private static readonly SemaphoreSlim s_toolSlots = new(Environment.ProcessorCount, Environment.ProcessorCount);
 
     public static ToolResult Run(string fileName, IEnumerable<string> arguments, TimeSpan? timeout = null,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null, string? workingDirectory = null, byte[]? standardInput = null)
     {
         var info = new ProcessStartInfo(fileName)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            RedirectStandardInput = standardInput is not null,
             UseShellExecute = false,
+            WorkingDirectory = workingDirectory ?? "",
         };
         foreach (var argument in arguments)
         {
@@ -132,6 +135,11 @@ public static class Toolchain
         try
         {
             using var process = Process.Start(info) ?? throw new InvalidOperationException($"cannot start '{fileName}'");
+            if (standardInput is not null)
+            {
+                process.StandardInput.BaseStream.Write(standardInput);
+                process.StandardInput.Close();
+            }
             // Dedicated reader threads: async reads would need thread-pool threads, which blocked callers may hold.
             var stdout = ReadOnOwnThread(process.StandardOutput);
             var stderr = ReadOnOwnThread(process.StandardError);

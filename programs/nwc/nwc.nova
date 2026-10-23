@@ -1,0 +1,254 @@
+// nwc: count the lines, words, characters and bytes of files, and their longest line, with the
+// options and output format of BusyBox `wc` (C3, docs/cosmoos/c3-report.md).
+//
+//     nwc [-cmlwL] [FILE]...
+//
+// With no FILE, or when FILE is -, it reads standard input. Columns come in the order lines,
+// words, characters (-m), bytes (-c), longest line (-L); without options: lines, words, bytes.
+
+struct Counts {
+    lines: u64;
+    words: u64;
+    chars: u64;
+    bytes: u64;
+    longest: u64;
+}
+
+struct Options {
+    lines: bool;
+    words: bool;
+    chars: bool;
+    bytes: bool;
+    longest: bool;
+}
+
+// The state of one input: its counts so far, and where the current word and line stand.
+struct Counter {
+    counts: Counts;
+    inWord: bool;
+    column: u64;
+}
+
+fn zero() -> Counts => Counts { lines: 0, words: 0, chars: 0, bytes: 0, longest: 0 };
+
+// BusyBox's rules, byte by byte (C locale): printable ASCII has width 1, and is part of a word unless
+// it is a space; \t moves to the next tab stop; \n, \v, \f and \r end the line (for -L); those and
+// the space end a word. Every other byte (control characters, non-ASCII) is skipped: it has no width,
+// and neither starts nor ends a word.
+fn count(counter: borrow mut Counter, bytes: Slice<u8>) {
+    for (b in bytes) {
+        counter.counts.bytes += 1;
+        if ((b & 192u8) != 128u8) {
+            counter.counts.chars += 1; // a byte that starts a UTF-8 character
+        }
+        if (b >= 32u8 && b < 127u8) {
+            counter.column += 1;
+            if (b != 32u8) {
+                counter.inWord = true;
+                continue;
+            }
+        } else if (b >= 9u8 && b <= 13u8) {
+            if (b == 9u8) {
+                counter.column = (counter.column | 7) + 1;
+            } else {
+                if (b == 10u8) { counter.counts.lines += 1; }
+                if (counter.column > counter.counts.longest) { counter.counts.longest = counter.column; }
+                counter.column = 0;
+            }
+        } else {
+            continue;
+        }
+        endWord(mut counter);
+    }
+}
+
+fn endWord(counter: borrow mut Counter) {
+    if (counter.inWord) {
+        counter.counts.words += 1;
+        counter.inWord = false;
+    }
+}
+
+fn finish(counter: borrow mut Counter) {
+    endWord(mut counter);
+    if (counter.column > counter.counts.longest) { counter.counts.longest = counter.column; }
+}
+
+// Counts a file to its end; the error, if reading fails part way.
+fn countFile(file: borrow mut File, counter: borrow mut Counter) -> IoError? {
+    var buffer = [0u8; 16384];
+    loop {
+        match (file.read(mut buffer[..])) {
+            Ok(n) => {
+                if (n == 0) { break; }
+                count(mut counter, buffer[..n]);
+            }
+            Err(e) => { finish(mut counter); return e; }
+        }
+    }
+    finish(mut counter);
+    return null;
+}
+
+// Counts standard input to its end, likewise.
+fn countStandardInput(counter: borrow mut Counter) -> IoError? {
+    var buffer = [0u8; 16384];
+    loop {
+        match (Console.read(mut buffer[..])) {
+            Ok(n) => {
+                if (n == 0) { break; }
+                count(mut counter, buffer[..n]);
+            }
+            Err(e) => { finish(mut counter); return e; }
+        }
+    }
+    finish(mut counter);
+    return null;
+}
+
+fn digits(n: u64) -> u64 {
+    var count: u64 = 1;
+    var rest = n;
+    while (rest >= 10) {
+        rest = rest / 10;
+        count += 1;
+    }
+    return count;
+}
+
+fn writeColumn(value: u64, padded: bool, first: bool) {
+    if (!first) { Console.write(" "); }
+    if (padded) {
+        var width = digits(value);
+        while (width < 9) {
+            Console.write(" ");
+            width += 1;
+        }
+    }
+    Console.write(value);
+}
+
+fn writeLine(counts: borrow Counts, options: borrow Options, padded: bool, name: StringView?) {
+    var first = true;
+    if (options.lines) { writeColumn(counts.lines, padded, first); first = false; }
+    if (options.words) { writeColumn(counts.words, padded, first); first = false; }
+    if (options.chars) { writeColumn(counts.chars, padded, first); first = false; }
+    if (options.bytes) { writeColumn(counts.bytes, padded, first); first = false; }
+    if (options.longest) { writeColumn(counts.longest, padded, first); first = false; }
+    match (name) {
+        Some(text) => { Console.write(" "); Console.write(text); }
+        null => { }
+    }
+    Console.writeLine();
+}
+
+fn add(total: borrow mut Counts, counts: borrow Counts) {
+    total.lines += counts.lines;
+    total.words += counts.words;
+    total.chars += counts.chars;
+    total.bytes += counts.bytes;
+    if (counts.longest > total.longest) { total.longest = counts.longest; }
+}
+
+fn reportError(name: StringView, error: IoError) {
+    Console.writeError("wc: ");
+    Console.writeError(name);
+    Console.writeError(": ");
+    Console.writeErrorLine(error.message());
+}
+
+fn main() -> i32 {
+    var options = Options { lines: false, words: false, chars: false, bytes: false, longest: false };
+    var files = Vector<StringView>.create();
+    var endOfOptions = false;
+    for (i in 1..Process.argumentCount()) {
+        match (Process.argument(i)) {
+            Some(argument) => {
+                if (!endOfOptions && argument.length > 1 && argument[0] == 45u8) {
+                    if (argument == "--") {
+                        endOfOptions = true;
+                    } else {
+                        for (k in 1..argument.length) {
+                            let flag = argument[k];
+                            if (flag == 108u8) { options.lines = true; }
+                            else if (flag == 119u8) { options.words = true; }
+                            else if (flag == 99u8) { options.bytes = true; }
+                            else if (flag == 109u8) { options.chars = true; }
+                            else if (flag == 76u8) { options.longest = true; }
+                            else {
+                                Console.writeError("wc: unrecognized option: ");
+                                Console.writeErrorLine(argument[k..k + 1]);
+                                Console.writeErrorLine("Usage: wc [-cmlwL] [FILE]...");
+                                return 1;
+                            }
+                        }
+                    }
+                } else {
+                    files.push(argument)!;
+                }
+            }
+            null => {
+                Console.writeErrorLine("wc: an argument is not valid UTF-8");
+                return 1;
+            }
+        }
+    }
+    if (!(options.lines || options.words || options.chars || options.bytes || options.longest)) {
+        options.lines = true;
+        options.words = true;
+        options.bytes = true;
+    }
+    let columns = (if_count(options.lines) + if_count(options.words) + if_count(options.chars)
+        + if_count(options.bytes) + if_count(options.longest));
+    let padded = columns > 1 || files.length > 1;
+
+    var status = 0;
+    var total = zero();
+    if (files.length == 0) {
+        var counter = Counter { counts: zero(), inWord: false, column: 0 };
+        match (countStandardInput(mut counter)) {
+            Some(e) => { reportError("standard input", e); status = 1; }
+            null => { }
+        }
+        writeLine(counter.counts, options, padded, null);
+        return status;
+    }
+    for (i in 0..files.length) {
+        let name = files[i];
+        var counter = Counter { counts: zero(), inWord: false, column: 0 };
+        if (name == "-") {
+            match (countStandardInput(mut counter)) {
+                Some(e) => { reportError(name, e); status = 1; }
+                null => { }
+            }
+            writeLine(counter.counts, options, padded, name);
+            add(mut total, counter.counts);
+        } else {
+            match (File.open(name)) {
+                Ok(file) => {
+                    var opened = file;
+                    let failure = countFile(mut opened, mut counter);
+                    writeLine(counter.counts, options, padded, name);
+                    add(mut total, counter.counts);
+                    match (failure) {
+                        Some(e) => { reportError(name, e); status = 1; }
+                        null => { }
+                    }
+                }
+                Err(e) => {
+                    reportError(name, e);
+                    status = 1;
+                }
+            }
+        }
+    }
+    if (files.length > 1) {
+        writeLine(total, options, padded, "total");
+    }
+    return status;
+}
+
+fn if_count(flag: bool) -> u32 {
+    if (flag) { return 1; }
+    return 0;
+}

@@ -156,8 +156,11 @@ def check_elf(elf, prefix):
         f"non-executable stack, no undefined symbols")
 
 
-def make_image(cosmo, work, elves):
-    """The CosmoOS boot archive plus the Nova programs, signed and imaged with CosmoOS's scripts."""
+def make_image(cosmo, work, elves, extra=()):
+    """
+    The CosmoOS boot archive plus the Nova programs (as bin/<name>) and any `extra` (archive path,
+    host file) entries, signed and imaged with CosmoOS's scripts.
+    """
     staging = work / "archive"
     if staging.exists():
         shutil.rmtree(staging)
@@ -172,6 +175,7 @@ def make_image(cosmo, work, elves):
                 path.write_bytes(archive.extractfile(member).read())
                 entries.append(f"{member.name}={path}")
     entries += [f"bin/{elf.name}={elf}" for elf in elves]
+    entries += [f"{name}={path}" for name, path in extra]
 
     boot_tar = work / "boot.tar"
     log(f"mkbootarchive.py {boot_tar} <{len(entries)} entries: CosmoOS's own plus {len(elves)} Nova programs>")

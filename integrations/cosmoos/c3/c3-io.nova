@@ -1,0 +1,84 @@
+// C3: program arguments, files, TCP sockets and processes inside CosmoOS (type-system.md §26). Run as
+// `c3-io first second` in a writable directory (it creates and removes c3-test.txt there), with
+// `echo`, `false` and `sh` on PATH.
+fn main() -> i32 {
+    Console.writeLine(Process.argumentCount());
+    match (Process.argument(1)) {
+        Some(a) => { Console.writeLine(a); }
+        null => { Console.writeLine("no argument"); }
+    }
+    Console.writeLine(Process.argument(9) == null);
+
+    var out = File.create("c3-test.txt")!;
+    out.write("hello, file\n".bytes())!;
+    out.write("second line\n".bytes())!;
+    var input = File.open("c3-test.txt")!;
+    var buffer = [0u8; 64];
+    let n = input.read(mut buffer[..])!;
+    Console.writeLine(n);
+    Console.writeBytes(buffer[..n]);
+    Console.writeLine(input.read(mut buffer[..])!);
+    File.remove("c3-test.txt")!;
+    match (File.open("c3-test.txt")) {
+        Ok(f) => { Console.writeLine("unexpected"); }
+        Err(e) => { Console.writeLine(e.message()); }
+    }
+
+    // One thread: connect completes against the listen backlog before accept.
+    let listener = TcpListener.bind("127.0.0.1", 0u16)!;
+    let port = listener.port()!;
+    Console.writeLine(port > 0u16);
+    var client = TcpStream.connect("127.0.0.1", port)!;
+    var server = listener.accept()!;
+    client.write("ping".bytes())!;
+    client.shutdownWrite()!;
+    var got = [0u8; 16];
+    let k = server.read(mut got[..])!;
+    Console.writeBytes(got[..k]);
+    Console.writeLine("");
+    Console.writeLine(server.read(mut got[..])!); // the client shut down its side: end of stream
+    server.write("pong".bytes())!;
+    let m = client.read(mut got[..])!;
+    Console.writeBytes(got[..m]);
+    Console.writeLine("");
+    match (TcpStream.connect("not an address", 1u16)) {
+        Ok(s) => { }
+        Err(e) => { Console.writeLine(e.message()); }
+    }
+
+    // Processes: the child's output comes in order with ours (stdout is flushed before it starts).
+    var words = Vector<StringView>.create();
+    words.push("child")!;
+    Console.writeLine("before");
+    Console.writeLine(Process.run("echo", words)!);
+    var none = Vector<StringView>.create();
+    Console.writeLine(Process.run("false", none)!);
+    var script = Vector<StringView>.create();
+    script.push("-c")!;
+    script.push("exit 7")!;
+    Console.writeLine(Process.run("sh", script)!);
+    match (Process.run("nova-no-such-program", none)) {
+        Ok(status) => { Console.writeLine("unexpected"); }
+        Err(e) => { Console.writeLine(e.message()); }
+    }
+    return 0;
+}
+// expect-stdout: 3
+// expect-stdout: first
+// expect-stdout: true
+// expect-stdout: 24
+// expect-stdout: hello, file
+// expect-stdout: second line
+// expect-stdout: 0
+// expect-stdout: No such file or directory
+// expect-stdout: true
+// expect-stdout: ping
+// expect-stdout: 0
+// expect-stdout: pong
+// expect-stdout: Invalid argument
+// expect-stdout: before
+// expect-stdout: child
+// expect-stdout: 0
+// expect-stdout: 1
+// expect-stdout: 7
+// expect-stdout: No such file or directory

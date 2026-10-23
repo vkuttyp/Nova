@@ -58,6 +58,8 @@ public enum TypeKind
     SlotMap,
     /// <summary><c>Handle&lt;T&gt;</c> (§24.1): a Copy (index, generation) naming a slot-map value of <see cref="NovaType.Element"/>.</summary>
     Handle,
+    /// <summary>An operating-system resource (type-system.md §26): <see cref="NovaType.Resource"/> says which.</summary>
+    Resource,
     /// <summary>A type parameter inside a generic declaration (type-system.md §20.3): opaque.</summary>
     TypeParameter,
 }
@@ -72,6 +74,15 @@ public sealed record InterfaceBound(object Interface, string Name, ImmutableArra
 }
 
 /// <summary>The built-in region types (ADR 0004).</summary>
+/// <summary>The built-in operating-system resources (type-system.md §26).</summary>
+public enum ResourceKind
+{
+    None,
+    File,
+    TcpListener,
+    TcpStream,
+}
+
 public enum RegionKind
 {
     /// <summary>Not a region.</summary>
@@ -321,6 +332,10 @@ public sealed class NovaType
         Allocator = allocator;
     }
 
+    /// <summary><c>File</c>, <c>TcpListener</c> or <c>TcpStream</c> (§26): owns a descriptor, closed by drop.</summary>
+    internal NovaType(ResourceKind resource, string name)
+        : this(TypeKind.Resource, name) => Resource = resource;
+
     /// <summary><c>Handle&lt;T&gt;</c>.</summary>
     internal NovaType(NovaType element, string name)
         : this(TypeKind.Handle, name) => Element = element;
@@ -414,6 +429,9 @@ public sealed class NovaType
     /// <summary>Which region type this is; <see cref="RegionKind.None"/> for every other kind.</summary>
     public RegionKind Region { get; }
 
+    /// <summary>Which resource type this is (§26); <see cref="ResourceKind.None"/> for every other kind.</summary>
+    public ResourceKind Resource { get; }
+
     /// <summary>True for <c>borrow mut T</c>.</summary>
     public bool IsMutableReference { get; }
 
@@ -469,9 +487,12 @@ public sealed class TypeTable
         Arena = new NovaType(RegionKind.Arena, "Arena");
         FixedBufferAllocator = new NovaType(RegionKind.FixedBuffer, "FixedBufferAllocator");
         ScratchFrame = new NovaType(RegionKind.ScratchFrame, "ScratchFrame");
+        File = new NovaType(ResourceKind.File, "File");
+        TcpListener = new NovaType(ResourceKind.TcpListener, "TcpListener");
+        TcpStream = new NovaType(ResourceKind.TcpStream, "TcpStream");
 
         _byName = new Dictionary<string, NovaType>(StringComparer.Ordinal);
-        foreach (var t in new[] { I8, I16, I32, I64, ISize, U8, U16, U32, U64, USize, Bool, Void, Arena, FixedBufferAllocator, ScratchFrame })
+        foreach (var t in new[] { I8, I16, I32, I64, ISize, U8, U16, U32, U64, USize, Bool, Void, Arena, FixedBufferAllocator, ScratchFrame, File, TcpListener, TcpStream })
         {
             _byName.Add(t.Name, t);
         }
@@ -494,6 +515,10 @@ public sealed class TypeTable
     public NovaType Bool { get; }
     public NovaType Void { get; }
     public NovaType Never { get; }
+    public NovaType File { get; }
+    public NovaType TcpListener { get; }
+    public NovaType TcpStream { get; }
+
     /// <summary>The unsized text behind a <c>StringView</c> (§22.2).</summary>
     public NovaType Str { get; }
 
@@ -714,6 +739,8 @@ public sealed class TypeTable
                 return (40, 8); // pointer, u64 length, capacity, count, u32 free head
             case TypeKind.Handle:
                 return (8, 4); // u32 index, u32 generation
+            case TypeKind.Resource:
+                return (4, 4); // an int32_t descriptor
             case TypeKind.Region:
                 // nv_arena, nv_fba, nv_scratch in nova/rt.h (8-byte fields; asserted there).
                 return type.Region switch
@@ -828,7 +855,7 @@ public sealed class TypeTable
             TypeKind.Enum when type.Enum!.OptionType is { } value => IsCopy(value),
             TypeKind.Enum => type.Enum!.IsCopy,
             TypeKind.Reference => !type.IsMutableReference,
-            TypeKind.Box or TypeKind.Region or TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap => false,
+            TypeKind.Box or TypeKind.Region or TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap or TypeKind.Resource => false,
             _ => true,
         };
     }
@@ -840,7 +867,7 @@ public sealed class TypeTable
         {
             return !type.IsCopyBound;
         }
-        if (type.IsBox || type.Kind is TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
+        if (type.IsBox || type.Kind is TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap or TypeKind.Resource || type.Region is RegionKind.Arena or RegionKind.ScratchFrame or RegionKind.Pool)
         {
             return true;
         }

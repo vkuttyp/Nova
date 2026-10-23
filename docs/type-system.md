@@ -1314,3 +1314,84 @@ With one loan set per value:
    them, so they must still be live (N0243 otherwise).
 
 Diagnostics: N0270, N0272, N0273, N0274 (`diagnostics.md`).
+
+## 26. Program arguments, files and sockets (C3)
+
+```nova
+fn main() -> i32 {
+    let argument = Process.argument(1);
+    if (argument == null) { Console.writeLine("usage: size FILE"); return 2; }
+    let path = argument!;
+    match (File.open(path)) {
+        Ok(file) => {
+            var buffer = [0u8; 4096];
+            var total: u64 = 0;
+            loop {
+                match (file.read(mut buffer[..])) {
+                    Ok(n) => { if (n == 0) { break; } total += n as u64; }
+                    Err(e) => { Console.writeLine(e.message()); return 1; }
+                }
+            }
+            Console.writeLine(total);
+            return 0;
+        }
+        Err(e) => { Console.write(path); Console.write(": "); Console.writeLine(e.message()); return 1; }
+    }
+}
+```
+
+### 26.1 Program arguments
+- `Process.argumentCount()`: `usize`, the number of command-line arguments including the program
+  name (argument 0).
+- `Process.argument(i)`: `StringView?`, argument `i` as a view of static text (no loans), or `null`
+  if `i` is out of range or the argument's bytes are not valid UTF-8 (the `StringView` invariant,
+  §22.2). Arguments are never copied.
+
+### 26.2 `IoError`
+A built-in enum, like `AllocError`, with the variants `NotFound`, `PermissionDenied`,
+`AlreadyExists`, `IsDirectory`, `NotDirectory`, `InvalidInput`, `BrokenPipe`,
+`ConnectionRefused`, `AddressInUse`, `OutOfMemory` and `Other(i32)` (the platform's error number).
+`e.message()` is a `StringView` of static text describing it (the C library's wording for the
+common cases: "No such file or directory", "Permission denied", …).
+
+### 26.3 Files and the console
+- `File` owns an open file. It is a **move type that needs drop**: destroying it closes the file
+  (an error from closing is ignored). It is not scoped and not Copy.
+- `File.open(path)`: `Result<File, IoError>` for reading; `File.create(path)`: for writing, created
+  or truncated; `File.remove(path)`: `Result<void, IoError>`. `path` is a `StringView`; a path that
+  contains a zero byte or is longer than 4095 bytes is `InvalidInput`.
+- `f.read(mut buffer)` (`buffer: SliceMut<u8>`, `f` taken as `borrow mut this`): `Result<usize,
+  IoError>`, the number of bytes read, `0` at the end of the file. Interrupted reads are retried.
+- `f.write(bytes)` (`Slice<u8>`): `Result<void, IoError>`; it writes all the bytes or fails.
+- `Console.read(mut buffer)`: reads standard input like `f.read`. `Console.writeBytes(bytes)`
+  writes raw bytes to standard output, in order with `Console.write`.
+- `Console.writeError(text)` and `Console.writeErrorLine(text)` (`text: StringView`) write to
+  standard error; standard output is flushed first, so the two keep their relative order.
+
+### 26.4 TCP sockets
+- `TcpListener.bind(address, port)` (`address: StringView`, dotted IPv4 such as `"127.0.0.1"` or
+  `"0.0.0.0"`; `port: u16`, `0` for any free port): `Result<TcpListener, IoError>`, listening.
+  `listener.port()`: `Result<u16, IoError>`, the port it is bound to. `listener.accept()`:
+  `Result<TcpStream, IoError>`.
+- `TcpStream.connect(address, port)`: `Result<TcpStream, IoError>`. `s.read(mut buffer)` and
+  `s.write(bytes)` as for files; `s.shutdownWrite()`: `Result<void, IoError>`, so the peer reads
+  the end of the stream.
+- Both are move types that need drop; destroying one closes the socket.
+
+### 26.5 Processes
+- `Process.run(program, arguments)` (`program: StringView`, found on `PATH`; `arguments: borrow
+  Vector<StringView>`, passed after the program name): `Result<i32, IoError>`. It starts the
+  program with the caller's standard input, output and error, waits for it, and returns its exit
+  status, or 128 plus the signal number if a signal ended it. Standard output is flushed first, so
+  output keeps its order. A program that cannot be started is an error (`NotFound`, …); an argument
+  with a zero byte is `InvalidInput`; if copying the arguments for the C library fails, `OutOfMemory`.
+
+### 26.6 Runtime (Profile A and hosted)
+Implemented in `runtime/hosted/nova_rt_io.c` over the C library's `open`, `read`, `write`,
+`close`, `unlink`, `socket`, `bind`, `listen`, `accept`, `connect`, `getsockname`, `shutdown`,
+`waitpid`, and `posix_spawnp` (hosted) or `spawnvp` (CosmoOS) (L1, OD-15: public libc functions
+only). CosmoOS's `struct sockaddr` (host-order port, 16 address bytes), its spawn API and its wait
+status encoding differ from POSIX; the runtime selects them at compile time.
+Generated code only calls functions declared in `nova/rt.h`, so it still compiles freestanding.
+
+Diagnostics: none new.

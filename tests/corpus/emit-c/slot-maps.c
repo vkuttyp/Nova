@@ -229,7 +229,8 @@ static nvR_usizeE10AllocError nvSVP_Wi32S10SystemHeap(nvSV_i32S10SystemHeap *v, 
     return ((nvR_usizeE10AllocError){ .tag = 0, .u.v_Ok = { .f__0 = v->len - 1u } });
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
     nv_main();
     return (int)nova_rt_finish(0);

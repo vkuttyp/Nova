@@ -1,0 +1,18 @@
+// Misuse of files, sockets, the console and program arguments (type-system.md §26).
+fn main() {
+    let a = File.open(5); // error[N0205]
+    let b = File.open(); // error[N0209]
+    let c = File.oops("x"); // error[N0200]
+    let d = TcpListener.bind("127.0.0.1"); // error[N0209]
+    let e = TcpStream.connect("127.0.0.1", 70000); // error[N0206]
+    let f = File.open("x")!;
+    var buffer = [0u8; 4];
+    let n = f.read(mut buffer[..]); // error[N0248]
+    let listener = TcpListener.bind("127.0.0.1", 0u16)!;
+    let m = listener.read(mut buffer[..]); // error[N0200]
+    let k = Console.read(buffer[..]); // error[N0205]
+    let i = Process.argument("one"); // error[N0205]
+    let j: StringView = Process.argument(0); // error[N0205]
+    Console.writeError(5); // error[N0205]
+    let file: File = 3; // error[N0205]
+}
