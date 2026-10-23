@@ -88,7 +88,7 @@ struct nvSV_i32S10SystemHeap { void *chunks[NV_SVEC_CHUNKS]; uint64_t len; };
 _Static_assert(sizeof(nvSV_i32S10SystemHeap) == 264, "novac layout: sizeof(StableVector<i32>)");
 _Static_assert(_Alignof(nvSV_i32S10SystemHeap) == 8, "novac layout: alignof(StableVector<i32>)");
 
-static NV_UNUSED void nv_main(void);
+static NV_UNUSED void nvF_main(void);
 static NV_UNUSED void nvD_Ki32S10SystemHeap(nvK_i32S10SystemHeap *);
 static NV_UNUSED void nvD_Wi32S10SystemHeap(nvSV_i32S10SystemHeap *);
 static NV_UNUSED bool nvKV_Ki32S10SystemHeap(const nvK_i32S10SystemHeap *, nv_handle);
@@ -99,7 +99,7 @@ static NV_UNUSED nvO_i32 nvKR_Ki32S10SystemHeap(nvK_i32S10SystemHeap *, nv_handl
 static NV_UNUSED int32_t *nvSVE_Wi32S10SystemHeap(nvSV_i32S10SystemHeap *, uint64_t);
 static NV_UNUSED nvR_usizeE10AllocError nvSVP_Wi32S10SystemHeap(nvSV_i32S10SystemHeap *, int32_t);
 
-static void nv_main(void) {
+static void nvF_main(void) {
     NV_UNUSED nvK_i32S10SystemHeap v_m_0 = {0};
     NV_UNUSED nv_handle v_h_1 = {0};
     NV_UNUSED nvSV_i32S10SystemHeap v_sv_2 = {0};
@@ -228,6 +228,6 @@ static nvR_usizeE10AllocError nvSVP_Wi32S10SystemHeap(nvSV_i32S10SystemHeap *v, 
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    nv_main();
+    nvF_main();
     return (int)nova_rt_finish(0);
 }

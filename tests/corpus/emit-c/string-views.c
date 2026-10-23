@@ -11,10 +11,10 @@ struct nvSl_u8 { const uint8_t *ptr; uint64_t len; };
 _Static_assert(sizeof(nvSl_u8) == 16, "novac layout: sizeof(Slice<u8>)");
 _Static_assert(_Alignof(nvSl_u8) == 8, "novac layout: alignof(Slice<u8>)");
 
-static NV_UNUSED nv_str nv_tail(nv_str, uint64_t);
-static NV_UNUSED void nv_main(void);
+static NV_UNUSED nv_str nvF_tail(nv_str, uint64_t);
+static NV_UNUSED void nvF_main(void);
 
-static nv_str nv_tail(NV_UNUSED nv_str v_s_0, NV_UNUSED uint64_t v_from_1) {
+static nv_str nvF_tail(NV_UNUSED nv_str v_s_0, NV_UNUSED uint64_t v_from_1) {
     NV_UNUSED uint64_t t_2 = 0;
     NV_UNUSED nv_str t_3 = {0};
     NV_UNUSED nv_str t_4 = {0};
@@ -25,14 +25,14 @@ static nv_str nv_tail(NV_UNUSED nv_str v_s_0, NV_UNUSED uint64_t v_from_1) {
     return t_4;
 }
 
-static void nv_main(void) {
+static void nvF_main(void) {
     NV_UNUSED nv_str v_s_0 = {0};
     NV_UNUSED nv_str v_t_1 = {0};
     NV_UNUSED bool t_2 = false;
     NV_UNUSED nvSl_u8 t_3 = {0};
     NV_UNUSED uint64_t t_4 = 0;
     v_s_0 = ((nv_str){ .ptr = (const uint8_t *)"h\303\251llo", .len = 6u });
-    v_t_1 = nv_tail(v_s_0, ((uint64_t)3));
+    v_t_1 = nvF_tail(v_s_0, ((uint64_t)3));
     t_2 = nova_str_eq(v_t_1, ((nv_str){ .ptr = (const uint8_t *)"llo", .len = 3u }));
     if (t_2) {
         nova_write_view(v_t_1);
@@ -48,6 +48,6 @@ static void nv_main(void) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    nv_main();
+    nvF_main();
     return (int)nova_rt_finish(0);
 }

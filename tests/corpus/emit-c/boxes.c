@@ -82,8 +82,8 @@ _Static_assert(sizeof(nvR_Xi32S16FailingAllocatorE10AllocError) == 16, "novac la
 _Static_assert(_Alignof(nvR_Xi32S16FailingAllocatorE10AllocError) == 8, "novac layout: alignof(Result<Box<i32, FailingAllocator>, AllocError>)");
 _Static_assert(offsetof(nvR_Xi32S16FailingAllocatorE10AllocError, u) == 8, "novac layout: Result<Box<i32, FailingAllocator>, AllocError> payload offset");
 
-static NV_UNUSED nvR_E4ListE10AllocError nv_cons(nvT_Res, nvE_List);
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED nvR_E4ListE10AllocError nvF_cons(nvT_Res, nvE_List);
+static NV_UNUSED int32_t nvF_main(void);
 static NV_UNUSED void nvM_3Res_drop(nvT_Res *);
 static NV_UNUSED void nvD_3Res(nvT_Res *);
 static NV_UNUSED void nvD_4List(nvE_List *);
@@ -95,7 +95,7 @@ static NV_UNUSED void nvD_RXi32S16FailingAllocatorE10AllocError(nvR_Xi32S16Faili
 static NV_UNUSED nvR_XE4ListS10SystemHeapE10AllocError nvB_XE4ListS10SystemHeap(nvE_List);
 static NV_UNUSED nvR_Xi32S16FailingAllocatorE10AllocError nvB_Xi32S16FailingAllocator(int32_t);
 
-static nvR_E4ListE10AllocError nv_cons(NV_UNUSED nvT_Res v_r_0, NV_UNUSED nvE_List v_rest_1) {
+static nvR_E4ListE10AllocError nvF_cons(NV_UNUSED nvT_Res v_r_0, NV_UNUSED nvE_List v_rest_1) {
     NV_UNUSED nvT_Res t_2 = {0};
     NV_UNUSED nvR_XE4ListS10SystemHeapE10AllocError t_3 = {0};
     NV_UNUSED nvR_XE4ListS10SystemHeapE10AllocError t_4 = {0};
@@ -122,7 +122,7 @@ static nvR_E4ListE10AllocError nv_cons(NV_UNUSED nvT_Res v_r_0, NV_UNUSED nvE_Li
     }
 }
 
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
     NV_UNUSED nvE_List v_l_0 = {0};
     NV_UNUSED int32_t * v_n_1 = NULL;
     NV_UNUSED int32_t v_v_2 = 0;
@@ -138,7 +138,7 @@ static int32_t nv_main(void) {
     NV_UNUSED int32_t t_12 = 0;
     t_3 = ((nvT_Res){ .f_id = ((int32_t)1) });
     t_4 = ((nvE_List){ .tag = 0 });
-    t_5 = nv_cons(t_3, t_4);
+    t_5 = nvF_cons(t_3, t_4);
     t_6 = t_5;
     t_7 = (uint32_t)t_6.tag;
     switch (t_7) {
@@ -258,5 +258,5 @@ static nvR_Xi32S16FailingAllocatorE10AllocError nvB_Xi32S16FailingAllocator(int3
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

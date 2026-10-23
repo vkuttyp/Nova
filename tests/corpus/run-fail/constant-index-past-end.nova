@@ -1,0 +1,9 @@
+// A constant index past a fixed array's end: the check panics, and the C access after it must not trip
+// -Warray-bounds (c-backend.md §5; found by the M7d random program generator).
+fn main() -> i32 {
+    var a: [i32; 3] = [1, 2, 3];
+    Console.writeLine(a[1]);
+    a[18446744073709551614usize] = 4; // expect-panic: index out of bounds
+    return a[0];
+}
+// expect-stdout: 2

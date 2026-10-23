@@ -24,18 +24,18 @@ _Static_assert(_Alignof(nvT_Pair) == 4, "novac layout: alignof(Pair)");
 _Static_assert(offsetof(nvT_Pair, f_a) == 0, "novac layout: Pair.a");
 _Static_assert(offsetof(nvT_Pair, f_b) == 4, "novac layout: Pair.b");
 
-static NV_UNUSED void nv_consume(nvT_Res);
-static NV_UNUSED void nv_main(void);
+static NV_UNUSED void nvF_consume(nvT_Res);
+static NV_UNUSED void nvF_main(void);
 static NV_UNUSED void nvM_3Res_drop(nvT_Res *);
 static NV_UNUSED void nvD_3Res(nvT_Res *);
 static NV_UNUSED void nvD_4Pair(nvT_Pair *);
 
-static void nv_consume(NV_UNUSED nvT_Res v_r_0) {
+static void nvF_consume(NV_UNUSED nvT_Res v_r_0) {
     nvD_3Res(&v_r_0);
     return;
 }
 
-static void nv_main(void) {
+static void nvF_main(void) {
     NV_UNUSED nvT_Pair v_p_0 = {0};
     NV_UNUSED nvT_Res v_r_1 = {0};
     NV_UNUSED nvT_Res t_2 = {0};
@@ -45,12 +45,12 @@ static void nv_main(void) {
     t_2 = ((nvT_Res){ .f_id = ((int32_t)1) });
     t_3 = ((nvT_Res){ .f_id = ((int32_t)2) });
     v_p_0 = ((nvT_Pair){ .f_a = t_2, .f_b = t_3 });
-    nv_consume(v_p_0.f_a);
+    nvF_consume(v_p_0.f_a);
     v_r_1 = ((nvT_Res){ .f_id = ((int32_t)3) });
     t_5 = true;
     t_4 = (v_p_0.f_b.f_id > ((int32_t)1));
     if (t_4) {
-        nv_consume(v_r_1);
+        nvF_consume(v_r_1);
         t_5 = false;
     }
     nova_write_i64((int64_t)((int32_t)0));
@@ -79,6 +79,6 @@ static void nvD_4Pair(nvT_Pair *p) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    nv_main();
+    nvF_main();
     return (int)nova_rt_finish(0);
 }

@@ -45,11 +45,11 @@ struct nvT_Empty {
 _Static_assert(sizeof(nvT_Empty) == 1, "novac layout: sizeof(Empty)");
 _Static_assert(_Alignof(nvT_Empty) == 1, "novac layout: alignof(Empty)");
 
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED int32_t nvF_main(void);
 static NV_UNUSED int32_t nvM_5Point_sum(nvT_Point);
 static NV_UNUSED nvT_Point nvM_5Point_origin(void);
 
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
     NV_UNUSED nvT_Line v_l_0 = {0};
     NV_UNUSED nvT_Mixed v_m_1 = {0};
     NV_UNUSED nvT_Empty v_e_2 = {0};
@@ -91,5 +91,5 @@ static nvT_Point nvM_5Point_origin(void) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

@@ -211,8 +211,12 @@ internal sealed class BorrowChecker
     }
 
     /// <summary>The loan-carrying locals an operand list reads.</summary>
+    /// <summary>
+    /// The locals whose loans a write stores: those of operands whose value may hold loans. A <c>u16</c> read
+    /// through a reference stores nothing (a false N0272 until M7d: the random program generator found it).
+    /// </summary>
     private static ImmutableArray<NirLocal> Carriers(IEnumerable<NirOperand> operands) =>
-        [.. operands.OfType<NirPlaceOperand>().Select(o => o.Place.Local).Where(IsReference).Distinct()];
+        [.. operands.OfType<NirPlaceOperand>().Where(o => TypeChecker.MayHoldLoans(o.Type)).Select(o => o.Place.Local).Where(IsReference).Distinct()];
 
     /// <summary>
     /// Writes that store loans somewhere other than a fresh local (type-system.md §25.7 rules 1–4): into a place of

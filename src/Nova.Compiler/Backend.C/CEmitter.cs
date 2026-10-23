@@ -1017,7 +1017,9 @@ public sealed class CEmitter
     private string FunctionName(NirFunction function) => FunctionName(function.Source);
 
     /// <summary>
-    /// Top-level functions are <c>nv_name</c>; struct members are <c>nvM_&lt;length&gt;&lt;Struct&gt;_name</c>.
+    /// Top-level functions are <c>nvF_name</c>; struct members are <c>nvM_&lt;length&gt;&lt;Struct&gt;_name</c>.
+    /// Every generated name starts with <c>nv</c> and a capital letter, which the runtime never uses: its own
+    /// names are <c>nv_</c>, <c>nova_</c> and <c>NV_</c> (c-backend.md §2.1). A function <c>add_i32</c> is not <c>nv_add_i32</c>.
     /// The length prefix makes the struct/member boundary unambiguous, so the names cannot collide.
     /// </summary>
     /// <remarks>
@@ -1030,7 +1032,7 @@ public sealed class CEmitter
             ? $"nvM_{Mangle(owner)}_{_symbols.GetName(function.Name)}"
             : $"nvM_{owner.Name.Length}{owner.Name}_{_symbols.GetName(function.Name)}"
         : function.TypeArguments.IsEmpty
-            ? "nv_" + _symbols.GetName(function.Name)
+            ? "nvF_" + _symbols.GetName(function.Name)
             : $"nvG_{_symbols.GetName(function.Name).Length}{_symbols.GetName(function.Name)}{MangledArguments(function.TypeArguments)}";
 
     /// <summary>The functions compiled to C: everything but generic versions (§20.3).</summary>
@@ -1128,8 +1130,9 @@ public sealed class CEmitter
         }
     }
 
+    /// <summary>The block's statements that print something (a label before nothing would end its block, a C23 extension).</summary>
     private List<CNode> StatementNodes(NirBlock block) =>
-        [.. block.Statements.Select(statement => Captured(() => EmitStatement(statement), statement.Span, completes: true))];
+        [.. block.Statements.Select(statement => Captured(() => EmitStatement(statement), statement.Span, completes: true)).Where(c => c.Lines.Count > 0)];
 
     private CCode Captured(Action emit, TextSpan span, bool completes)
     {
@@ -1239,8 +1242,16 @@ public sealed class CEmitter
                 Line($"    for (uint64_t nv_i = 0; nv_i < {repeat.Type.ArrayLength}u; nv_i++) {Place(assign.Target)}.e[nv_i] = {Operand(repeat.Value)};");
                 break;
             case NirAssign assign:
-                Line($"    {Place(assign.Target)} = {Rvalue(assign.Value)};");
+            {
+                var target = Place(assign.Target);
+                var value = Rvalue(assign.Value);
+                // `x = x;` is a no-op in Nova; in C it trips -Wself-assign (c-backend.md §5).
+                if (value != target)
+                {
+                    Line($"    {target} = {value};");
+                }
                 break;
+            }
             case NirUnpack unpack:
                 for (var i = 0; i < unpack.Targets.Length; i++)
                 {
@@ -1506,6 +1517,9 @@ public sealed class CEmitter
                 var helper = binary.Op == BinaryOp.ShiftLeft ? "shl" : "shr";
                 return $"nv_{helper}_{Suffix(operandType)}({left}, {amount})";
             }
+            // Comparing a place with itself: C warns (-Wtautological-compare); the result is a constant (§5).
+            case BinaryOp.Equal or BinaryOp.LessEqual or BinaryOp.GreaterEqual when left == right: return "true";
+            case BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater when left == right: return "false";
             case BinaryOp.Equal: return $"({left} == {right})";
             case BinaryOp.NotEqual: return $"({left} != {right})";
             case BinaryOp.Less: return $"({left} < {right})";
@@ -1585,6 +1599,9 @@ public sealed class CEmitter
                 ProjectionKind.Field => $"{text}.{FieldName(projection.Field!)}",
                 ProjectionKind.Downcast => $"{text}.u.{VariantName(projection.Variant!)}",
                 _ when type.IsUnsized => $"{text}.ptr[{Operand((NirOperand)projection.Index!)}]",
+                // A constant index past the end is checked first and always panics; hiding the constant keeps
+                // -Warray-bounds quiet about the access that never happens (§5).
+                _ when projection.Index is NirConst { Value: var past } && past >= type.ArrayLength => $"{text}.e[nv_opaque_index({Operand((NirOperand)projection.Index!)})]",
                 _ => $"{text}.e[{Operand((NirOperand)projection.Index!)}]",
             };
             stable = projection.IsDeref && type.IsStableVector ? type : null;
@@ -1710,8 +1727,8 @@ public sealed class CEmitter
         Line("    nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);");
         Line("    nova_rt_start();");
         Line(main.ReturnType.Kind == TypeKind.Void
-            ? "    nv_main();\n    return (int)nova_rt_finish(0);"
-            : "    return (int)nova_rt_finish(nv_main());");
+            ? "    nvF_main();\n    return (int)nova_rt_finish(0);"
+            : "    return (int)nova_rt_finish(nvF_main());");
         Line("}");
     }
 

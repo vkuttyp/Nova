@@ -1,0 +1,27 @@
+// Nova functions named like the runtime's C helpers (c-backend.md §2.1). Their C names used to be
+// `nv_<name>`, which collided with `nv_add_i32`, `nv_check_index`, ... in nova/rt.h (found by M7d).
+fn add_i32(a: i32, b: i32) -> i32 { return a - b; }
+fn div_u64(a: u64, b: u64) -> u64 { return a * b; }
+fn check_index(i: usize, n: usize) -> bool { return i < n; }
+fn shl_u8(a: u8) -> u8 { return a >> 1; }
+fn as_i8(a: u8) -> i8 { return truncate<i8>(a); }
+fn str_boundary() -> i32 { return 7; }
+fn exit(code: i32) -> i32 { return code + 1; }
+
+fn main() -> i32 {
+    Console.writeLine(add_i32(10, 3));
+    Console.writeLine(div_u64(6, 7));
+    Console.writeLine(check_index(2, 2));
+    Console.writeLine(shl_u8(8));
+    Console.writeLine(as_i8(200));
+    Console.writeLine(str_boundary());
+    Console.writeLine(exit(41));
+    return 0;
+}
+// expect-stdout: 7
+// expect-stdout: 42
+// expect-stdout: false
+// expect-stdout: 4
+// expect-stdout: -56
+// expect-stdout: 7
+// expect-stdout: 42

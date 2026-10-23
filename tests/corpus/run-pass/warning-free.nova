@@ -1,0 +1,18 @@
+// Valid Nova that C compilers warn about; the generated C must still be warning-free (c-backend.md §5).
+// Found by the M7d random program generator.
+fn main() -> i32 {
+    var x = 5i32;
+    x = x;                        // -Wself-assign: emits nothing
+    let y = 7u8;
+    Console.writeLine(y == y);    // -Wtautological-compare: constant true
+    Console.writeLine(x != x);
+    Console.writeLine(x < x);
+    Console.writeLine(y >= y);
+    Console.writeLine(x);
+    return 0;
+}
+// expect-stdout: true
+// expect-stdout: false
+// expect-stdout: false
+// expect-stdout: true
+// expect-stdout: 5

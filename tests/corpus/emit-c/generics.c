@@ -37,12 +37,12 @@ _Static_assert(sizeof(nvE_5Maybe1i32) == 8, "novac layout: sizeof(Maybe<i32>)");
 _Static_assert(_Alignof(nvE_5Maybe1i32) == 4, "novac layout: alignof(Maybe<i32>)");
 _Static_assert(offsetof(nvE_5Maybe1i32, u) == 4, "novac layout: Maybe<i32> payload offset");
 
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED int32_t nvF_main(void);
 static NV_UNUSED nvT_4Pair1i32 nvG_2id1S4Pair1i32(nvT_4Pair1i32);
 static NV_UNUSED nvT_4Pair1u8 nvG_2id1S4Pair1u8(nvT_4Pair1u8);
 static NV_UNUSED int32_t nvG_3get1i32(nvE_5Maybe1i32, int32_t);
 
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
     NV_UNUSED nvT_4Pair1i32 v_p_0 = {0};
     NV_UNUSED nvT_4Pair1u8 v_q_1 = {0};
     NV_UNUSED nvT_4Pair1i32 t_2 = {0};
@@ -98,5 +98,5 @@ static int32_t nvG_3get1i32(NV_UNUSED nvE_5Maybe1i32 v_m_0, NV_UNUSED int32_t v_
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

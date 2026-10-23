@@ -59,11 +59,11 @@ _Static_assert(sizeof(nvR_QUu16E10AllocError) == 24, "novac layout: sizeof(Resul
 _Static_assert(_Alignof(nvR_QUu16E10AllocError) == 8, "novac layout: alignof(Result<SliceMut<u16>, AllocError>)");
 _Static_assert(offsetof(nvR_QUu16E10AllocError, u) == 8, "novac layout: Result<SliceMut<u16>, AllocError> payload offset");
 
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED int32_t nvF_main(void);
 static NV_UNUSED nvR_QS5PointE10AllocError nvAA_S5Point(void *r, uint32_t kind, nvT_Point v);
 static NV_UNUSED nvR_QUu16E10AllocError nvAR_u16(void *r, uint32_t kind, uint64_t n, uint16_t fill);
 
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
     NV_UNUSED nv_arena v_arena_0 = {0};
     NV_UNUSED nvT_Point * v_p_1 = NULL;
     NV_UNUSED nvSm_u16 v_s_2 = {0};
@@ -134,5 +134,5 @@ static nvR_QUu16E10AllocError nvAR_u16(void *r, uint32_t kind, uint64_t n, uint1
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

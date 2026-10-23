@@ -22,13 +22,13 @@ _Static_assert(sizeof(nvT_Resource) == 4, "novac layout: sizeof(Resource)");
 _Static_assert(_Alignof(nvT_Resource) == 4, "novac layout: alignof(Resource)");
 _Static_assert(offsetof(nvT_Resource, f_id) == 0, "novac layout: Resource.id");
 
-static NV_UNUSED void nv_step(nvT_Counter *, int32_t);
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED void nvF_step(nvT_Counter *, int32_t);
+static NV_UNUSED int32_t nvF_main(void);
 static NV_UNUSED void nvM_8Resource_drop(nvT_Resource *);
 static NV_UNUSED void nvD_8Resource(nvT_Resource *);
 
 #line 15 "emit-c/line-directives.nova"
-static void nv_step(NV_UNUSED nvT_Counter * v_c_0, NV_UNUSED int32_t v_by_1) {
+static void nvF_step(NV_UNUSED nvT_Counter * v_c_0, NV_UNUSED int32_t v_by_1) {
     (*v_c_0).f_count = nv_add_i32((*v_c_0).f_count, v_by_1, NV_LOC(nv_file_0, 16u, 5u));
     return;
 #line 17 "emit-c/line-directives.nova"
@@ -36,7 +36,7 @@ static void nv_step(NV_UNUSED nvT_Counter * v_c_0, NV_UNUSED int32_t v_by_1) {
 #line 37 "main.c"
 
 #line 19 "emit-c/line-directives.nova"
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
 #line 19 "emit-c/line-directives.nova"
     NV_UNUSED nvT_Counter v_c_0 = {0}; NV_UNUSED nvT_Resource v_r_1 = {0}; NV_UNUSED int32_t v_i_2 = 0; NV_UNUSED bool t_3 = false; NV_UNUSED nvT_Counter * t_4 = NULL; NV_UNUSED int32_t t_5 = 0;
     v_c_0 = ((nvT_Counter){ .f_count = ((int32_t)0) });
@@ -53,7 +53,7 @@ static int32_t nv_main(void) {
 #line 24 "emit-c/line-directives.nova"
         t_4 = &v_c_0;
 #line 24 "emit-c/line-directives.nova"
-        nv_step(t_4, v_i_2);
+        nvF_step(t_4, v_i_2);
         v_i_2 = nv_add_i32(v_i_2, ((int32_t)1), NV_LOC(nv_file_0, 25u, 9u));
     }
     nova_write_i64((int64_t)v_c_0.f_count);
@@ -85,5 +85,5 @@ static void nvD_8Resource(nvT_Resource *p) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

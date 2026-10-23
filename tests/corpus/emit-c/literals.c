@@ -5,9 +5,9 @@ _Static_assert(sizeof(void *) * 8 == 64, "novac: generated for a 64-bit target")
 
 static NV_UNUSED const char nv_file_0[] = "emit-c/literals.nova";
 
-static NV_UNUSED void nv_main(void);
+static NV_UNUSED void nvF_main(void);
 
-static void nv_main(void) {
+static void nvF_main(void) {
     NV_UNUSED int64_t v_a_0 = 0;
     NV_UNUSED uint64_t v_b_1 = 0;
     NV_UNUSED int32_t v_c_2 = 0;
@@ -36,6 +36,6 @@ static void nv_main(void) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    nv_main();
+    nvF_main();
     return (int)nova_rt_finish(0);
 }

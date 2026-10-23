@@ -34,11 +34,11 @@ struct nvA3_i32 { int32_t e[3]; };
 _Static_assert(sizeof(nvA3_i32) == 12, "novac layout: sizeof([i32; 3])");
 _Static_assert(_Alignof(nvA3_i32) == 4, "novac layout: alignof([i32; 3])");
 
-static NV_UNUSED int32_t nv_total(nvSl_i32);
-static NV_UNUSED void nv_zero(nvSm_i32);
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED int32_t nvF_total(nvSl_i32);
+static NV_UNUSED void nvF_zero(nvSm_i32);
+static NV_UNUSED int32_t nvF_main(void);
 
-static int32_t nv_total(NV_UNUSED nvSl_i32 v_xs_0) {
+static int32_t nvF_total(NV_UNUSED nvSl_i32 v_xs_0) {
     NV_UNUSED int32_t v_t_1 = 0;
     NV_UNUSED int32_t v_x_2 = 0;
     NV_UNUSED uint64_t t_3 = 0;
@@ -61,7 +61,7 @@ static int32_t nv_total(NV_UNUSED nvSl_i32 v_xs_0) {
     return t_6;
 }
 
-static void nv_zero(NV_UNUSED nvSm_i32 v_xs_0) {
+static void nvF_zero(NV_UNUSED nvSm_i32 v_xs_0) {
     NV_UNUSED uint64_t t_1 = 0;
     t_1 = v_xs_0.len;
     nv_check_index(((uint64_t)0), t_1, NV_LOC(nv_file_0, 10u, 8u));
@@ -69,7 +69,7 @@ static void nv_zero(NV_UNUSED nvSm_i32 v_xs_0) {
     return;
 }
 
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
     NV_UNUSED nvA3_i32 v_a_0 = {0};
     NV_UNUSED nvT_Pair v_p_1 = {0};
     NV_UNUSED uint64_t v_i_2 = 0;
@@ -84,13 +84,13 @@ static int32_t nv_main(void) {
     for (uint64_t nv_i = 0; nv_i < 2u; nv_i++) t_3.e[nv_i] = ((int16_t)4);
     v_p_1 = ((nvT_Pair){ .f_v = t_3 });
     t_4 = ((nvSm_i32){ .ptr = v_a_0.e + ((uint64_t)1), .len = ((uint64_t)3) - ((uint64_t)1) });
-    nv_zero(t_4);
+    nvF_zero(t_4);
     v_i_2 = ((uint64_t)2);
     t_5 = v_i_2;
     nv_check_index(t_5, ((uint64_t)3), NV_LOC(nv_file_0, 18u, 7u));
     v_a_0.e[t_5] = (int32_t)v_p_1.f_v.e[((uint64_t)1)];
     t_6 = ((nvSl_i32){ .ptr = v_a_0.e + ((uint64_t)0), .len = ((uint64_t)3) - ((uint64_t)0) });
-    t_7 = nv_total(t_6);
+    t_7 = nvF_total(t_6);
     t_8 = nv_add_i32(t_7, v_a_0.e[((uint64_t)0)], NV_LOC(nv_file_0, 19u, 12u));
     t_9 = t_8;
     return t_9;
@@ -99,5 +99,5 @@ static int32_t nv_main(void) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

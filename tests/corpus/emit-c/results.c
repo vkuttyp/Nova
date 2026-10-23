@@ -44,14 +44,14 @@ _Static_assert(sizeof(nvR_vE4Code) == 2, "novac layout: sizeof(Result<void, Code
 _Static_assert(_Alignof(nvR_vE4Code) == 1, "novac layout: alignof(Result<void, Code>)");
 _Static_assert(offsetof(nvR_vE4Code, u) == 1, "novac layout: Result<void, Code> payload offset");
 
-static NV_UNUSED nvR_S3ResE4Code nv_make(bool);
-static NV_UNUSED nvR_vE4Code nv_use2(void);
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED nvR_S3ResE4Code nvF_make(bool);
+static NV_UNUSED nvR_vE4Code nvF_use2(void);
+static NV_UNUSED int32_t nvF_main(void);
 static NV_UNUSED void nvM_3Res_drop(nvT_Res *);
 static NV_UNUSED void nvD_3Res(nvT_Res *);
 static NV_UNUSED void nvD_RS3ResE4Code(nvR_S3ResE4Code *);
 
-static nvR_S3ResE4Code nv_make(NV_UNUSED bool v_ok_0) {
+static nvR_S3ResE4Code nvF_make(NV_UNUSED bool v_ok_0) {
     NV_UNUSED nvT_Res t_1 = {0};
     NV_UNUSED nvR_S3ResE4Code t_2 = {0};
     NV_UNUSED nvR_S3ResE4Code t_3 = {0};
@@ -70,7 +70,7 @@ static nvR_S3ResE4Code nv_make(NV_UNUSED bool v_ok_0) {
     return t_6;
 }
 
-static nvR_vE4Code nv_use2(void) {
+static nvR_vE4Code nvF_use2(void) {
     NV_UNUSED nvT_Res v_r_0 = {0};
     NV_UNUSED nvR_S3ResE4Code t_1 = {0};
     NV_UNUSED nvR_S3ResE4Code t_2 = {0};
@@ -78,7 +78,7 @@ static nvR_vE4Code nv_use2(void) {
     NV_UNUSED nvR_vE4Code t_4 = {0};
     NV_UNUSED nvR_vE4Code t_5 = {0};
     NV_UNUSED nvR_vE4Code t_6 = {0};
-    t_1 = nv_make(true);
+    t_1 = nvF_make(true);
     t_2 = t_1;
     t_3 = (uint32_t)t_2.tag;
     switch (t_3) {
@@ -95,12 +95,12 @@ static nvR_vE4Code nv_use2(void) {
     }
 }
 
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
     NV_UNUSED nvR_vE4Code t_0 = {0};
     NV_UNUSED nvR_vE4Code t_1 = {0};
     NV_UNUSED uint32_t t_2 = 0;
     NV_UNUSED int32_t t_3 = 0;
-    t_0 = nv_use2();
+    t_0 = nvF_use2();
     t_1 = t_0;
     t_2 = (uint32_t)t_1.tag;
     switch (t_2) {
@@ -133,5 +133,5 @@ static void nvD_RS3ResE4Code(nvR_S3ResE4Code *p) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

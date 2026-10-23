@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Nova.Compiler\Nova.Compiler.csproj" />
+    <ProjectReference Include="..\Nova.Fuzz\Nova.Fuzz.csproj" />
   </ItemGroup>
 
 </Project>

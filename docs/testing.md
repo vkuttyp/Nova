@@ -17,7 +17,7 @@ the date and result. Tests that were performed are never mixed with proposals.
 | IR snapshots | `tests/corpus/*/` + `.nir` files | reviewed text dumps |
 | Differential | runner | clang×gcc×O0/O2×sanitizers agree |
 | Fault injection | runner + `FailingAllocator` | no leaks or double frees (ASan), expected `AllocError` paths |
-| Fuzz (M7) | `tests/fuzz` | generator + NIR interpreter + native agreement |
+| Fuzz (M7) | `tests/Nova.Fuzz` (§5) | generator + NIR interpreter + native agreement |
 | CosmoOS boot | `integrations/cosmoos` (S0), later `run_boot_test.py` markers (S1) | `NOVATEST: PASS` marker |
 | Kernel selftest (C5+) | CosmoOS selftest framework (owner-approved unit) | selftest pass + lockdep clean |
 
@@ -75,6 +75,57 @@ Runner: `tests/Nova.Compiler.Tests/CorpusTests.cs`, run by `dotnet test`.
   and goes through the fault-injection sweep. Any disagreement is reported with the seed, so it
   can be reproduced.
 
+## 5. Random program generator (M7d)
+
+`tests/Nova.Fuzz` is a Csmith-style generator of Nova programs. It is a library and a campaign
+tool: `dotnet run --project tests/Nova.Fuzz -c Release -- [--seed S] [--count N | --minutes M]
+[--jobs J] [--out DIR]`. `FuzzTests` runs a fixed set of seeds in the test suite.
+
+**Programs.** Each seed gives one program, the same on every machine (`System.Random` with a seed).
+Every program is meant to be:
+- **well-typed and borrow-correct**, so the checker accepts it;
+- **terminating**:
+  - calls go only to later-declared functions (a call DAG, no recursion);
+  - loops have constant trip counts (`for (i in 0..N)`, counted `while`);
+  - the total iteration budget is bounded;
+- **deterministic**: no I/O except standard output, no addresses printed.
+
+It uses:
+- integers of every width (`i8`–`i64`, `u8`–`u64`, `usize`) and `bool`;
+- literals at the edges of each range;
+- `as` (lossless only), `truncate<T>`, and every operator;
+- structs (Copy, and with a `drop` block that prints), with field reads and writes;
+- enums with payloads, `match` on enums, integers and booleans;
+- fixed arrays (indexing, `for` over them) and slices;
+- `borrow`/`borrow mut` parameters;
+- `Box`, `Vector` (`push`, indexing, `length`, `pop`), optionals (`== null`, `!`), and `Result` with `?`
+  and `!`;
+- `if`/`else`, `for`, `while`, `loop` with `break`/`continue`, and early `return`.
+
+**Arithmetic.** Most operations go through *guarded* helper functions written in Nova, as Csmith
+does (its `safe_add` and friends):
+- `add`, `sub`: compare against the limits first;
+- `mul`: widen narrow types; reduce 64-bit operands below 2³² (unsigned) or 3·10⁹ (signed);
+- `div`, `rem`: skip a zero divisor and `MIN / -1`;
+- shifts: amount `% width`;
+- `neg`: skip `MIN`.
+
+A guard returns its left operand instead of panicking. A small fraction of operations, bounds
+and unwraps are *raw*. Those may panic, so the panic path (message, location, exit status) is
+compared too. The generated programs print running checksums of their variables throughout, and
+`main` returns a value derived from them.
+
+**Oracle.** For each program:
+1. `novac` must accept it. A rejection is a finding: of the generator, or a checker bug.
+2. The NIR interpreter's outcome (standard output, standard error, exit status) is the
+   reference. An interpreter fault is a finding.
+3. Every C configuration must compile it warning-free (`-Werror`, strict warnings) and give the
+   same outcome: clang `-O0`, clang `-O2`, clang `-O2` flat form, and, where a real GCC exists,
+   GCC `-O0` and `-O2`. A run is limited to 10 s.
+
+Each finding keeps the program and a report (`DIR/finding-<seed>.nova`, `.txt`). A finding that
+reveals a compiler bug is fixed, and its program, reduced by hand, joins the corpus.
+
 ## 4. Execution log
 
 | Date | What ran | Result |
@@ -82,6 +133,7 @@ Runner: `tests/Nova.Compiler.Tests/CorpusTests.cs`, run by `dotnet test`.
 | 2026-10-22 | `dotnet test` on macOS arm64 (.NET 10.0.401): lexer and parser unit tests, 20 parse-pass and 18 parse-fail corpus files | 151 passed, 0 failed |
 | 2026-10-22 | same, plus 11 check-pass and 19 check-fail files and the checker crash test (increment 1b) | 201 passed, 0 failed |
 | 2026-10-22 | Linux CI run 39792099920 (ubuntu-24.04, clang 18.1.3, GCC 13.3.0): every corpus and run test passed under both compilers. The runtime harness failed only on GCC `-Wclobbered` (harness-only; fixed) | 379/380 |
+| 2026-10-23 | M7d (random program generator): local suite on macOS with `FuzzTests` (32 seeds through the whole oracle); campaigns of 2,000 and 500 programs (0 findings after the fixes listed in `milestone-7.md`: a C name collision with the runtime, a false N0272, four kinds of warnings on valid programs); `c2.py`/`c3.py` on both arches (generated C changed: `nvF_` names) | 1272 passed; 141/141 programs and 230/230 sweep runs in CosmoOS, 26/26 `nwc` cases, on both arches |
 | 2026-10-23 | M7c (NIR reference interpreter): local suite on macOS with `InterpreterTests`, interpreter agreement in the fault sweep, the property tests and the I/O programs (`milestone-7.md`) | 1216 passed |
 | 2026-10-23 | M7b (structured C, now the default): local suite on macOS with the `clang -O2 flat` oracle configuration, `-Wimplicit-fallthrough` added to the strict set, and `StructuredCTests`; `c2.py` and `c3.py` on x86-64 (QEMU) and AArch64 (VM). Found during the work: a one-pass transfer elimination left a `goto` where an empty exit block's own `goto` was removed later (now iterated to a fixpoint) | 1058 passed; 137/137 programs, 228/228 sweep runs, 26/26 `nwc` cases on both arches |
 | 2026-10-23 | M7a (source maps): local suite on macOS with the new `clang -O0 -g line-directives` run configuration and `SourceMapTests`; manual lldb session on `novac build -g` output (`milestone-7.md`). Default C output unchanged (all earlier snapshots equal), so guest runs were not repeated | 951 passed |

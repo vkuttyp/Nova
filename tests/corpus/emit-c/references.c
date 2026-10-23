@@ -14,18 +14,18 @@ _Static_assert(sizeof(nvT_Counter) == 4, "novac layout: sizeof(Counter)");
 _Static_assert(_Alignof(nvT_Counter) == 4, "novac layout: alignof(Counter)");
 _Static_assert(offsetof(nvT_Counter, f_count) == 0, "novac layout: Counter.count");
 
-static NV_UNUSED void nv_reset(int64_t *);
-static NV_UNUSED int64_t nv_twice(const int64_t *);
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED void nvF_reset(int64_t *);
+static NV_UNUSED int64_t nvF_twice(const int64_t *);
+static NV_UNUSED int32_t nvF_main(void);
 static NV_UNUSED void nvM_7Counter_bump(nvT_Counter *, uint32_t);
 static NV_UNUSED uint32_t nvM_7Counter_get(const nvT_Counter *);
 
-static void nv_reset(NV_UNUSED int64_t * v_v_0) {
+static void nvF_reset(NV_UNUSED int64_t * v_v_0) {
     (*v_v_0) = ((int64_t)0);
     return;
 }
 
-static int64_t nv_twice(NV_UNUSED const int64_t * v_v_0) {
+static int64_t nvF_twice(NV_UNUSED const int64_t * v_v_0) {
     NV_UNUSED int64_t t_1 = 0;
     NV_UNUSED int64_t t_2 = 0;
     t_1 = nv_mul_i64((*v_v_0), ((int64_t)2), NV_LOC(nv_file_0, 7u, 35u));
@@ -33,7 +33,7 @@ static int64_t nv_twice(NV_UNUSED const int64_t * v_v_0) {
     return t_2;
 }
 
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
     NV_UNUSED int64_t v_x_0 = 0;
     NV_UNUSED nvT_Counter v_c_1 = {0};
     NV_UNUSED int64_t * t_2 = NULL;
@@ -50,17 +50,17 @@ static int32_t nv_main(void) {
     NV_UNUSED int32_t t_13 = 0;
     v_x_0 = ((int64_t)3);
     t_2 = &v_x_0;
-    nv_reset(t_2);
+    nvF_reset(t_2);
     v_c_1 = ((nvT_Counter){ .f_count = ((uint32_t)1) });
     t_3 = &v_c_1;
     t_4 = nvM_7Counter_get(t_3);
     t_5 = &v_c_1;
     nvM_7Counter_bump(t_5, t_4);
     t_6 = &v_x_0;
-    t_7 = nv_twice(t_6);
+    t_7 = nvF_twice(t_6);
     t_8 = ((int64_t)4);
     t_9 = &t_8;
-    t_10 = nv_twice(t_9);
+    t_10 = nvF_twice(t_9);
     t_11 = nv_add_i64(t_7, t_10, NV_LOC(nv_file_0, 13u, 26u));
     t_12 = nv_as_i32((uint32_t)t_11);
     t_13 = t_12;
@@ -81,5 +81,5 @@ static uint32_t nvM_7Counter_get(NV_UNUSED const nvT_Counter * v_this_0) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

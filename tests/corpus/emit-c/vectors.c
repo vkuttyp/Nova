@@ -52,7 +52,7 @@ struct nvV_ZS10SystemHeap { uint8_t *ptr; uint64_t len; uint64_t cap; };
 _Static_assert(sizeof(nvV_ZS10SystemHeap) == 24, "novac layout: sizeof(String)");
 _Static_assert(_Alignof(nvV_ZS10SystemHeap) == 8, "novac layout: alignof(String)");
 
-static NV_UNUSED void nv_main(void);
+static NV_UNUSED void nvF_main(void);
 static NV_UNUSED void nvD_VUi32S10SystemHeap(nvV_Ui32S10SystemHeap *);
 static NV_UNUSED void nvD_VZS10SystemHeap(nvV_ZS10SystemHeap *);
 static NV_UNUSED nvR_vE10AllocError nvVP_VUi32S10SystemHeap(nvV_Ui32S10SystemHeap *, int32_t);
@@ -61,7 +61,7 @@ static NV_UNUSED void nvVC_VUi32S10SystemHeap(nvV_Ui32S10SystemHeap *);
 static NV_UNUSED nvR_vE10AllocError nvVA_VZS10SystemHeap(nvV_ZS10SystemHeap *, nv_str);
 static NV_UNUSED void nvVC_VZS10SystemHeap(nvV_ZS10SystemHeap *);
 
-static void nv_main(void) {
+static void nvF_main(void) {
     NV_UNUSED nvV_Ui32S10SystemHeap v_v_0 = {0};
     NV_UNUSED nvV_ZS10SystemHeap v_s_1 = {0};
     NV_UNUSED nvV_Ui32S10SystemHeap * t_2 = NULL;
@@ -160,6 +160,6 @@ static void nvVC_VZS10SystemHeap(nvV_ZS10SystemHeap *v) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    nv_main();
+    nvF_main();
     return (int)nova_rt_finish(0);
 }

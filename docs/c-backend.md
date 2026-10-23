@@ -93,6 +93,20 @@ Layout verification: for every emitted struct the backend emits
 assertions, where `N`/`A` come from `TargetInfo`. If the C compiler for the actual target
 disagrees with Nova's model, the build fails, and nothing miscompiles silently.
 
+## 2.1 C names (M7d)
+
+Generated code and the runtime share one C namespace, so their names are kept disjoint by
+prefix:
+
+| Owner | Names |
+|---|---|
+| **Runtime** (`nova/rt.h`, `nova_rt_*.c`) | `nova_*`; `nv_` followed by a lowercase letter (`nv_add_i32`, `nv_check_index`, `nv_str`, `nv_loc`); `NV_*` |
+| **Generated** | `nv` followed by a capital letter: `nvF_name` (top-level functions), `nvM_` (members), `nvG_` (generic instances), `nvT_`/`nvE_` (types), and the helper families (`nvD_`, `nvB_`, `nvVP_`, …); locals `v_<name>_<n>` and `t_<n>`; fields `f_<name>`; variants `v_<name>`; labels `bb<n>`; files `nv_file_<n>` |
+
+Until M7d, top-level functions were `nv_<name>`. A Nova function named `add_i32` then collided with
+the runtime's `nv_add_i32`, and the C failed to compile. The random program generator found this,
+and `run-pass/runtime-names.nova` keeps it fixed.
+
 ## 3. Lowering of control flow and cleanup
 
 **Flat form** (M1; `--flat-c`): each NIR block becomes a C label. Terminators become `goto`, `switch`
@@ -223,6 +237,7 @@ with side effects are always assigned to temporaries first.
 | Lifetime of compound literals / temporaries | Not used across statements. Temporaries are named locals |
 | `memcpy` overlap | Moves use `memmove` when the source and destination may alias; NIR knows when they cannot |
 | Float→int conversion out of range (UB in C) | Only via `toIntSaturating`/`checkedCast` helpers that range-check first |
+| Warnings on valid programs (M7d) | Nova accepts code that C compilers warn about, and generated C must still be warning-free. `x = x;` emits nothing (`-Wself-assign`). A comparison of a place with itself is the constant `true`/`false` (`-Wtautological-compare`). A constant index past a fixed array's end, after the check that always panics, goes through `nv_opaque_index` (`-Warray-bounds`). In the structured form, statements that print nothing are dropped, so no label ends a block (`-Wc23-extensions`). Found by the random program generator; each case is in `run-pass/warning-free.nova` |
 | Infinite side-effect-free loops (C11 6.8.5p6 permits assuming termination) | Loops whose controlling expression is not a constant expression and that have no side effects get a `nova_loop_barrier()` (an empty `asm volatile` / volatile access) |
 
 ## 6. Runtime surface (`nova/rt.h`)
@@ -290,7 +305,7 @@ Heap (M3b):
   `cc -I <dir> <dir>/*.c`.
 - Panic output: `nova panic: <reason> at <file>:<line>:<column>`. Stdout is flushed first, then
   `abort()` (exit status 134).
-- `main() -> i32` becomes `int main(void) { return (int)nv_main(); }`. `Process.exit(c)` calls
+- `main() -> i32` becomes `int main(void) { return (int)nvF_main(); }` (M7d renamed `nv_` to `nvF_`, §2.1). `Process.exit(c)` calls
   `exit(c)`, which flushes stdio.
 
 ## 8. Validation

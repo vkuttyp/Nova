@@ -5,10 +5,10 @@ _Static_assert(sizeof(void *) * 8 == 64, "novac: generated for a 64-bit target")
 
 static NV_UNUSED const char nv_file_0[] = "emit-c/gcd.nova";
 
-static NV_UNUSED uint64_t nv_gcd(uint64_t, uint64_t);
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED uint64_t nvF_gcd(uint64_t, uint64_t);
+static NV_UNUSED int32_t nvF_main(void);
 
-static uint64_t nv_gcd(NV_UNUSED uint64_t v_a_0, NV_UNUSED uint64_t v_b_1) {
+static uint64_t nvF_gcd(NV_UNUSED uint64_t v_a_0, NV_UNUSED uint64_t v_b_1) {
     NV_UNUSED uint64_t v_x_2 = 0;
     NV_UNUSED uint64_t v_y_3 = 0;
     NV_UNUSED uint64_t v_t_4 = 0;
@@ -29,18 +29,18 @@ static uint64_t nv_gcd(NV_UNUSED uint64_t v_a_0, NV_UNUSED uint64_t v_b_1) {
     return t_6;
 }
 
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
     NV_UNUSED uint64_t t_0 = 0;
     NV_UNUSED uint64_t t_1 = 0;
     NV_UNUSED uint64_t t_2 = 0;
     NV_UNUSED int32_t t_3 = 0;
-    t_0 = nv_gcd(((uint64_t)1071), ((uint64_t)462));
+    t_0 = nvF_gcd(((uint64_t)1071), ((uint64_t)462));
     nova_write_u64((uint64_t)t_0);
     nova_write_newline();
-    t_1 = nv_gcd(((uint64_t)17), ((uint64_t)5));
+    t_1 = nvF_gcd(((uint64_t)17), ((uint64_t)5));
     nova_write_u64((uint64_t)t_1);
     nova_write_newline();
-    t_2 = nv_gcd(((uint64_t)0), ((uint64_t)9));
+    t_2 = nvF_gcd(((uint64_t)0), ((uint64_t)9));
     nova_write_u64((uint64_t)t_2);
     nova_write_newline();
     t_3 = ((int32_t)0);
@@ -50,5 +50,5 @@ static int32_t nv_main(void) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

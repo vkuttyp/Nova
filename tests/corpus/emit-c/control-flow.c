@@ -5,11 +5,11 @@ _Static_assert(sizeof(void *) * 8 == 64, "novac: generated for a 64-bit target")
 
 static NV_UNUSED const char nv_file_0[] = "emit-c/control-flow.nova";
 
-static NV_UNUSED int32_t nv_classify(int32_t);
-static NV_UNUSED uint8_t nv_bits(uint64_t, int32_t);
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED int32_t nvF_classify(int32_t);
+static NV_UNUSED uint8_t nvF_bits(uint64_t, int32_t);
+static NV_UNUSED int32_t nvF_main(void);
 
-static int32_t nv_classify(NV_UNUSED int32_t v_n_0) {
+static int32_t nvF_classify(NV_UNUSED int32_t v_n_0) {
     NV_UNUSED bool t_1 = false;
     NV_UNUSED int32_t t_2 = 0;
     NV_UNUSED bool t_3 = false;
@@ -29,7 +29,7 @@ static int32_t nv_classify(NV_UNUSED int32_t v_n_0) {
     return t_5;
 }
 
-static uint8_t nv_bits(NV_UNUSED uint64_t v_x_0, NV_UNUSED int32_t v_n_1) {
+static uint8_t nvF_bits(NV_UNUSED uint64_t v_x_0, NV_UNUSED int32_t v_n_1) {
     NV_UNUSED uint64_t t_2 = 0;
     NV_UNUSED uint8_t t_3 = 0;
     NV_UNUSED uint8_t t_4 = 0;
@@ -39,7 +39,7 @@ static uint8_t nv_bits(NV_UNUSED uint64_t v_x_0, NV_UNUSED int32_t v_n_1) {
     return t_4;
 }
 
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
     NV_UNUSED int32_t v_i_0 = 0;
     NV_UNUSED int32_t t_1 = 0;
     NV_UNUSED bool t_2 = false;
@@ -62,7 +62,7 @@ static int32_t nv_main(void) {
         if (!t_2) {
             t_3 = (v_i_0 > ((int32_t)5));
             if (t_3) {
-                t_5 = nv_classify(v_i_0);
+                t_5 = nvF_classify(v_i_0);
                 t_6 = (t_5 == ((int32_t)1));
                 t_4 = t_6;
             } else {
@@ -85,7 +85,7 @@ static int32_t nv_main(void) {
     if (t_11) {
         nova_exit(((int32_t)1));
     }
-    t_12 = nv_bits(((uint64_t)65280), ((int32_t)8));
+    t_12 = nvF_bits(((uint64_t)65280), ((int32_t)8));
     nova_write_u64((uint64_t)t_12);
     nova_write_newline();
     t_13 = ((int32_t)0);
@@ -95,5 +95,5 @@ static int32_t nv_main(void) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

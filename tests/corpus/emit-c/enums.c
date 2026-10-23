@@ -37,13 +37,13 @@ _Static_assert(sizeof(nvE_Holder) == 8, "novac layout: sizeof(Holder)");
 _Static_assert(_Alignof(nvE_Holder) == 4, "novac layout: alignof(Holder)");
 _Static_assert(offsetof(nvE_Holder, u) == 4, "novac layout: Holder payload offset");
 
-static NV_UNUSED int64_t nv_area(nvE_Shape);
-static NV_UNUSED int32_t nv_main(void);
+static NV_UNUSED int64_t nvF_area(nvE_Shape);
+static NV_UNUSED int32_t nvF_main(void);
 static NV_UNUSED void nvM_3Res_drop(nvT_Res *);
 static NV_UNUSED void nvD_3Res(nvT_Res *);
 static NV_UNUSED void nvD_6Holder(nvE_Holder *);
 
-static int64_t nv_area(NV_UNUSED nvE_Shape v_s_0) {
+static int64_t nvF_area(NV_UNUSED nvE_Shape v_s_0) {
     NV_UNUSED int64_t v_r_1 = 0;
     NV_UNUSED int32_t v_w_2 = 0;
     NV_UNUSED int64_t v_h_3 = 0;
@@ -74,7 +74,7 @@ static int64_t nv_area(NV_UNUSED nvE_Shape v_s_0) {
     }
 }
 
-static int32_t nv_main(void) {
+static int32_t nvF_main(void) {
     NV_UNUSED nvE_Holder v_h_0 = {0};
     NV_UNUSED nvT_Res t_1 = {0};
     NV_UNUSED nvE_Shape t_2 = {0};
@@ -84,7 +84,7 @@ static int32_t nv_main(void) {
     t_1 = ((nvT_Res){ .f_id = ((int32_t)1) });
     v_h_0 = ((nvE_Holder){ .tag = 1, .u.v_One = { .f__0 = t_1 } });
     t_2 = ((nvE_Shape){ .tag = 2, .u.v_Rect = { .f__0 = ((int32_t)2), .f__1 = ((int64_t)3) } });
-    t_3 = nv_area(t_2);
+    t_3 = nvF_area(t_2);
     t_4 = nv_as_i32((uint32_t)t_3);
     t_5 = t_4;
     nvD_6Holder(&v_h_0);
@@ -112,5 +112,5 @@ static void nvD_6Holder(nvE_Holder *p) {
 int main(int argc, char **argv) {
     nova_rt_args((int32_t)argc, (const uint8_t *const *)(void *)argv);
     nova_rt_start();
-    return (int)nova_rt_finish(nv_main());
+    return (int)nova_rt_finish(nvF_main());
 }

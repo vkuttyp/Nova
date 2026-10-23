@@ -1,0 +1,30 @@
+// Storing a Copy value read through a `borrow mut` parameter stores no loan (type-system.md §25.7 rules 1-4).
+// Found by the M7d random program generator: `v.push(p.a)` was a false N0272.
+struct S { a: u16; b: i32; }
+
+fn pushes(p: borrow mut S) -> u64 {
+    var v = Vector<u16>.create();
+    v.push(p.a)!;
+    v.push(p.a + 1)!;
+    p.a = 9;
+    return (v[0] as u64) + (v[1] as u64);
+}
+
+fn stores(p: borrow mut S, q: borrow mut S) {
+    var copy = S { a: 0, b: 0 };
+    copy.b = p.b;
+    q.b = copy.b + p.b;
+}
+
+fn main() -> i32 {
+    var s = S { a: 4, b: 5 };
+    var t = S { a: 0, b: 0 };
+    Console.writeLine(pushes(mut s));
+    stores(mut s, mut t);
+    Console.writeLine(s.a);
+    Console.writeLine(t.b);
+    return 0;
+}
+// expect-stdout: 9
+// expect-stdout: 9
+// expect-stdout: 10

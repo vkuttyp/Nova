@@ -228,6 +228,9 @@ static inline void nv_check_index(uint64_t index, uint64_t length, nv_loc loc) {
     if (index >= length) nova_panic(NV_PANIC_INDEX, loc);
 }
 
+/* A constant index that its preceding check rejects: hides the constant from -Warray-bounds (c-backend.md §5). */
+static inline uint64_t nv_opaque_index(uint64_t index) { return index; }
+
 static inline void nv_check_range(uint64_t low, uint64_t high, uint64_t length, nv_loc loc) {
     if (low > high || high > length) nova_panic(NV_PANIC_SLICE, loc);
 }
