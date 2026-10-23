@@ -62,9 +62,15 @@ GCC only. What differs:
   - `Process.run` uses `_spawnvp(_P_WAIT, …)`;
   - **TCP is not supported**: after the same address check as elsewhere, every socket call fails
     with `ENOSYS` (`IoError.Other`).
-- **Test.** The `test-windows` CI job builds every run-pass and run-fail program with MSVC and
-  runs it. Each must give the corpus expectations, except programs that open sockets, which are
-  listed in the test.
+- **Test.** `MsvcTests` checks three things:
+  - every run-pass and run-fail program builds with MSVC and gives the corpus expectations;
+  - `nwc` reads files and standard input;
+  - a program runs `cmd /c exit 7` with `Process.run`, sees a missing program fail, and sees TCP
+    reported as unsupported.
+
+  No corpus program needs an exception: `io-errors.nova` passes only invalid addresses, which fail
+  the address check first. The `test-windows` CI job runs the tests on x64. Locally, a Windows 11
+  ARM64 VM (MSVC 19.51) runs them. On other hosts they return early.
 
 ## 2. Lowering of types
 
