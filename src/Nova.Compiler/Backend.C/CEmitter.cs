@@ -1662,6 +1662,9 @@ public sealed class CEmitter
                 ProjectionKind.Field when projection.Field!.IsRegionPart => text, // the frame itself (§19.5)
                 ProjectionKind.Field => $"{text}.{FieldName(projection.Field!)}",
                 ProjectionKind.Downcast => $"{text}.u.{VariantName(projection.Variant!)}",
+                // A constant index too large for any object (its check panics first) would trip -Warray-bounds (§5).
+                _ when type.IsUnsized && projection.Index is NirConst { Value: var huge } && huge > long.MaxValue / TypeTable.LayoutOf(type.Element!).Size
+                    => $"{text}.ptr[nv_opaque_index({Operand((NirOperand)projection.Index!)})]",
                 _ when type.IsUnsized => $"{text}.ptr[{Operand((NirOperand)projection.Index!)}]",
                 // A constant index past the end is checked first and always panics; hiding the constant keeps
                 // -Warray-bounds quiet about the access that never happens (§5).
