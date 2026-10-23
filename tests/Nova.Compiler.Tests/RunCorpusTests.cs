@@ -120,7 +120,7 @@ public partial class RunCorpusTests
 
     private static string CultureInfoInvariant(FormattableString text) => FormattableString.Invariant(text);
 
-    private static Expectations ParseExpectations(string text)
+    internal static Expectations ParseExpectations(string text)
     {
         var stdout = new StringBuilder();
         var exitCode = 0;

@@ -34,6 +34,8 @@ public class CollectionPropertyTests
         var (program, stdout) = Generate(kind, seed);
         var name = $"property-{kind}-{seed}.nova";
         RunCorpusTests.RunEverywhere(name, program, new RunCorpusTests.Expectations(stdout, 0, null, 0));
+        // The NIR interpreter agrees with the model too (intermediate-representation.md §5.5).
+        Assert.Equal(new InterpreterTests.Outcome(stdout, "", 0), InterpreterTests.Interpret(name, program));
     }
 
     [Theory]

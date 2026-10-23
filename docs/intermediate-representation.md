@@ -187,3 +187,96 @@ directly. The C-level decisions (type names, helper selection, temporaries) are 
 `Backend.C/CEmitter.cs`, because NIR operands are already flat. LIR will be introduced when a
 second consumer appears or when drop elaboration makes the emitter non-trivial (M2/M7).
 This is a recorded deviation from the plan, not an omission.
+
+## 5. The NIR reference interpreter (M7c)
+
+`novac run --interp <files> [-- <arguments>]` executes a program's NIR directly
+(`src/Nova.Compiler/Interpreter/`). It serves as an oracle for the C backend. The C backend and
+the interpreter consume the same checked NIR, after drop elaboration. Agreement between them
+therefore tests the C backend and its runtime, not NIR lowering.
+
+### 5.1 Observable behaviour
+
+The interpreter must produce exactly what the native program produces:
+
+- the bytes written to standard output and standard error, in the same order: every write to
+  standard error first flushes standard output (`nova_rt_hosted.c`);
+- the exit status:
+  - `main`'s result, or `Process.exit`'s code (the operating system keeps the low 8 bits);
+  - 134 after a panic, as `abort()` gives natively;
+- the panic message (`nova panic: <reason> at <file>:<line>:<column>`);
+- the allocation counters: `NOVA_FAIL_ALLOC_AT` and the `NOVA_ALLOC_REPORT` line. The interpreter
+  counts every attempt that `nova_alloc` would. This includes vector growth, stable-vector chunks,
+  slot-map slots, arena and scratch chunks, pool slots, and `Process.run`'s argument copies. The
+  allocation-failure sweep therefore sees the same attempts.
+
+To get these, the runtime's algorithms are reimplemented step for step:
+- `nova_rt_core.c`: growth (doubling, at least 4), arena chunks with their 16-byte header,
+  scratch chunks of 64 KiB, the pool slot size, and the panic and report texts;
+- the emitter's helpers (`c-backend.md` §2): push, pop and clear, slot-map generations, and the
+  drop-glue order.
+
+### 5.2 Memory model
+
+Memory is **byte-addressed**. Values have the target layout of `TypeTable.LayoutOf`, which is the
+same layout the generated C asserts. Pointers are 8-byte addresses, and null is 0. Memory is a set of
+*allocations*, each with a base address aligned to 16 (as `malloc` gives) and a size:
+
+| Kind | Created by | Ends at |
+|---|---|---|
+| local | a function's entry (every local, zero-filled, as the C locals are) | `StorageDead`, or the function's return |
+| heap | `nova_alloc` | `nova_free` |
+| static | a string literal (read-only), the empty-vector sentinel (size 0) | never |
+
+`StorageDead` ends a local's allocation. The next write to that local (a whole assignment, or a
+write or borrow through one of its fields) gives it a *new* allocation, so an old reference to it
+stays dead.
+
+**Interpreter faults.** Each of the following stops the program with
+`nova interp: fault: <what> at <file>:<line>:<column>` on standard error and exit status 70:
+- an access to an ended allocation, or outside an allocation's bounds;
+- a dereference of null;
+- a write to static memory;
+- `nova_free` of anything but the base of a live heap allocation;
+- a *use* of uninitialised bytes. Heap memory starts uninitialised. Each byte carries an
+  initialised bit, which copies carry along: copying a struct with padding is not a use.
+  Reading a scalar to compute with it, to branch on it, to compare it, as a tag or as an address
+  is a use.
+
+No correct program can fault. A fault means the compiler, its runtime, or its checks let an
+unsafe program through. This makes the interpreter a dynamic safety oracle: liveness, bounds and
+initialisation. It does not track borrows (no Stacked Borrows), so it does not catch aliasing
+violations that stay in bounds.
+
+### 5.3 Execution
+
+- Calls recurse on the host stack. The interpreter runs on its own thread with a 1 GiB stack.
+- Drop glue and the runtime helpers are interpreted in the same order as the emitted C. A user
+  `drop` function, for example, runs before its fields' drops.
+- Arithmetic follows `IntegerSemantics` (type-system.md §6–7), the same table the checked C helpers
+  implement.
+
+### 5.4 The host
+
+- **Output.** Standard output, standard error and standard input are streams supplied by the
+  caller. The CLI uses the process's own.
+- **Arguments.** `argv[0]` is the first source file's path. The arguments after `--` follow it.
+- **Configuration.** The CLI reads `NOVA_FAIL_ALLOC_AT` and `NOVA_ALLOC_REPORT` as
+  `nova_platform_config` does (leading digits).
+- **Files and sockets** use the host C library through P/Invoke (`open`, `read`, `write`,
+  `close`, `unlink`, `socket`, …) on Linux and macOS, with the same flags and errno mapping as
+  `nova_rt_io.c`. On Windows, I/O is an interpreter fault ("unsupported").
+- **Working directory.** An optional working directory resolves relative file paths and is
+  where child processes start. Tests use it, since they run in parallel in one process. The CLI
+  uses the process's own directory.
+- **`Process.run`** starts the program with .NET's process API, after flushing standard output.
+  When the interpreter's output streams are the process's own, the child inherits them. When the
+  caller captures output (tests), the child's output is copied into the captured streams.
+
+### 5.5 Agreement tests
+
+- `InterpreterTests` run every run-pass and run-fail program. Standard output, standard error
+  and exit status must equal the corpus expectations. The native runs check the same
+  expectations under every C configuration.
+- The allocation-failure sweep runs the interpreter beside the native ASan build, for the
+  baseline and at every failure point. The outcomes must be equal.

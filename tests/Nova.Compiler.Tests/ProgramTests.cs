@@ -45,6 +45,50 @@ public class ProgramTests
         Assert.False(File.Exists(Path.Combine(temp.Path, "c3-test.txt"))); // removed by the program
     }
 
+    /// <summary>The NIR interpreter runs c3-io the same way (intermediate-representation.md §5.4).</summary>
+    [Fact]
+    public void C3_io_program_in_the_interpreter()
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(Root, "integrations", "cosmoos", "c3", "c3-io.nova");
+        var text = File.ReadAllText(source);
+        var expected = string.Concat(text.Split('\n')
+            .Where(l => l.StartsWith("// expect-stdout: ", StringComparison.Ordinal))
+            .Select(l => l["// expect-stdout: ".Length..].TrimEnd('\r') + "\n"));
+        var outcome = InterpreterTests.Interpret("c3-io.nova", text, arguments: ["c3-io", "first", "second"], workingDirectory: temp.Path);
+        Assert.Equal(new InterpreterTests.Outcome(expected, "", 0), outcome);
+        Assert.False(File.Exists(Path.Combine(temp.Path, "c3-test.txt")));
+    }
+
+    private static string NwcData(TempDirectory temp)
+    {
+        var data = Path.Combine(temp.Path, "data");
+        Directory.CreateDirectory(Path.Combine(data, "d"));
+        foreach (var (name, content) in new[]
+        {
+            ("x", "a b\nc d e\n"), ("y", "one\n"), ("z", "no newline"), ("t", "a\tb\n12345678901\nhéllo wörld\n"),
+            ("w", "  a  b\t\tc\r\nd\fe\vf"), ("m", "é €\n🙂x\n"), ("tab", "x\ty\n"), ("tab2", "abcdefgh\tz\n"),
+        })
+        {
+            File.WriteAllBytes(Path.Combine(data, name), Encoding.UTF8.GetBytes(content));
+        }
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(NwcCases))]
+    public void Nwc_in_the_interpreter(string arguments, string? input, string stdout, string firstErrorLine, int status)
+    {
+        using var temp = new TempDirectory();
+        var data = NwcData(temp);
+        var outcome = InterpreterTests.Interpret("nwc.nova", File.ReadAllText(Path.Combine(Root, "programs", "nwc", "nwc.nova")),
+            arguments: ["nwc", .. arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries)],
+            input: input is null ? [] : File.ReadAllBytes(Path.Combine(data, input)), workingDirectory: data);
+        Assert.Equal(stdout, outcome.Stdout);
+        Assert.Equal(firstErrorLine, outcome.Stderr.Split('\n')[0]);
+        Assert.Equal(status, outcome.ExitCode);
+    }
+
     public static TheoryData<string, string?, string, string, int> NwcCases() => new()
     {
         { "x", null, "        2         5        10 x\n", "", 0 },
@@ -72,16 +116,7 @@ public class ProgramTests
     {
         using var temp = new TempDirectory();
         var exe = Build(Path.Combine(Root, "programs", "nwc", "nwc.nova"), temp);
-        var data = Path.Combine(temp.Path, "data");
-        Directory.CreateDirectory(Path.Combine(data, "d"));
-        foreach (var (name, content) in new[]
-        {
-            ("x", "a b\nc d e\n"), ("y", "one\n"), ("z", "no newline"), ("t", "a\tb\n12345678901\nhéllo wörld\n"),
-            ("w", "  a  b\t\tc\r\nd\fe\vf"), ("m", "é €\n🙂x\n"), ("tab", "x\ty\n"), ("tab2", "abcdefgh\tz\n"),
-        })
-        {
-            File.WriteAllBytes(Path.Combine(data, name), Encoding.UTF8.GetBytes(content));
-        }
+        var data = NwcData(temp);
         var run = Toolchain.Run(exe, arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries), TimeSpan.FromSeconds(30),
             workingDirectory: data, standardInput: input is null ? [] : File.ReadAllBytes(Path.Combine(data, input)));
         Assert.Equal(stdout, run.StandardOutput);

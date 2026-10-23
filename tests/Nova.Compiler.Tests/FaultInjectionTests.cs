@@ -12,7 +12,8 @@ namespace Nova.Compiler.Tests;
 /// (NOVA_ALLOC_REPORT). It is then run again with attempt <i>k</i> failing (NOVA_FAIL_ALLOC_AT),
 /// for every <i>k ≤ n</i>. Every run must end either with a normal return from <c>main</c> and no
 /// live allocations, or with the panic of <c>!</c> on the failed allocation. Leaks, double frees,
-/// use after free and any other panic or sanitizer report fail the test.
+/// use after free and any other panic or sanitizer report fail the test. The NIR interpreter must
+/// produce exactly the native outcome at the baseline and at every failure point (M7c).
 /// </summary>
 public partial class FaultInjectionTests
 {
@@ -60,6 +61,8 @@ public partial class FaultInjectionTests
 
         var baseline = Run(exe, failAt: 0);
         var attempts = Report(baseline, "baseline");
+        // The NIR interpreter counts the same attempts and ends the same way (intermediate-representation.md §5.5).
+        Assert.Equal(Native(baseline), InterpreterTests.Interpret(relativePath, text, failAt: 0, report: true));
         Assert.True(attempts.Live == 0, $"{relativePath}: {attempts.Live} allocation(s) leaked without fault injection");
         if (attempts.Attempts == 0)
         {
@@ -73,6 +76,15 @@ public partial class FaultInjectionTests
             if (Problem(run) is { } problem)
             {
                 failures.Add($"allocation {k} of {attempts.Attempts} failing: {problem}\nstderr:\n{run.StandardError}");
+            }
+            if (!InterpreterPoints(attempts.Attempts).Contains(k))
+            {
+                return;
+            }
+            var interpreted = InterpreterTests.Interpret(relativePath, text, failAt: (ulong)k, report: true);
+            if (interpreted != Native(run))
+            {
+                failures.Add($"allocation {k} of {attempts.Attempts} failing: the interpreter disagrees\nnative: {Native(run)}\ninterpreter: {interpreted}");
             }
         });
         Assert.True(failures.IsEmpty, $"{relativePath}:\n" + string.Join("\n", failures.OrderBy(f => f, StringComparer.Ordinal)));
@@ -88,6 +100,19 @@ public partial class FaultInjectionTests
             .Concat(Enumerable.Range(0, 50).Select(k => attempts - k))
             .Concat(Enumerable.Range(1, 100).Select(k => k * attempts / 101))
             .Distinct();
+
+    /// <summary>
+    /// Where the interpreter is compared too: every failure point of a program with at most
+    /// <see cref="MaxAttempts"/> attempts; otherwise the first 10, the last 10 and 10 evenly spaced ones
+    /// (the interpreter is slower than native code).
+    /// </summary>
+    private static HashSet<long> InterpreterPoints(long attempts) => attempts <= MaxAttempts
+        ? [.. FailurePoints(attempts)]
+        : [.. Enumerable.Range(1, 10).Select(k => (long)k), .. Enumerable.Range(0, 10).Select(k => attempts - k),
+            .. Enumerable.Range(1, 10).Select(k => k * attempts / 11)];
+
+    private static InterpreterTests.Outcome Native(ToolResult run) =>
+        new(run.StandardOutput.ReplaceLineEndings("\n"), run.StandardError.ReplaceLineEndings("\n"), run.ExitCode);
 
     private static ToolResult Run(string exe, long failAt) => Toolchain.Run(exe, [], TimeSpan.FromSeconds(30), new Dictionary<string, string>
     {

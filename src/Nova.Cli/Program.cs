@@ -2,6 +2,7 @@
 using Nova.Compiler.Backend.C;
 using Nova.Compiler.Diagnostics;
 using Nova.Compiler.Hir;
+using Nova.Compiler.Interpreter;
 using Nova.Compiler.Nir;
 using Nova.Compiler.Semantics;
 using Nova.Compiler.Syntax;
@@ -11,12 +12,13 @@ namespace Nova.Cli;
 internal static class Program
 {
     private const string Usage = """
-        usage: novac <command> [options] <file.nova>...
+        usage: novac <command> [options] <file.nova>... [-- <program arguments>]
 
         commands:
           parse    lex and parse the files, report syntax errors
           check    parse and type-check the files as one package
           build    compile the package to C, and by default to an executable
+          run      run the package with the NIR reference interpreter (--interp)
         options:
           --dump-ast        (parse) print the AST of each file
           --dump-hir        (check) print the typed HIR of the package
@@ -28,6 +30,7 @@ internal static class Program
           --line-directives (build) map the generated C to Nova lines with #line
           -g                (build) debug build: #line directives, C compiled with -g -O0
           --flat-c          (build) emit the flat form: one label per block, no if/loop reconstruction
+          --interp          (run) interpret the checked NIR (intermediate-representation.md §5)
         """;
 
     private sealed class Options
@@ -40,6 +43,8 @@ internal static class Program
         public List<string> CFlags { get; } = ["-O2"];
         public bool LineDirectives { get; set; }
         public bool Flat { get; set; }
+        public bool Interpret { get; set; }
+        public List<string> ProgramArguments { get; } = [];
     }
 
     private static int Main(string[] args)
@@ -56,7 +61,7 @@ internal static class Program
         }
 
         var command = args[0];
-        if (command is not ("parse" or "check" or "build"))
+        if (command is not ("parse" or "check" or "build" or "run"))
         {
             return Fail($"unknown command '{command}'");
         }
@@ -82,6 +87,7 @@ internal static class Program
         {
             "parse" => Report(Parse(sources, options.Dump)),
             "check" => Report(Check(sources, options.Dump)),
+            "run" => Run(sources, options),
             _ => Build(sources, options),
         };
     }
@@ -103,7 +109,16 @@ internal static class Program
                 return null;
             }
 
-            if (arg == dumpOption)
+            if (arg == "--" && command == "run")
+            {
+                options.ProgramArguments.AddRange(args[(i + 1)..]);
+                break;
+            }
+            if (command == "run" && arg == "--interp")
+            {
+                options.Interpret = true;
+            }
+            else if (arg == dumpOption)
             {
                 options.Dump = true;
             }
@@ -149,6 +164,11 @@ internal static class Program
         if (options.Files.Count == 0)
         {
             Fail("no input files");
+            return null;
+        }
+        if (command == "run" && !options.Interpret)
+        {
+            Fail("'run' needs --interp (the only way to run without building is the interpreter)");
             return null;
         }
         return options;
@@ -240,6 +260,46 @@ internal static class Program
         {
             Directory.Delete(workDirectory, recursive: true);
         }
+    }
+
+    /// <summary>Interprets the package's NIR (intermediate-representation.md §5) with the process's own streams and environment.</summary>
+    private static int Run(List<SourceText> sources, Options options)
+    {
+        var compilation = Compilation.Create(sources, TargetInfo.Lp64);
+        if (compilation.Diagnostics.HasErrors)
+        {
+            return Report(compilation.Diagnostics);
+        }
+        if (CBackend.Generate(compilation, requireMain: true, out var nir) is null || nir is null)
+        {
+            return Report(compilation.Diagnostics);
+        }
+        using var output = new BufferedStream(Console.OpenStandardOutput());
+        using var errors = Console.OpenStandardError();
+        return NirInterpreter.Run(nir, compilation.Symbols, new InterpreterOptions
+        {
+            StandardOutput = output,
+            StandardError = errors,
+            Arguments = [sources[0].Path, .. options.ProgramArguments],
+            FailAllocationAt = Config("NOVA_FAIL_ALLOC_AT"),
+            AllocationReport = Config("NOVA_ALLOC_REPORT") != 0,
+            InheritStandardStreams = true,
+        });
+    }
+
+    /// <summary>A number from the environment, as nova_platform_config reads it: leading digits, else 0.</summary>
+    private static ulong Config(string name)
+    {
+        ulong value = 0;
+        foreach (var c in Environment.GetEnvironmentVariable(name) ?? "")
+        {
+            if (c is < '0' or > '9')
+            {
+                break;
+            }
+            value = value * 10 + (ulong)(c - '0');
+        }
+        return value;
     }
 
     private static int Fail(string message)
