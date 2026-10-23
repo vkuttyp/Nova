@@ -49,12 +49,10 @@ static void nv_main(void) {
     v_r_1 = ((nvT_Res){ .f_id = ((int32_t)3) });
     t_5 = true;
     t_4 = (v_p_0.f_b.f_id > ((int32_t)1));
-    if (t_4) goto bb1; else goto bb2;
-bb1:
-    nv_consume(v_r_1);
-    t_5 = false;
-    goto bb2;
-bb2:
+    if (t_4) {
+        nv_consume(v_r_1);
+        t_5 = false;
+    }
     nova_write_i64((int64_t)((int32_t)0));
     nova_write_newline();
     if (t_5) nvD_3Res(&v_r_1);

@@ -27,6 +27,7 @@ internal static class Program
           --cflag <flag>    (build) extra flag for the C compiler (repeatable)
           --line-directives (build) map the generated C to Nova lines with #line
           -g                (build) debug build: #line directives, C compiled with -g -O0
+          --flat-c          (build) emit the flat form: one label per block, no if/loop reconstruction
         """;
 
     private sealed class Options
@@ -38,6 +39,7 @@ internal static class Program
         public string Compiler { get; set; } = Environment.GetEnvironmentVariable("CC") is { Length: > 0 } cc ? cc : "cc";
         public List<string> CFlags { get; } = ["-O2"];
         public bool LineDirectives { get; set; }
+        public bool Flat { get; set; }
     }
 
     private static int Main(string[] args)
@@ -108,6 +110,10 @@ internal static class Program
             else if (command == "build" && arg == "--line-directives")
             {
                 options.LineDirectives = true;
+            }
+            else if (command == "build" && arg == "--flat-c")
+            {
+                options.Flat = true;
             }
             else if (command == "build" && arg == "-g")
             {
@@ -191,7 +197,7 @@ internal static class Program
         }
 
         var program = CBackend.Generate(compilation, requireMain: options.Emit == "exe", out var nir,
-            new CEmitOptions(LineDirectives: options.LineDirectives));
+            new CEmitOptions(LineDirectives: options.LineDirectives, Structured: !options.Flat));
         if (program is null)
         {
             return Report(compilation.Diagnostics);

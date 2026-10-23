@@ -90,34 +90,30 @@ static int32_t nv_main(void) {
     t_8 = t_7;
     t_9 = (uint32_t)t_8.tag;
     switch (t_9) {
-    case ((uint32_t)0): goto bb1;
-    default: goto bb2;
+    case ((uint32_t)0):
+        v_p_1 = t_8.u.v_Ok.f__0;
+        t_10 = &v_arena_0;
+        t_11 = nvAR_u16(t_10, NV_REGION_ARENA, ((uint64_t)3), ((uint16_t)7));
+        t_12 = t_11;
+        t_13 = (uint32_t)t_12.tag;
+        switch (t_13) {
+        case ((uint32_t)0):
+            v_s_2 = t_12.u.v_Ok.f__0;
+            t_14 = v_s_2.len;
+            nv_check_index(((uint64_t)2), t_14, NV_LOC(nv_file_0, 7u, 22u));
+            t_15 = (int32_t)v_s_2.ptr[((uint64_t)2)];
+            v_v_3 = nv_add_i32((*v_p_1).f_x, t_15, NV_LOC(nv_file_0, 7u, 13u));
+            t_16 = &v_arena_0;
+            nova_arena_reset(t_16);
+            t_17 = v_v_3;
+            nova_arena_drop(&v_arena_0);
+            return t_17;
+        default:
+            nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 6u, 13u));
+        }
+    default:
+        nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 5u, 13u));
     }
-bb1:
-    v_p_1 = t_8.u.v_Ok.f__0;
-    t_10 = &v_arena_0;
-    t_11 = nvAR_u16(t_10, NV_REGION_ARENA, ((uint64_t)3), ((uint16_t)7));
-    t_12 = t_11;
-    t_13 = (uint32_t)t_12.tag;
-    switch (t_13) {
-    case ((uint32_t)0): goto bb3;
-    default: goto bb4;
-    }
-bb2:
-    nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 5u, 13u));
-bb3:
-    v_s_2 = t_12.u.v_Ok.f__0;
-    t_14 = v_s_2.len;
-    nv_check_index(((uint64_t)2), t_14, NV_LOC(nv_file_0, 7u, 22u));
-    t_15 = (int32_t)v_s_2.ptr[((uint64_t)2)];
-    v_v_3 = nv_add_i32((*v_p_1).f_x, t_15, NV_LOC(nv_file_0, 7u, 13u));
-    t_16 = &v_arena_0;
-    nova_arena_reset(t_16);
-    t_17 = v_v_3;
-    nova_arena_drop(&v_arena_0);
-    return t_17;
-bb4:
-    nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 6u, 13u));
 }
 
 static nvR_QS5PointE10AllocError nvAA_S5Point(void *r, uint32_t kind, nvT_Point v) {

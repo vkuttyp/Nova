@@ -16,16 +16,15 @@ static uint64_t nv_gcd(NV_UNUSED uint64_t v_a_0, NV_UNUSED uint64_t v_b_1) {
     NV_UNUSED uint64_t t_6 = 0;
     v_x_2 = v_a_0;
     v_y_3 = v_b_1;
-    goto bb1;
-bb1:
-    t_5 = (v_y_3 != ((uint64_t)0));
-    if (t_5) goto bb2; else goto bb3;
-bb2:
-    v_t_4 = nv_rem_u64(v_x_2, v_y_3, NV_LOC(nv_file_0, 5u, 17u));
-    v_x_2 = v_y_3;
-    v_y_3 = v_t_4;
-    goto bb1;
-bb3:
+    for (;;) {
+        t_5 = (v_y_3 != ((uint64_t)0));
+        if (!t_5) {
+            break;
+        }
+        v_t_4 = nv_rem_u64(v_x_2, v_y_3, NV_LOC(nv_file_0, 5u, 17u));
+        v_x_2 = v_y_3;
+        v_y_3 = v_t_4;
+    }
     t_6 = v_x_2;
     return t_6;
 }

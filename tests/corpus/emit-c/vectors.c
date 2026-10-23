@@ -81,37 +81,33 @@ static void nv_main(void) {
     t_4 = t_3;
     t_5 = (uint32_t)t_4.tag;
     switch (t_5) {
-    case ((uint32_t)0): goto bb1;
-    default: goto bb2;
+    case ((uint32_t)0):
+        t_6 = v_v_0.len;
+        nv_check_index(((uint64_t)0), t_6, NV_LOC(nv_file_0, 4u, 7u));
+        v_v_0.ptr[((uint64_t)0)] = ((int32_t)3);
+        v_s_1 = ((nvV_ZS10SystemHeap){ .ptr = (uint8_t *)(void *)&nova_vec_empty, .len = 0u, .cap = 0u });
+        t_7 = &v_s_1;
+        t_8 = nvVA_VZS10SystemHeap(t_7, ((nv_str){ .ptr = (const uint8_t *)"hi", .len = 2u }));
+        t_9 = t_8;
+        t_10 = (uint32_t)t_9.tag;
+        switch (t_10) {
+        case ((uint32_t)0):
+            t_11 = v_v_0.len;
+            nv_check_index(((uint64_t)0), t_11, NV_LOC(nv_file_0, 7u, 25u));
+            nova_write_i64((int64_t)v_v_0.ptr[((uint64_t)0)]);
+            nova_write_newline();
+            t_12 = ((nv_str){ .ptr = v_s_1.ptr, .len = v_s_1.len });
+            nova_write_view(t_12);
+            nova_write_newline();
+            nvD_VZS10SystemHeap(&v_s_1);
+            nvD_VUi32S10SystemHeap(&v_v_0);
+            return;
+        default:
+            nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 6u, 5u));
+        }
+    default:
+        nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 3u, 5u));
     }
-bb1:
-    t_6 = v_v_0.len;
-    nv_check_index(((uint64_t)0), t_6, NV_LOC(nv_file_0, 4u, 7u));
-    v_v_0.ptr[((uint64_t)0)] = ((int32_t)3);
-    v_s_1 = ((nvV_ZS10SystemHeap){ .ptr = (uint8_t *)(void *)&nova_vec_empty, .len = 0u, .cap = 0u });
-    t_7 = &v_s_1;
-    t_8 = nvVA_VZS10SystemHeap(t_7, ((nv_str){ .ptr = (const uint8_t *)"hi", .len = 2u }));
-    t_9 = t_8;
-    t_10 = (uint32_t)t_9.tag;
-    switch (t_10) {
-    case ((uint32_t)0): goto bb3;
-    default: goto bb4;
-    }
-bb2:
-    nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 3u, 5u));
-bb3:
-    t_11 = v_v_0.len;
-    nv_check_index(((uint64_t)0), t_11, NV_LOC(nv_file_0, 7u, 25u));
-    nova_write_i64((int64_t)v_v_0.ptr[((uint64_t)0)]);
-    nova_write_newline();
-    t_12 = ((nv_str){ .ptr = v_s_1.ptr, .len = v_s_1.len });
-    nova_write_view(t_12);
-    nova_write_newline();
-    nvD_VZS10SystemHeap(&v_s_1);
-    nvD_VUi32S10SystemHeap(&v_v_0);
-    return;
-bb4:
-    nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 6u, 5u));
 }
 
 static void nvD_VUi32S10SystemHeap(nvV_Ui32S10SystemHeap *p) {

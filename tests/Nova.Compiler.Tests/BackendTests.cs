@@ -26,8 +26,11 @@ public class BackendTests
         var text = File.ReadAllText(Path.Combine(CorpusRoot, relativePath));
         var compilation = Compilation.Create([new SourceText(relativePath, text)], TargetInfo.Lp64);
         Assert.False(compilation.Diagnostics.HasErrors);
-        // `// emit-option: line-directives` in a snapshot input turns on #line directives (c-backend.md §7).
-        var options = new CEmitOptions(LineDirectives: text.Contains("// emit-option: line-directives", StringComparison.Ordinal));
+        // `// emit-option: line-directives` turns on #line directives (c-backend.md §7); `// emit-option: flat`
+        // selects the flat form (§3).
+        var options = new CEmitOptions(
+            LineDirectives: text.Contains("// emit-option: line-directives", StringComparison.Ordinal),
+            Structured: !text.Contains("// emit-option: flat", StringComparison.Ordinal));
         var program = CBackend.Generate(compilation, requireMain: false, out var nir, options);
         return (program!, nir!, compilation);
     }

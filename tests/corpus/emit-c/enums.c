@@ -55,27 +55,23 @@ static int64_t nv_area(NV_UNUSED nvE_Shape v_s_0) {
     NV_UNUSED int64_t t_9 = 0;
     t_4 = (uint32_t)v_s_0.tag;
     switch (t_4) {
-    case ((uint32_t)0): goto bb1;
-    case ((uint32_t)1): goto bb2;
-    case ((uint32_t)2): goto bb3;
-    default: goto bb4;
+    case ((uint32_t)0):
+        t_5 = ((int64_t)0);
+        return t_5;
+    case ((uint32_t)1):
+        v_r_1 = v_s_0.u.v_Circle.f__0;
+        t_6 = v_r_1;
+        return t_6;
+    case ((uint32_t)2):
+        v_w_2 = v_s_0.u.v_Rect.f__0;
+        v_h_3 = v_s_0.u.v_Rect.f__1;
+        t_7 = (int64_t)v_w_2;
+        t_8 = nv_mul_i64(t_7, v_h_3, NV_LOC(nv_file_0, 8u, 38u));
+        t_9 = t_8;
+        return t_9;
+    default:
+        nova_panic(NV_PANIC_UNREACHABLE, NV_LOC(nv_file_0, 4u, 4u));
     }
-bb1:
-    t_5 = ((int64_t)0);
-    return t_5;
-bb2:
-    v_r_1 = v_s_0.u.v_Circle.f__0;
-    t_6 = v_r_1;
-    return t_6;
-bb3:
-    v_w_2 = v_s_0.u.v_Rect.f__0;
-    v_h_3 = v_s_0.u.v_Rect.f__1;
-    t_7 = (int64_t)v_w_2;
-    t_8 = nv_mul_i64(t_7, v_h_3, NV_LOC(nv_file_0, 8u, 38u));
-    t_9 = t_8;
-    return t_9;
-bb4:
-    nova_panic(NV_PANIC_UNREACHABLE, NV_LOC(nv_file_0, 4u, 4u));
 }
 
 static int32_t nv_main(void) {

@@ -123,40 +123,36 @@ static void nv_main(void) {
     t_5 = t_4;
     t_6 = (uint32_t)t_5.tag;
     switch (t_6) {
-    case ((uint32_t)0): goto bb1;
-    default: goto bb2;
+    case ((uint32_t)0):
+        v_h_1 = t_5.u.v_Ok.f__0;
+        t_7 = &v_m_0;
+        t_8 = nvKG_Ki32S10SystemHeap(t_7, v_h_1);
+        t_9 = &t_8;
+        t_10 = (uint32_t)(*t_9).tag;
+        t_11 = (t_10 != ((uint32_t)0));
+        nova_write_bool(t_11);
+        nova_write_newline();
+        v_sv_2 = ((nvSV_i32S10SystemHeap){ .len = 0u });
+        t_12 = &v_sv_2;
+        t_13 = nvSVP_Wi32S10SystemHeap(t_12, ((int32_t)1));
+        t_14 = t_13;
+        t_15 = (uint32_t)t_14.tag;
+        switch (t_15) {
+        case ((uint32_t)0):
+            (void)t_14.u.v_Ok.f__0;
+            t_16 = v_sv_2.len;
+            nv_check_index(((uint64_t)0), t_16, NV_LOC(nv_file_0, 7u, 26u));
+            nova_write_i64((int64_t)(*nvSVE_Wi32S10SystemHeap(&v_sv_2, ((uint64_t)0))));
+            nova_write_newline();
+            nvD_Wi32S10SystemHeap(&v_sv_2);
+            nvD_Ki32S10SystemHeap(&v_m_0);
+            return;
+        default:
+            nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 6u, 5u));
+        }
+    default:
+        nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 3u, 13u));
     }
-bb1:
-    v_h_1 = t_5.u.v_Ok.f__0;
-    t_7 = &v_m_0;
-    t_8 = nvKG_Ki32S10SystemHeap(t_7, v_h_1);
-    t_9 = &t_8;
-    t_10 = (uint32_t)(*t_9).tag;
-    t_11 = (t_10 != ((uint32_t)0));
-    nova_write_bool(t_11);
-    nova_write_newline();
-    v_sv_2 = ((nvSV_i32S10SystemHeap){ .len = 0u });
-    t_12 = &v_sv_2;
-    t_13 = nvSVP_Wi32S10SystemHeap(t_12, ((int32_t)1));
-    t_14 = t_13;
-    t_15 = (uint32_t)t_14.tag;
-    switch (t_15) {
-    case ((uint32_t)0): goto bb3;
-    default: goto bb4;
-    }
-bb2:
-    nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 3u, 13u));
-bb3:
-    (void)t_14.u.v_Ok.f__0;
-    t_16 = v_sv_2.len;
-    nv_check_index(((uint64_t)0), t_16, NV_LOC(nv_file_0, 7u, 26u));
-    nova_write_i64((int64_t)(*nvSVE_Wi32S10SystemHeap(&v_sv_2, ((uint64_t)0))));
-    nova_write_newline();
-    nvD_Wi32S10SystemHeap(&v_sv_2);
-    nvD_Ki32S10SystemHeap(&v_m_0);
-    return;
-bb4:
-    nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 6u, 5u));
 }
 
 static void nvD_Ki32S10SystemHeap(nvK_i32S10SystemHeap *p) {

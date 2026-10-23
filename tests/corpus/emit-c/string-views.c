@@ -34,12 +34,10 @@ static void nv_main(void) {
     v_s_0 = ((nv_str){ .ptr = (const uint8_t *)"h\303\251llo", .len = 6u });
     v_t_1 = nv_tail(v_s_0, ((uint64_t)3));
     t_2 = nova_str_eq(v_t_1, ((nv_str){ .ptr = (const uint8_t *)"llo", .len = 3u }));
-    if (t_2) goto bb1; else goto bb2;
-bb1:
-    nova_write_view(v_t_1);
-    nova_write_newline();
-    goto bb2;
-bb2:
+    if (t_2) {
+        nova_write_view(v_t_1);
+        nova_write_newline();
+    }
     t_3 = ((nvSl_u8){ .ptr = v_t_1.ptr, .len = v_t_1.len });
     t_4 = t_3.len;
     nova_write_u64((uint64_t)t_4);

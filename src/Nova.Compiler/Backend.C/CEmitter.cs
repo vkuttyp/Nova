@@ -10,7 +10,8 @@ namespace Nova.Compiler.Backend.C;
 
 /// <summary>Options of the C emitter.</summary>
 /// <param name="LineDirectives">Map function bodies to Nova source with <c>#line</c> (c-backend.md §7).</param>
-public sealed record CEmitOptions(bool LineDirectives = false)
+/// <param name="Structured">Reconstruct if/else and loops (c-backend.md §3); false emits the flat form (one label per block).</param>
+public sealed record CEmitOptions(bool LineDirectives = false, bool Structured = true)
 {
     public static CEmitOptions Default { get; } = new();
 }
@@ -36,6 +37,7 @@ public sealed class CEmitter
     private (SourceText File, int Line)? _mapped;
     private (SourceText File, int Line)? _wanted;
     private string? _pendingLabel; // with directives, a label shares the next statement's line
+    private List<string>? _capture; // structured form: statement lines collected for the tree
 
     private CEmitter(NirProgram program, SymbolTable symbols, TypeTable types, IEnumerable<SourceText> sources, CEmitOptions options)
     {
@@ -65,9 +67,15 @@ public sealed class CEmitter
     /// Writes one or more C lines. Inside a function with directives on, each line is attributed to
     /// the wanted Nova line: a <c>#line</c> is written first whenever the next line would otherwise map elsewhere.
     /// </summary>
-    private void Line(string text = "")
+    /// <param name="code">False for lines that generate no code (braces, <c>else</c>): they need no directive of their own.</param>
+    private void Line(string text = "", bool code = true)
     {
-        if (_wanted is { } wanted && _mapped != wanted)
+        if (_capture is not null)
+        {
+            _capture.Add(text);
+            return;
+        }
+        if (code && _wanted is { } wanted && _mapped != wanted)
         {
             _sb.Append(CultureInfo.InvariantCulture, $"#line {wanted.Line} {CStringLiteral(wanted.File.Path)}\n");
             _cLines++;
@@ -1074,6 +1082,26 @@ public sealed class CEmitter
             }
         }
 
+        var tree = _options.Structured
+            ? CStructurer.Structure(function, StatementNodes, (_, terminator) => Captured(() => EmitTerminator(function, terminator), terminator.Span, completes: false),
+                Operand, SwitchCases)
+            : null;
+        if (tree is not null)
+        {
+            Print(tree, 1);
+        }
+        else
+        {
+            EmitFlatBody(function);
+        }
+        Line("}");
+        EndMapping();
+        _function = null;
+    }
+
+    /// <summary>The flat form (c-backend.md §3): one label per jump target, terminators as goto/switch/return.</summary>
+    private void EmitFlatBody(NirFunction function)
+    {
         var targeted = new HashSet<NirBlock>();
         foreach (var block in function.Blocks)
         {
@@ -1098,9 +1126,106 @@ public sealed class CEmitter
             MapTo(block.Terminator!.Span);
             EmitTerminator(function, block.Terminator!);
         }
-        Line("}");
-        EndMapping();
-        _function = null;
+    }
+
+    private List<CNode> StatementNodes(NirBlock block) =>
+        [.. block.Statements.Select(statement => Captured(() => EmitStatement(statement), statement.Span, completes: true))];
+
+    private CCode Captured(Action emit, TextSpan span, bool completes)
+    {
+        _capture = [];
+        emit();
+        var lines = _capture;
+        _capture = null;
+        return new CCode(lines, completes) { Span = span };
+    }
+
+    private (string Value, IEnumerable<(string Label, NirBlock Target)> Cases) SwitchCases(NirSwitch s)
+    {
+        // C rejects switching on a bool (-Wswitch-bool): switch on its int value instead.
+        var isBool = s.Value.Type.Kind == TypeKind.Bool;
+        var cases = s.Cases.Select(c => (isBool ? c.Value.ToString(CultureInfo.InvariantCulture) : Constant(c.Value, s.Value.Type), c.Target));
+        return (isBool ? $"(int){Operand(s.Value)}" : Operand(s.Value), [.. cases, ("default", s.Otherwise)]);
+    }
+
+    /// <summary>Prints a structured statement tree (c-backend.md §3) at the given depth.</summary>
+    private void Print(List<CNode> list, int depth)
+    {
+        var indent = new string(' ', 4 * depth);
+        for (var i = 0; i < list.Count; i++)
+        {
+            switch (list[i])
+            {
+                case CLabel label when i + 1 < list.Count && _options.LineDirectives:
+                    _pendingLabel = (_pendingLabel ?? "") + $"bb{label.Block}: ";
+                    break;
+                case CLabel label:
+                    Line(i + 1 < list.Count ? $"bb{label.Block}:" : $"bb{label.Block}: ;", code: false);
+                    break;
+                case CCode code:
+                    MapTo(code.Span);
+                    foreach (var line in code.Lines)
+                    {
+                        Line(indent + line.TrimStart());
+                    }
+                    break;
+                case CGoto g:
+                    MapTo(g.Span);
+                    Line($"{indent}goto bb{g.Block};");
+                    break;
+                case CBreak b:
+                    MapTo(b.Span);
+                    Line($"{indent}break;");
+                    break;
+                case CContinue c:
+                    MapTo(c.Span);
+                    Line($"{indent}continue;");
+                    break;
+                case CIf branch:
+                {
+                    MapTo(branch.Span);
+                    Line($"{indent}if ({branch.Condition}) {{");
+                    var current = branch;
+                    while (true)
+                    {
+                        Print(current.Then, depth + 1);
+                        if (current.Else is [CIf nested])
+                        {
+                            MapTo(nested.Span);
+                            Line($"{indent}}} else if ({nested.Condition}) {{");
+                            current = nested;
+                            continue;
+                        }
+                        if (current.Else.Count > 0)
+                        {
+                            Line($"{indent}}} else {{", code: false);
+                            Print(current.Else, depth + 1);
+                        }
+                        break;
+                    }
+                    Line($"{indent}}}", code: false);
+                    break;
+                }
+                case CLoop loop:
+                    Line($"{indent}for (;;) {{", code: false);
+                    Print(loop.Body, depth + 1);
+                    Line($"{indent}}}", code: false);
+                    break;
+                case CSwitch choice:
+                    MapTo(choice.Span);
+                    Line($"{indent}switch ({choice.Value}) {{");
+                    foreach (var (labels, body) in choice.Cases)
+                    {
+                        foreach (var label in labels)
+                        {
+                            Line(label == "default" ? $"{indent}default:" : $"{indent}case {label}:", code: false);
+                        }
+                        Print(body, depth + 1);
+                    }
+                    Line($"{indent}}}", code: false);
+                    break;
+            }
+        }
     }
 
     private void EmitStatement(NirStatement statement)

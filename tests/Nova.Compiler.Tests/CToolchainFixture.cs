@@ -8,6 +8,9 @@ public sealed record CConfig(string Name, string Compiler, ImmutableArray<string
 {
     /// <summary>Build the program generated with <c>#line</c> directives (c-backend.md §7).</summary>
     public bool LineDirectives { get; init; }
+
+    /// <summary>Build the flat form (one label per block; c-backend.md §3), the oracle for the structured form.</summary>
+    public bool Flat { get; init; }
 }
 
 /// <summary>
@@ -36,6 +39,7 @@ internal static class CToolchains
         configs.Add(new("clang -O0", "clang", ["-O0", "-Werror"]));
         configs.Add(new("clang -O2", "clang", ["-O2", "-Werror"]));
         configs.Add(new("clang -O0 -g line-directives", "clang", ["-O0", "-g", "-Werror"]) { LineDirectives = true });
+        configs.Add(new("clang -O2 flat", "clang", ["-O2", "-Werror"]) { Flat = true });
         configs.Add(new("clang -O2 portable-overflow", "clang", ["-O2", "-Werror", "-DNV_NO_BUILTIN_OVERFLOW"]));
         configs.Add(new("clang -O1 asan+ubsan", "clang",
             ["-O1", "-Werror", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"]));

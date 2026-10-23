@@ -48,18 +48,15 @@ static int32_t nv_total(NV_UNUSED nvSl_i32 v_xs_0) {
     v_t_1 = ((int32_t)0);
     t_3 = ((uint64_t)0);
     t_4 = v_xs_0.len;
-    goto bb1;
-bb1:
-    t_5 = (t_3 < t_4);
-    if (t_5) goto bb2; else goto bb4;
-bb2:
-    v_x_2 = v_xs_0.ptr[t_3];
-    v_t_1 = nv_add_i32(v_t_1, v_x_2, NV_LOC(nv_file_0, 5u, 21u));
-    goto bb3;
-bb3:
-    t_3 = nv_add_u64(t_3, ((uint64_t)1), NV_LOC(nv_file_0, 5u, 5u));
-    goto bb1;
-bb4:
+    for (;;) {
+        t_5 = (t_3 < t_4);
+        if (!t_5) {
+            break;
+        }
+        v_x_2 = v_xs_0.ptr[t_3];
+        v_t_1 = nv_add_i32(v_t_1, v_x_2, NV_LOC(nv_file_0, 5u, 21u));
+        t_3 = nv_add_u64(t_3, ((uint64_t)1), NV_LOC(nv_file_0, 5u, 5u));
+    }
     t_6 = v_t_1;
     return t_6;
 }

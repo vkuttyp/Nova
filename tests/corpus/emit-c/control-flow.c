@@ -16,21 +16,17 @@ static int32_t nv_classify(NV_UNUSED int32_t v_n_0) {
     NV_UNUSED int32_t t_4 = 0;
     NV_UNUSED int32_t t_5 = 0;
     t_1 = (v_n_0 < ((int32_t)0));
-    if (t_1) goto bb1; else goto bb2;
-bb1:
-    t_2 = ((int32_t)-1);
-    return t_2;
-bb2:
+    if (t_1) {
+        t_2 = ((int32_t)-1);
+        return t_2;
+    }
     t_3 = (v_n_0 == ((int32_t)0));
-    if (t_3) goto bb4; else goto bb5;
-bb3:
+    if (t_3) {
+        t_4 = ((int32_t)0);
+        return t_4;
+    }
     t_5 = ((int32_t)1);
     return t_5;
-bb4:
-    t_4 = ((int32_t)0);
-    return t_4;
-bb5:
-    goto bb3;
 }
 
 static uint8_t nv_bits(NV_UNUSED uint64_t v_x_0, NV_UNUSED int32_t v_n_1) {
@@ -59,48 +55,36 @@ static int32_t nv_main(void) {
     NV_UNUSED uint8_t t_12 = 0;
     NV_UNUSED int32_t t_13 = 0;
     v_i_0 = ((int32_t)0);
-    goto bb1;
-bb1:
-    v_i_0 = nv_add_i32(v_i_0, ((int32_t)1), NV_LOC(nv_file_0, 12u, 9u));
-    t_1 = nv_rem_i32(v_i_0, ((int32_t)2), NV_LOC(nv_file_0, 13u, 13u));
-    t_2 = (t_1 == ((int32_t)0));
-    if (t_2) goto bb3; else goto bb4;
-bb2:
+    for (;;) {
+        v_i_0 = nv_add_i32(v_i_0, ((int32_t)1), NV_LOC(nv_file_0, 12u, 9u));
+        t_1 = nv_rem_i32(v_i_0, ((int32_t)2), NV_LOC(nv_file_0, 13u, 13u));
+        t_2 = (t_1 == ((int32_t)0));
+        if (!t_2) {
+            t_3 = (v_i_0 > ((int32_t)5));
+            if (t_3) {
+                t_5 = nv_classify(v_i_0);
+                t_6 = (t_5 == ((int32_t)1));
+                t_4 = t_6;
+            } else {
+                t_4 = false;
+            }
+            t_7 = t_4;
+            if (t_7) {
+                break;
+            }
+        }
+    }
     t_8 = (v_i_0 == ((int32_t)0));
-    if (t_8) goto bb11; else goto bb10;
-bb3:
-    goto bb1;
-bb4:
-    t_3 = (v_i_0 > ((int32_t)5));
-    if (t_3) goto bb5; else goto bb6;
-bb5:
-    t_5 = nv_classify(v_i_0);
-    t_6 = (t_5 == ((int32_t)1));
-    t_4 = t_6;
-    goto bb7;
-bb6:
-    t_4 = false;
-    goto bb7;
-bb7:
-    t_7 = t_4;
-    if (t_7) goto bb8; else goto bb9;
-bb8:
-    goto bb2;
-bb9:
-    goto bb1;
-bb10:
-    t_10 = (v_i_0 > ((int32_t)100));
-    t_9 = t_10;
-    goto bb12;
-bb11:
-    t_9 = true;
-    goto bb12;
-bb12:
+    if (t_8) {
+        t_9 = true;
+    } else {
+        t_10 = (v_i_0 > ((int32_t)100));
+        t_9 = t_10;
+    }
     t_11 = t_9;
-    if (t_11) goto bb13; else goto bb14;
-bb13:
-    nova_exit(((int32_t)1));
-bb14:
+    if (t_11) {
+        nova_exit(((int32_t)1));
+    }
     t_12 = nv_bits(((uint64_t)65280), ((int32_t)8));
     nova_write_u64((uint64_t)t_12);
     nova_write_newline();

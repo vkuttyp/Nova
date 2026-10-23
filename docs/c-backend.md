@@ -95,9 +95,85 @@ disagrees with Nova's model, the build fails, and nothing miscompiles silently.
 
 ## 3. Lowering of control flow and cleanup
 
-Each NIR block becomes a C label. Terminators become `goto`, `switch`
-(SwitchInt) or `return`. Structured reconstruction (`if/while`) is an optional
-readability pass (M7), not needed for correctness.
+**Flat form** (M1; `--flat-c`): each NIR block becomes a C label. Terminators become `goto`, `switch`
+(SwitchInt) or `return`. It is the reference form: simple enough to check by reading.
+
+**Structured form** (M7b; the default). It is a readability pass and adds nothing that
+correctness depends on. One invariant makes it safe: **every block's code ends in an explicit
+transfer**: `goto`, `break`, `continue`, `return`, or a `_Noreturn` call. Code therefore never
+falls into the next block by accident. Where a block is placed changes only how the code reads,
+and a transfer may be dropped only where falling through provably reaches the same label.
+
+1. **Analysis.**
+   - Reverse postorder, dominators (Cooper–Harvey–Kennedy), and *forward predecessors*: in-edges
+     that are not back edges, counted with multiplicity, so a switch with two cases to one block
+     counts twice.
+   - A *back edge* `u → h` is one where `h` dominates `u`. A retreating edge that is not a back
+     edge makes the graph irreducible. The function is then emitted flat. Nova source has no
+     `goto`, so this is not expected; it is a fallback.
+   - The natural loop of a header `h` is `h` plus every block that reaches a back-edge source
+     without passing through `h`.
+2. **Placement.** Each block's code is emitted exactly once, inside the code of its immediate
+   dominator `d`, in one of three ways:
+   - **Inline**, at the branch to it: when it has one forward predecessor and leaves no loop that
+     contains `d`.
+   - **Exit follow**: when it leaves loops. Let `h` be the outermost loop header whose loop
+     contains `d` but not the block. The block is emitted after `h`'s loop statement. One
+     exception keeps early returns in place: a block that leaves a loop from a block other than
+     the header itself is inlined if it has one forward predecessor and its dominator subtree is
+     *closed* and small. Closed means no edge leaves the subtree; small means at most 2 blocks
+     and 8 statements.
+   - **Follow**: otherwise (a merge point). It is emitted after `d`'s own code, inside the same
+     loops. Follows and exit follows are emitted in reverse postorder.
+3. **Shapes.**
+   - A loop header's code (with its inline and in-loop placements) becomes `for (;;) { … }`.
+   - `NirBranch` becomes `if (c) { … } else { … }`, and `NirSwitch` becomes `switch` with one
+     `case` body per target.
+   - A branch to an inline block emits that block's code there. Every other branch is first
+     emitted as `goto bbN;`.
+4. **Transfer elimination**, in tree order and repeated to a fixpoint, since removing a `goto`
+   can lengthen what falls through before it:
+   - A `goto L` is removed when falling through reaches `L`. Falling through means passing over
+     only labels, the end of an `if` arm, or the end of a loop body back to its own header's
+     label.
+   - Otherwise it becomes `continue` if `L` is the innermost loop's header.
+   - Otherwise it becomes `break` if `L` is what falls through after the innermost loop, unless
+     a `switch` lies in between.
+   - Otherwise it becomes `break` if `L` falls through after the innermost `switch`.
+   - The end of a `case` body never falls through: its transfer is kept, so no `case` falls into
+     the next (`-Wimplicit-fallthrough`).
+5. **Labels** that no remaining `goto` names are removed (`-Wunused-label`). A label at the end of
+   a block is written `bbN: ;`.
+6. **Guard clauses.**
+   - An `if` arm that cannot complete normally is hoisted: `if (c) { A } else { B }` with `A`
+     ending in a transfer becomes `if (c) { A } B`. Symmetrically, when only `B` ends in a
+     transfer it becomes `if (!c) { B } A`. When both arms end in a transfer, the shorter arm is
+     the guarded one.
+   - An empty `then` arm is negated away.
+   - An `else` holding a single `if` is printed as `else if`.
+
+The run corpus is built in both forms under every C configuration: structured by default, flat as
+the oracle in a `clang -O2 flat` configuration. Both must agree.
+
+Shape of `gcd` (structured):
+
+```c
+    v_x_2 = v_a_0;
+    v_y_3 = v_b_1;
+    for (;;) {
+        t_5 = (v_y_3 != ((uint64_t)0));
+        if (!t_5) {
+            break;
+        }
+        v_t_4 = nv_rem_u64(v_x_2, v_y_3, NV_LOC(nv_file_0, 5u, 17u));
+        v_x_2 = v_y_3;
+        v_y_3 = v_t_4;
+    }
+    t_6 = v_x_2;
+    return t_6;
+```
+
+Flat form of the same function (M1), shown in an earlier, illustrative notation:
 
 ```c
 int32_t nv_demo_gcd(uint64_t a, uint64_t b) {

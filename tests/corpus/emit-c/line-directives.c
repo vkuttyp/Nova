@@ -42,17 +42,21 @@ static int32_t nv_main(void) {
     v_c_0 = ((nvT_Counter){ .f_count = ((int32_t)0) });
     v_r_1 = ((nvT_Resource){ .f_id = ((int32_t)7) });
     v_i_2 = ((int32_t)0);
-    goto bb1;
+    for (;;) {
 #line 23 "emit-c/line-directives.nova"
-bb1: t_3 = (v_i_2 < ((int32_t)3));
+        t_3 = (v_i_2 < ((int32_t)3));
 #line 23 "emit-c/line-directives.nova"
-    if (t_3) goto bb2; else goto bb3;
-bb2: t_4 = &v_c_0;
+        if (!t_3) {
+#line 23 "emit-c/line-directives.nova"
+            break;
+        }
 #line 24 "emit-c/line-directives.nova"
-    nv_step(t_4, v_i_2);
-    v_i_2 = nv_add_i32(v_i_2, ((int32_t)1), NV_LOC(nv_file_0, 25u, 9u));
-    goto bb1;
-bb3: nova_write_i64((int64_t)v_c_0.f_count);
+        t_4 = &v_c_0;
+#line 24 "emit-c/line-directives.nova"
+        nv_step(t_4, v_i_2);
+        v_i_2 = nv_add_i32(v_i_2, ((int32_t)1), NV_LOC(nv_file_0, 25u, 9u));
+    }
+    nova_write_i64((int64_t)v_c_0.f_count);
 #line 27 "emit-c/line-directives.nova"
     nova_write_newline();
     t_5 = ((int32_t)0);
@@ -62,7 +66,7 @@ bb3: nova_write_i64((int64_t)v_c_0.f_count);
     return t_5;
 #line 28 "emit-c/line-directives.nova"
 }
-#line 66 "main.c"
+#line 70 "main.c"
 
 #line 10 "emit-c/line-directives.nova"
 static void nvM_8Resource_drop(NV_UNUSED nvT_Resource * v_this_0) {
@@ -72,7 +76,7 @@ static void nvM_8Resource_drop(NV_UNUSED nvT_Resource * v_this_0) {
     return;
 #line 12 "emit-c/line-directives.nova"
 }
-#line 76 "main.c"
+#line 80 "main.c"
 
 static void nvD_8Resource(nvT_Resource *p) {
     nvM_8Resource_drop(p);

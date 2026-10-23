@@ -90,7 +90,7 @@ public static class Toolchain
     public static readonly ImmutableArray<string> StrictWarnings =
     [
         "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Wshadow", "-Wconversion", "-Wsign-conversion",
-        "-Wmissing-prototypes", "-Wstrict-prototypes", "-Wvla", "-Wcast-qual", "-Wundef",
+        "-Wmissing-prototypes", "-Wstrict-prototypes", "-Wvla", "-Wcast-qual", "-Wundef", "-Wimplicit-fallthrough",
     ];
 
     /// <param name="workingDirectory">Where the compiler runs; source paths in <c>#line</c> directives resolve against it (c-backend.md §7).</param>

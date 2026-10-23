@@ -83,19 +83,16 @@ static int32_t nvG_3get1i32(NV_UNUSED nvE_5Maybe1i32 v_m_0, NV_UNUSED int32_t v_
     NV_UNUSED int32_t t_5 = 0;
     t_3 = (uint32_t)v_m_0.tag;
     switch (t_3) {
-    case ((uint32_t)1): goto bb1;
-    case ((uint32_t)0): goto bb2;
-    default: goto bb3;
+    case ((uint32_t)1):
+        v_v_2 = v_m_0.u.v_Just.f__0;
+        t_4 = v_v_2;
+        return t_4;
+    case ((uint32_t)0):
+        t_5 = v_d_1;
+        return t_5;
+    default:
+        nova_panic(NV_PANIC_UNREACHABLE, NV_LOC(nv_file_0, 4u, 4u));
     }
-bb1:
-    v_v_2 = v_m_0.u.v_Just.f__0;
-    t_4 = v_v_2;
-    return t_4;
-bb2:
-    t_5 = v_d_1;
-    return t_5;
-bb3:
-    nova_panic(NV_PANIC_UNREACHABLE, NV_LOC(nv_file_0, 4u, 4u));
 }
 
 int main(int argc, char **argv) {

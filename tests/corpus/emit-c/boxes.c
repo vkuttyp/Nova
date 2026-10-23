@@ -109,19 +109,17 @@ static nvR_E4ListE10AllocError nv_cons(NV_UNUSED nvT_Res v_r_0, NV_UNUSED nvE_Li
     t_4 = t_3;
     t_5 = (uint32_t)t_4.tag;
     switch (t_5) {
-    case ((uint32_t)0): goto bb1;
-    default: goto bb2;
+    case ((uint32_t)0):
+        t_7 = ((nvE_List){ .tag = 1, .u.v_Cons = { .f__0 = t_2, .f__1 = t_4.u.v_Ok.f__0 } });
+        t_8 = ((nvR_E4ListE10AllocError){ .tag = 0, .u.v_Ok = { .f__0 = t_7 } });
+        t_9 = t_8;
+        return t_9;
+    default:
+        t_6 = ((nvR_E4ListE10AllocError){ .tag = 1, .u.v_Err = { .f__0 = t_4.u.v_Err.f__0 } });
+        nvD_RXE4ListS10SystemHeapE10AllocError(&t_4);
+        nvD_3Res(&t_2);
+        return t_6;
     }
-bb1:
-    t_7 = ((nvE_List){ .tag = 1, .u.v_Cons = { .f__0 = t_2, .f__1 = t_4.u.v_Ok.f__0 } });
-    t_8 = ((nvR_E4ListE10AllocError){ .tag = 0, .u.v_Ok = { .f__0 = t_7 } });
-    t_9 = t_8;
-    return t_9;
-bb2:
-    t_6 = ((nvR_E4ListE10AllocError){ .tag = 1, .u.v_Err = { .f__0 = t_4.u.v_Err.f__0 } });
-    nvD_RXE4ListS10SystemHeapE10AllocError(&t_4);
-    nvD_3Res(&t_2);
-    return t_6;
 }
 
 static int32_t nv_main(void) {
@@ -144,30 +142,26 @@ static int32_t nv_main(void) {
     t_6 = t_5;
     t_7 = (uint32_t)t_6.tag;
     switch (t_7) {
-    case ((uint32_t)0): goto bb1;
-    default: goto bb2;
+    case ((uint32_t)0):
+        v_l_0 = t_6.u.v_Ok.f__0;
+        t_8 = ((nvT_FailingAllocator){ .nv_empty = 0 });
+        t_9 = nvB_Xi32S16FailingAllocator(((int32_t)5));
+        t_10 = t_9;
+        t_11 = (uint32_t)t_10.tag;
+        switch (t_11) {
+        case ((uint32_t)0):
+            v_n_1 = t_10.u.v_Ok.f__0;
+            v_v_2 = (*v_n_1);
+            t_12 = v_v_2;
+            nvD_Xi32S16FailingAllocator(&v_n_1);
+            nvD_4List(&v_l_0);
+            return t_12;
+        default:
+            nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 8u, 13u));
+        }
+    default:
+        nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 7u, 13u));
     }
-bb1:
-    v_l_0 = t_6.u.v_Ok.f__0;
-    t_8 = ((nvT_FailingAllocator){ .nv_empty = 0 });
-    t_9 = nvB_Xi32S16FailingAllocator(((int32_t)5));
-    t_10 = t_9;
-    t_11 = (uint32_t)t_10.tag;
-    switch (t_11) {
-    case ((uint32_t)0): goto bb3;
-    default: goto bb4;
-    }
-bb2:
-    nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 7u, 13u));
-bb3:
-    v_n_1 = t_10.u.v_Ok.f__0;
-    v_v_2 = (*v_n_1);
-    t_12 = v_v_2;
-    nvD_Xi32S16FailingAllocator(&v_n_1);
-    nvD_4List(&v_l_0);
-    return t_12;
-bb4:
-    nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 8u, 13u));
 }
 
 static void nvM_3Res_drop(NV_UNUSED nvT_Res * v_this_0) {

@@ -58,13 +58,12 @@ static nvR_S3ResE4Code nv_make(NV_UNUSED bool v_ok_0) {
     NV_UNUSED nvE_Code t_4 = {0};
     NV_UNUSED nvR_S3ResE4Code t_5 = {0};
     NV_UNUSED nvR_S3ResE4Code t_6 = {0};
-    if (v_ok_0) goto bb1; else goto bb2;
-bb1:
-    t_1 = ((nvT_Res){ .f_id = ((int32_t)1) });
-    t_2 = ((nvR_S3ResE4Code){ .tag = 0, .u.v_Ok = { .f__0 = t_1 } });
-    t_3 = t_2;
-    return t_3;
-bb2:
+    if (v_ok_0) {
+        t_1 = ((nvT_Res){ .f_id = ((int32_t)1) });
+        t_2 = ((nvR_S3ResE4Code){ .tag = 0, .u.v_Ok = { .f__0 = t_1 } });
+        t_3 = t_2;
+        return t_3;
+    }
     t_4 = ((nvE_Code){ .tag = 0 });
     t_5 = ((nvR_S3ResE4Code){ .tag = 1, .u.v_Err = { .f__0 = t_4 } });
     t_6 = t_5;
@@ -83,19 +82,17 @@ static nvR_vE4Code nv_use2(void) {
     t_2 = t_1;
     t_3 = (uint32_t)t_2.tag;
     switch (t_3) {
-    case ((uint32_t)0): goto bb1;
-    default: goto bb2;
+    case ((uint32_t)0):
+        v_r_0 = t_2.u.v_Ok.f__0;
+        t_5 = ((nvR_vE4Code){ .tag = 0 });
+        t_6 = t_5;
+        nvD_3Res(&v_r_0);
+        return t_6;
+    default:
+        t_4 = ((nvR_vE4Code){ .tag = 1, .u.v_Err = { .f__0 = t_2.u.v_Err.f__0 } });
+        nvD_RS3ResE4Code(&t_2);
+        return t_4;
     }
-bb1:
-    v_r_0 = t_2.u.v_Ok.f__0;
-    t_5 = ((nvR_vE4Code){ .tag = 0 });
-    t_6 = t_5;
-    nvD_3Res(&v_r_0);
-    return t_6;
-bb2:
-    t_4 = ((nvR_vE4Code){ .tag = 1, .u.v_Err = { .f__0 = t_2.u.v_Err.f__0 } });
-    nvD_RS3ResE4Code(&t_2);
-    return t_4;
 }
 
 static int32_t nv_main(void) {
@@ -107,14 +104,12 @@ static int32_t nv_main(void) {
     t_1 = t_0;
     t_2 = (uint32_t)t_1.tag;
     switch (t_2) {
-    case ((uint32_t)0): goto bb1;
-    default: goto bb2;
+    case ((uint32_t)0):
+        t_3 = ((int32_t)0);
+        return t_3;
+    default:
+        nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 15u, 5u));
     }
-bb1:
-    t_3 = ((int32_t)0);
-    return t_3;
-bb2:
-    nova_panic(NV_PANIC_UNWRAP, NV_LOC(nv_file_0, 15u, 5u));
 }
 
 static void nvM_3Res_drop(NV_UNUSED nvT_Res * v_this_0) {

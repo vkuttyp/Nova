@@ -31,12 +31,11 @@ static nvO_i32 nv_half(NV_UNUSED int32_t v_n_0) {
     NV_UNUSED nvO_i32 t_7 = {0};
     t_1 = nv_rem_i32(v_n_0, ((int32_t)2), NV_LOC(nv_file_0, 2u, 9u));
     t_2 = (t_1 != ((int32_t)0));
-    if (t_2) goto bb1; else goto bb2;
-bb1:
-    t_3 = ((nvO_i32){ .tag = 0 });
-    t_4 = t_3;
-    return t_4;
-bb2:
+    if (t_2) {
+        t_3 = ((nvO_i32){ .tag = 0 });
+        t_4 = t_3;
+        return t_4;
+    }
     t_5 = nv_div_i32(v_n_0, ((int32_t)2), NV_LOC(nv_file_0, 3u, 12u));
     t_6 = ((nvO_i32){ .tag = 1, .u.v_Some = { .f__0 = t_5 } });
     t_7 = t_6;
@@ -55,17 +54,15 @@ static nvO_i32 nv_quarter(NV_UNUSED int32_t v_n_0) {
     t_3 = t_2;
     t_4 = (uint32_t)t_3.tag;
     switch (t_4) {
-    case ((uint32_t)1): goto bb1;
-    default: goto bb2;
+    case ((uint32_t)1):
+        v_h_1 = t_3.u.v_Some.f__0;
+        t_6 = nv_half(v_h_1);
+        t_7 = t_6;
+        return t_7;
+    default:
+        t_5 = ((nvO_i32){ .tag = 0 });
+        return t_5;
     }
-bb1:
-    v_h_1 = t_3.u.v_Some.f__0;
-    t_6 = nv_half(v_h_1);
-    t_7 = t_6;
-    return t_7;
-bb2:
-    t_5 = ((nvO_i32){ .tag = 0 });
-    return t_5;
 }
 
 static void nv_main(void) {
@@ -79,22 +76,19 @@ static void nv_main(void) {
     t_1 = &v_q_0;
     t_2 = (uint32_t)(*t_1).tag;
     t_3 = (t_2 != ((uint32_t)0));
-    if (t_3) goto bb1; else goto bb2;
-bb1:
-    t_4 = v_q_0;
-    t_5 = (uint32_t)t_4.tag;
-    switch (t_5) {
-    case ((uint32_t)1): goto bb3;
-    default: goto bb4;
+    if (t_3) {
+        t_4 = v_q_0;
+        t_5 = (uint32_t)t_4.tag;
+        switch (t_5) {
+        case ((uint32_t)1):
+            nova_write_i64((int64_t)t_4.u.v_Some.f__0);
+            nova_write_newline();
+            break;
+        default:
+            nova_panic(NV_PANIC_UNWRAP_NULL, NV_LOC(nv_file_0, 13u, 40u));
+        }
     }
-bb2:
     return;
-bb3:
-    nova_write_i64((int64_t)t_4.u.v_Some.f__0);
-    nova_write_newline();
-    goto bb2;
-bb4:
-    nova_panic(NV_PANIC_UNWRAP_NULL, NV_LOC(nv_file_0, 13u, 40u));
 }
 
 int main(int argc, char **argv) {

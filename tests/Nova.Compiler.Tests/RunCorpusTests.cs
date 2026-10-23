@@ -61,19 +61,26 @@ public partial class RunCorpusTests
         Assert.NotNull(program);
         var mapped = CBackend.Generate(compilation, requireMain: true, out _, new CEmitOptions(LineDirectives: true));
         Assert.NotNull(mapped);
+        var flat = CBackend.Generate(compilation, requireMain: true, out _, new CEmitOptions(Structured: false));
+        Assert.NotNull(flat);
 
         using var temp = new TempDirectory();
         program.WriteTo(temp.Path);
         var mappedDirectory = Path.Combine(temp.Path, "mapped");
         mapped.WriteTo(mappedDirectory);
+        var flatDirectory = Path.Combine(temp.Path, "flat");
+        flat.WriteTo(flatDirectory);
 
         var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
         Parallel.ForEach(CToolchains.Configs, (config, _, index) =>
         {
             var exe = Path.Combine(temp.Path, $"program-{index}");
-            var build = config.LineDirectives
-                ? Toolchain.CompileExecutable(config.Compiler, mappedDirectory, mapped, exe, config.Flags)
-                : Toolchain.CompileExecutable(config.Compiler, temp.Path, program, exe, config.Flags);
+            var build = config switch
+            {
+                { LineDirectives: true } => Toolchain.CompileExecutable(config.Compiler, mappedDirectory, mapped, exe, config.Flags),
+                { Flat: true } => Toolchain.CompileExecutable(config.Compiler, flatDirectory, flat, exe, config.Flags),
+                _ => Toolchain.CompileExecutable(config.Compiler, temp.Path, program, exe, config.Flags),
+            };
             if (build.ExitCode != 0)
             {
                 failures.Add($"[{config.Name}] C compilation failed:\n{build.StandardError}");
