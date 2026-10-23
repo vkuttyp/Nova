@@ -41,14 +41,19 @@ public partial class RunCorpusTests
     [MemberData(nameof(RunFailFiles))]
     public void Run_fail(string relativePath) => RunEverywhere(relativePath, expectPanic: true);
 
-    private sealed record Expectations(string Stdout, int ExitCode, string? PanicReason, int PanicLine);
+    internal sealed record Expectations(string Stdout, int ExitCode, string? PanicReason, int PanicLine);
 
     private static void RunEverywhere(string relativePath, bool expectPanic)
     {
         var text = File.ReadAllText(Path.Combine(CorpusRoot, relativePath));
         var expected = ParseExpectations(text);
         Assert.Equal(expectPanic, expected.PanicReason is not null);
+        RunEverywhere(relativePath, text, expected);
+    }
 
+    /// <summary>Builds <paramref name="text"/> with every C configuration, runs it, and checks the results against <paramref name="expected"/>.</summary>
+    internal static void RunEverywhere(string relativePath, string text, Expectations expected)
+    {
         var compilation = Compilation.Create([new SourceText(relativePath, text)], TargetInfo.Lp64);
         Assert.True(!compilation.Diagnostics.HasErrors,
             "compile errors:\n" + string.Join("\n", compilation.Diagnostics.Items.Select(d => d.ToString())));

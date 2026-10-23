@@ -1,0 +1,80 @@
+// M6 acceptance criterion 1 (milestone-6.md): every operation that can move or free a collection's
+// storage is rejected while an element borrow or view of it is live. This file adds destruction
+// (a temporary collection ending while borrowed), String, and StableVector writes and moves;
+// vector-invalidation.nova and slot-map-invalidation.nova cover the rest.
+fn look(r: borrow i32) { }
+fn show(s: StringView) { }
+fn first(v: borrow Vector<i32>) -> borrow i32 { return borrow v[0]; }
+fn text(s: borrow String) -> StringView { return s.view(); }
+fn slot(m: borrow SlotMap<i32>, h: Handle<i32>) -> borrow i32? { return m.get(h); }
+fn element(sv: borrow StableVector<i32>) -> borrow i32 { return borrow sv[0]; }
+fn makeVector() -> Vector<i32> { return Vector<i32>.create(); }
+fn makeString() -> String { return String.create(); }
+fn makeStable() -> StableVector<i32> { return StableVector<i32>.create(); }
+
+fn vectorDestroyedWhileBorrowed() {
+    let r = first(makeVector()); // error[N0243]
+    look(r);
+}
+
+fn stringDestroyedWhileViewed() {
+    let t = text(makeString()); // error[N0243]
+    show(t);
+}
+
+fn stableDestroyedWhileBorrowed() {
+    let r = element(makeStable()); // error[N0243]
+    look(r);
+}
+
+fn mapDestroyedWhileBorrowed(h: Handle<i32>) {
+    let r = slot(SlotMap<i32>.create(), h); // error[N0243]
+    let x = r!;
+}
+
+fn stringAppendWhileViewed() {
+    var s = String.create();
+    let v = s.view();
+    s.append("x")!; // error[N0241]
+    show(v);
+}
+
+fn stringClearWhileViewed() {
+    var s = String.create();
+    let v = s[0..0];
+    s.clear(); // error[N0241]
+    show(v);
+}
+
+fn stringMovedWhileViewed() {
+    var s = String.create();
+    let v = s.view();
+    let moved = s; // error[N0240]
+    show(v);
+}
+
+fn stableWrittenWhileBorrowed() {
+    var sv = StableVector<i32>.create();
+    sv.push(1)!;
+    let r = borrow sv[0];
+    sv[0] = 2; // error[N0240]
+    look(r);
+}
+
+fn stableMovedWhileBorrowed() {
+    var sv = StableVector<i32>.create();
+    sv.push(1)!;
+    let r = borrow sv[0];
+    let moved = sv; // error[N0240]
+    look(r);
+}
+
+fn vectorReassignedWhileBorrowed() {
+    var v = Vector<i32>.create();
+    v.push(1)!;
+    let r = borrow v[0];
+    v = Vector<i32>.create(); // error[N0240]
+    look(r);
+}
+
+fn main() { }

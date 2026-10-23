@@ -64,6 +64,16 @@ Runner: `tests/Nova.Compiler.Tests/CorpusTests.cs`, run by `dotnet test`.
   fail this test (2026-10-22).
 - `BackendTests`: generated C is byte-identical across runs and contains no host paths. It also
   compiles freestanding (`-ffreestanding -nostdinc`) for `x86_64-` and `aarch64-unknown-none-elf`.
+- `CollectionPropertyTests` (M6f; M6 acceptance criterion 2) are model-based property tests of the
+  built-in collections. For each collection (a `Vector` of items whose `drop` prints, `String`,
+  `SlotMap` with stored `Handle`s, `StableVector`) and each of a fixed set of seeds, a generator
+  writes a Nova program of random operations (`System.Random` with the seed, so the program is
+  the same on every machine). A C# model of the collection predicts the program's exact output:
+  values read back, lengths, capacities (the growth rule of `type-system.md` §23.1), stale-handle
+  results, slices at character boundaries, and the order of every `drop`. The program then runs
+  under every C configuration (as run-pass, including ASan+UBSan) and must print exactly that,
+  and goes through the fault-injection sweep. Any disagreement is reported with the seed, so it
+  can be reproduced.
 
 ## 4. Execution log
 
@@ -72,6 +82,7 @@ Runner: `tests/Nova.Compiler.Tests/CorpusTests.cs`, run by `dotnet test`.
 | 2026-10-22 | `dotnet test` on macOS arm64 (.NET 10.0.401): lexer and parser unit tests, 20 parse-pass and 18 parse-fail corpus files | 151 passed, 0 failed |
 | 2026-10-22 | same, plus 11 check-pass and 19 check-fail files and the checker crash test (increment 1b) | 201 passed, 0 failed |
 | 2026-10-22 | Linux CI run 39792099920 (ubuntu-24.04, clang 18.1.3, GCC 13.3.0): every corpus and run test passed under both compilers. The runtime harness failed only on GCC `-Wclobbered` (harness-only; fixed) | 379/380 |
+| 2026-10-23 | M6f (property tests, invalidation suite, OD-3 design; M6 complete): local suite on macOS; `c2.py` on the CosmoOS VM (AArch64) and in QEMU (x86-64). Property tests checked against planted bugs: minimum capacity 8 instead of 4 (8 of 24 model cases fail), no generation bump on slot-map removal (4 fail); both reverted | 785 passed; 133/133 programs and 217/217 sweep runs pass |
 | 2026-10-23 | CI stalls investigated. Two more runs (42b102f) ended in SIGTERM after a slowdown, and one runner died without uploading logs. Not reproduced on a real x86-64 Debian 12 machine (GCC 12, clang 18.1.8, .NET 10.0.402): the committed suite passes with 12 cores (1.3 min), pinned to 4 and to 2 cores, and on 2 cores under a 7 GB memory cap (2.8 min). Under x86-64 emulation (Docker on arm64) the test host deadlocked with unreaped child processes and threads in `rt_mutex_schedule`; the 6d baseline was not compared there, so that may be an emulation artefact (inferred). Hardening: tools run on at most one per core, and their output is read on dedicated threads instead of the thread pool. **Root cause** (found with resource samples streamed into the CI log, run 39879716478): every panic aborts, and the runner pipes each abort to apport/systemd-coredump. Over hundreds of aborting runs (run-fail tests, fault-injection sweeps, ASan builds) the load average rose to 224 and free memory to 116 MB, then the job was killed. The workflow now disables crash reports (`kernel.core_pattern=core`, `ulimit -c 0`, apport stopped) | suite green on real x86-64 in every configuration; CI fixed (see the next run) |
 | 2026-10-23 | Linux CI run 39860779514 (M6e commit): the first attempt stalled after `run-pass/generic-containers.nova` and hit the 30-minute job limit with no test failing or timing out; the re-run passed every test in 7 min. The tool runner bounded only process exit, not the end of its output, so a process left holding the pipes could block forever without a diagnosis (inferred cause); both are now bounded | transient; re-run green |
 | 2026-10-23 | M6e (SlotMap, Handle, StableVector): local suite on macOS; `c2.py` on the Parallels VM over ssh (aarch64) and in QEMU on x86-64. Found and fixed two older bugs: borrow-checker liveness ignored `Unpack` definitions (a false N0240/N0241 before a consuming match binding a reference payload; regression test `check-pass/scoped-payload-liveness.nova`), and a discarded Copy `e!` result crashed the C emitter. The sweeps now detect stable-vector chunks (`nova_svec_slot(`). Not tested: generation retirement after 2³¹ reuses of one slot (impractical in the corpus; proposed as a runtime unit test) | 736 passed; 133/133 programs and 217/217 sweep runs (19 allocating programs) pass |

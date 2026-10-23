@@ -35,7 +35,12 @@ public partial class FaultInjectionTests
     [MemberData(nameof(RunPassFiles))]
     public void Every_allocation_failure_is_handled(string relativePath)
     {
-        var text = File.ReadAllText(Path.Combine(CorpusRoot, relativePath));
+        Sweep(relativePath, File.ReadAllText(Path.Combine(CorpusRoot, relativePath)));
+    }
+
+    /// <summary>The sweep for one program: every allocation failure point must be handled (see the class summary).</summary>
+    internal static void Sweep(string relativePath, string text)
+    {
         var compilation = Compilation.Create([new SourceText(relativePath, text)], TargetInfo.Lp64);
         Assert.False(compilation.Diagnostics.HasErrors);
         var program = CBackend.Generate(compilation, requireMain: true, out _);

@@ -138,6 +138,13 @@ or a bad `for` sequence or range is N0205; writing an element of a `let` array o
 `borrow mut a[..]` of an immutable array is N0248; slicing a non-place is N0247. Slices are
 references, so the borrow checker reports their conflicts as N0240–N0245.
 
+### Reserved for OD-3 (N0270–N0273; `od3-design.md` §9)
+
+Not emitted yet: N0270 (scoped field whose region is not a parameter of the aggregate), N0271
+(destroyed while still referring to a shorter-lived value), N0272 (a value with foreign loans
+written through a `borrow mut` parameter), N0273 (unknown region name or wrong number of region
+arguments).
+
 ### Results and the heap (N0260–N0269; `type-system.md` §17–§18)
 
 | Code | Meaning | Example |

@@ -24,7 +24,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **C2** ✅ 2026-10-22 Safe allocation in CosmoOS ([report](cosmoos/c2-report.md)) | M2+M3 features in Profile A | Allocation, destruction and fault-injection tests pass inside QEMU on both arches |
 | **M4** ✅ 2026-10-22 Regions (ADR 0004) | `Arena`, `Scratch`, `FixedBufferAllocator`, `Pool` | Compile-fail: every arena-escape form (return, store in Box, outlive via `reset`/drop). Run tests for bulk release. R2 enforced |
 | **M5** Escape/placement analysis | CFG analysis, classification, `--explain-allocations`, Box→stack demotion | Optimised vs unoptimised outputs equal on the whole run-pass corpus. Drop timing identical (instrumented). Report snapshots. No program accepted only because of placement |
-| **M6** Generics & collections | Monomorphisation, interfaces, `Vector`, `String`, `StringView`, `StableVector`, `SlotMap`, iterators. OD-3 design | Invalidation compile-fail tests. Property tests of collections against a model. Ex9, Ex10, Ex12, Ex13 |
+| **M6** ✅ 2026-10-23 Generics & collections (ADR 0005) | Monomorphisation, interfaces, `Vector`, `String`, `StringView`, `StableVector`, `SlotMap`, iterators. OD-3 design | Invalidation compile-fail tests. Property tests of collections against a model. Ex9, Ex10, Ex12, Ex13 |
 | **C3** Collections & syscalls | Files, sockets, processes in Profile A; a useful utility (candidate: a `wc`/`sha256sum`-class tool or a hexdump) | The utility runs in QEMU on both arches, with output compared to the C/BusyBox equivalent on a test corpus |
 | **M7** Production C backend | Source maps, structured C, Csmith-style fuzzer, NIR reference interpreter, MSVC best-effort | 24 h fuzz campaign with no miscompile across clang/gcc × O0/O2. Interpreter agrees with native output |
 | **M8** Systems/freestanding | core library split, FFI, raw pointers, MMIO types, custom entry points, `freestanding` profile | Freestanding object with no libc: verified by `llvm-nm -u` allowlist |
@@ -68,14 +68,19 @@ corpus and a guest-side fault-injection sweep inside CosmoOS on both arches.
 - `Arena`, `FixedBufferAllocator`, LIFO scratch frames and `Pool`/`PoolBox`, all following R1/R2;
 - the fault-injection sweeps, which cover region allocations.
 
-**M6, generics and collections, is in progress** (`milestone-6.md`; ADR 0005):
+**M6, generics and collections, is done** (`milestone-6.md`; ADR 0005):
 - 6a, generics (checked once, monomorphised), done 2026-10-22;
 - 6b, interfaces, `impl`, bounds, done 2026-10-22;
 - 6c, optionals `T?` and `StringView`, done 2026-10-23;
 - 6d, `Vector<T, A>` and `String<A>` (Ex9, Ex10), done 2026-10-23;
 - 6e, `SlotMap<T>`/`Handle<T>` and `StableVector<T>`, done 2026-10-23.
 
-Next: **6f**, model-based property tests of the collections, the invalidation compile-fail suite
-and the OD-3 design; that completes M6. **M5** (escape and
+- 6f, model-based property tests, the invalidation suite and the OD-3 design
+  ([`od3-design.md`](od3-design.md)), done 2026-10-23. **M6 is complete** (acceptance results in
+  `milestone-6.md`).
+
+Next, in the order above: **C3** (collections and syscalls in CosmoOS: a useful utility). Before
+it, the owner should decide whether to implement OD-3 first (`od3-design.md` §10; recommended,
+since C3's parsers benefit). **M5** (escape and placement analysis) may run in parallel. **M5** (escape and
 placement analysis) may follow M4 in parallel. In parallel, when the owner wants it: propose the
 S1 in-tree port for C1 (OD-20).

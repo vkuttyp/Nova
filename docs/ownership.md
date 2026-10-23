@@ -249,8 +249,8 @@ callees completely), with no lifetime parameters on types. That is enough for:
 borrowing parameters, slices, string views, iterators over a borrowed collection
 (as a local), arena-scoped computations, and guard-scoped kernel lookups. It is
 not enough for: long-lived parsers holding `StringView`s, structs of
-references, or zero-copy data structures. Those are OD-3 (target M6), designed
-so that v0 programs remain valid.
+references, or zero-copy data structures. Those are OD-3, designed in M6f
+([`od3-design.md`](od3-design.md)) so that v0 programs remain valid.
 
 ## 5. Behaviours requiring runtime checks
 

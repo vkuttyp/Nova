@@ -153,7 +153,7 @@ reference local used after the statement, the `Dead` access conflicts with the l
 ## 8. What the v0 checker deliberately does not do
 
 - No references in aggregates, and no reference re-pointing. Both are rejected by type rules.
-  Relaxing them requires region variables on types (OD-3, M6).
+  Relaxing them requires region variables on types (OD-3; designed in `od3-design.md`).
 - Index-sensitive disjointness (`a[i]` versus `a[j]`) comes in 2d with arrays. It will be
   conservative there: all elements overlap.
 - Moves and drops are 2c. The `StorageDead` points emitted now are where drops will go.

@@ -13,7 +13,7 @@ Original status: Milestone 0 (master prompt §23.K). Each item lists the propose
 |---|---|---|---|---|---|---|
 | **OD-1** | Compiler implementation language | **C# / .NET 10, NativeAOT for distribution** (ADR 0001) | Rust, C++20 | none directly | compile speed only | **M1** |
 | **OD-2** | Memory architecture | **Hybrid (C)**: ownership + regions-as-loans + optimisation-only escape analysis (`memory-model.md`) | A (pure ownership), B (regions) | defines the safety argument | — | **M1** (shapes IR) |
-| **OD-3** | Lifetime-parameterised structs (references in user aggregates) | Not in v0 (E3). Design for M6 with syntax such as `struct Parser<region r>` | Rust-style `'a` now | larger checker surface | enables zero-copy | M6 |
+| **OD-3** | Lifetime-parameterised structs (references in user aggregates) | Not in v0 (E3). **Designed in M6f: [`od3-design.md`](od3-design.md)** (`struct Parser<region r>`, one loan set per value, call-site propagation by regions, drop check). Implementation awaits the owner (§10 there) | Rust-style `'a` now | larger checker surface | enables zero-copy | M6 |
 | OD-4 | `class` keyword | Reserved; future sugar for always-boxed non-Copy types | Classes now; drop the keyword | none if sugar | — | M6 |
 | **OD-5** | Panic strategy | **Abort, no unwinding**; destructors do not run on panic | Unwinding via C `setjmp` (no `setjmp` in CosmoOS libc, and costly) | simpler cleanup proofs | smaller code | **M1** |
 | **OD-6** | Integer overflow | **Panic in all builds**; explicit `wrapping*`/`checked*`/`saturating*` | Rust-like wrap in release | logic safety | small check cost (BCE/range analysis M9) | **M1** |

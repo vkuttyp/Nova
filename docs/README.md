@@ -2,7 +2,7 @@
 
 Date: 2026-10-22. Status: **M0/C0 complete; all decisions accepted ([ADR 0002](decisions/0002-milestone-0-decision-set.md)).**
 **M1 and C1 complete**: Nova compiles to C and runs, including natively inside CosmoOS on x86-64 and AArch64.
-**M2 (ownership and borrowing) and M3 (safe heap) complete** ([milestone-2.md](milestone-2.md), [milestone-3.md](milestone-3.md), [ADR 0003](decisions/0003-m3-built-in-generic-types.md)). **C2 complete** ([cosmoos/c2-report.md](cosmoos/c2-report.md)). **M4 (regions) complete** ([milestone-4.md](milestone-4.md), [ADR 0004](decisions/0004-m4-regions.md)). **M6 (generics and collections) in progress**: 6a generics, 6b interfaces, 6c optionals/`StringView`, 6d `Vector`/`String` and 6e `SlotMap`/`StableVector` done ([milestone-6.md](milestone-6.md), [ADR 0005](decisions/0005-m6-generics-and-built-in-collections.md)); next 6f (property tests, OD-3 design). M5 may run in parallel ([roadmap.md](roadmap.md)).
+**M2 (ownership and borrowing) and M3 (safe heap) complete** ([milestone-2.md](milestone-2.md), [milestone-3.md](milestone-3.md), [ADR 0003](decisions/0003-m3-built-in-generic-types.md)). **C2 complete** ([cosmoos/c2-report.md](cosmoos/c2-report.md)). **M4 (regions) complete** ([milestone-4.md](milestone-4.md), [ADR 0004](decisions/0004-m4-regions.md)). **M6 (generics and collections) complete** (2026-10-23): generics, interfaces, optionals, `StringView`, `Vector`, `String`, `SlotMap`, `StableVector`, property tests, and the [OD-3 design](od3-design.md) ([milestone-6.md](milestone-6.md), [ADR 0005](decisions/0005-m6-generics-and-built-in-collections.md)); next C3, after an owner decision on implementing OD-3. M5 may run in parallel ([roadmap.md](roadmap.md)).
 Implemented-feature specs: [grammar.md](grammar.md) (M1 grammar), [type-system.md](type-system.md)
 (M1 static semantics), [intermediate-representation.md](intermediate-representation.md) (HIR/NIR as
 implemented) and [diagnostics.md](diagnostics.md) (error codes).
@@ -45,6 +45,9 @@ implemented) and [diagnostics.md](diagnostics.md) (error codes).
 Primary-source audits: [research/cosmoos-kernel-audit.md](research/cosmoos-kernel-audit.md),
 [research/cosmoos-platform-audit.md](research/cosmoos-platform-audit.md)
 (CosmoOS HEAD `30d34b29`, main `4527d16d`; read-only).
+
+Designs awaiting implementation: [od3-design.md](od3-design.md) (lifetime-parameterised
+aggregates, M6f).
 
 ## Still to be written (scheduled)
 
