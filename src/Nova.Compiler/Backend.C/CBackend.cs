@@ -41,7 +41,7 @@ public static class CBackend
     /// Lowers a successfully checked compilation to C. Reports N0300 (into the compilation's
     /// diagnostics) and returns null if an executable is required but there is no `main`.
     /// </summary>
-    public static CProgram? Generate(Compilation compilation, bool requireMain, out NirProgram? nir)
+    public static CProgram? Generate(Compilation compilation, bool requireMain, out NirProgram? nir, CEmitOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(compilation);
         nir = null;
@@ -60,7 +60,7 @@ public static class CBackend
         }
 
         nir = compilation.Nir ?? throw new InvalidOperationException("the compilation has no NIR");
-        var mainSource = CEmitter.Emit(nir, compilation.Symbols, compilation.Types, compilation.Units.Select(u => u.Source));
+        var mainSource = CEmitter.Emit(nir, compilation.Symbols, compilation.Types, compilation.Units.Select(u => u.Source), options);
         return new CProgram([new(CProgram.MainFileName, mainSource), .. HostedRuntime]);
     }
 
@@ -93,14 +93,16 @@ public static class Toolchain
         "-Wmissing-prototypes", "-Wstrict-prototypes", "-Wvla", "-Wcast-qual", "-Wundef",
     ];
 
-    public static ToolResult CompileExecutable(string compiler, string directory, CProgram program, string output, IEnumerable<string> extraFlags)
+    /// <param name="workingDirectory">Where the compiler runs; source paths in <c>#line</c> directives resolve against it (c-backend.md §7).</param>
+    public static ToolResult CompileExecutable(string compiler, string directory, CProgram program, string output, IEnumerable<string> extraFlags,
+        string? workingDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(program);
         var args = new List<string>(StrictWarnings) { "-I", directory };
         args.AddRange(extraFlags);
         args.AddRange(program.SourceFiles.Select(f => Path.Combine(directory, f)));
         args.AddRange(["-o", output]);
-        return Run(compiler, args);
+        return Run(compiler, args, workingDirectory: workingDirectory);
     }
 
     /// <summary>

@@ -34,6 +34,26 @@ public sealed class SourceText
     /// <summary>The path used in diagnostics, exactly as supplied by the caller.</summary>
     public string Path { get; }
 
+    /// <summary>
+    /// The source path for a file named on the command line (c-backend.md §7): <c>/</c> separators; an
+    /// absolute path under <paramref name="currentDirectory"/> becomes relative to it, and any other
+    /// absolute path is reduced to its file name, so generated code never contains a host path.
+    /// </summary>
+    public static string SourcePath(string path, string currentDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(currentDirectory);
+        if (System.IO.Path.IsPathRooted(path))
+        {
+            var relative = System.IO.Path.GetRelativePath(currentDirectory, path);
+            path = relative == ".." || relative.StartsWith(".." + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || System.IO.Path.IsPathRooted(relative)
+                ? System.IO.Path.GetFileName(path)
+                : relative;
+        }
+        return path.Replace('\\', '/');
+    }
+
     public string Text { get; }
 
     public int Length => Text.Length;

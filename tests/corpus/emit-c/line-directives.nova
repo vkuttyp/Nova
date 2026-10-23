@@ -1,0 +1,29 @@
+// emit-option: line-directives
+// Covers: #line directives (c-backend.md §7): function names, statements spread over lines,
+// labels sharing a statement's line, drops at scope end, and the hand-back to main.c.
+struct Counter {
+    count: i32;
+}
+
+struct Resource {
+    id: i32;
+    drop {
+        Console.writeLine(this.id);
+    }
+}
+
+fn step(c: borrow mut Counter, by: i32) {
+    c.count += by;
+}
+
+fn main() -> i32 {
+    var c = Counter { count: 0 };
+    let r = Resource { id: 7 };
+    var i = 0;
+    while (i < 3) {
+        step(mut c, i);
+        i += 1;
+    }
+    Console.writeLine(c.count);
+    return 0;
+}

@@ -8,6 +8,13 @@ using Nova.Compiler.Syntax;
 
 namespace Nova.Compiler.Backend.C;
 
+/// <summary>Options of the C emitter.</summary>
+/// <param name="LineDirectives">Map function bodies to Nova source with <c>#line</c> (c-backend.md §7).</param>
+public sealed record CEmitOptions(bool LineDirectives = false)
+{
+    public static CEmitOptions Default { get; } = new();
+}
+
 /// <summary>
 /// Emits C11 from NIR (docs/c-backend.md). Each NIR block becomes a label, terminators become
 /// goto/if/return, and every operation that can be undefined in C calls a checked helper from
@@ -20,31 +27,88 @@ public sealed class CEmitter
     private readonly TypeTable _types;
     private readonly Dictionary<SourceText, int> _fileIds = [];
     private readonly StringBuilder _sb = new();
+    private readonly CEmitOptions _options;
     private NirFunction? _function;
 
-    private CEmitter(NirProgram program, SymbolTable symbols, TypeTable types, IEnumerable<SourceText> sources)
+    // Source mapping (§7): the physical C lines written so far, the Nova line the next C line is
+    // attributed to by the last directive, and the line the current statement wants.
+    private int _cLines;
+    private (SourceText File, int Line)? _mapped;
+    private (SourceText File, int Line)? _wanted;
+    private string? _pendingLabel; // with directives, a label shares the next statement's line
+
+    private CEmitter(NirProgram program, SymbolTable symbols, TypeTable types, IEnumerable<SourceText> sources, CEmitOptions options)
     {
         _program = program;
         _symbols = symbols;
         _types = types;
+        _options = options;
         foreach (var source in sources)
         {
             _fileIds.TryAdd(source, _fileIds.Count);
         }
     }
 
-    public static string Emit(NirProgram program, SymbolTable symbols, TypeTable types, IEnumerable<SourceText> sources)
+    public static string Emit(NirProgram program, SymbolTable symbols, TypeTable types, IEnumerable<SourceText> sources,
+        CEmitOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(symbols);
         ArgumentNullException.ThrowIfNull(types);
         ArgumentNullException.ThrowIfNull(sources);
-        var emitter = new CEmitter(program, symbols, types, sources);
+        var emitter = new CEmitter(program, symbols, types, sources, options ?? CEmitOptions.Default);
         emitter.EmitProgram();
         return emitter._sb.ToString();
     }
 
-    private void Line(string text = "") => _sb.Append(text).Append('\n');
+    /// <summary>
+    /// Writes one or more C lines. Inside a function with directives on, each line is attributed to
+    /// the wanted Nova line: a <c>#line</c> is written first whenever the next line would otherwise map elsewhere.
+    /// </summary>
+    private void Line(string text = "")
+    {
+        if (_wanted is { } wanted && _mapped != wanted)
+        {
+            _sb.Append(CultureInfo.InvariantCulture, $"#line {wanted.Line} {CStringLiteral(wanted.File.Path)}\n");
+            _cLines++;
+            _mapped = wanted;
+        }
+        if (_pendingLabel is { } label)
+        {
+            _sb.Append(label);
+            text = text.TrimStart();
+            _pendingLabel = null;
+        }
+        _sb.Append(text).Append('\n');
+        var lines = 1 + text.Count(c => c == '\n');
+        _cLines += lines;
+        if (_mapped is { } mapped)
+        {
+            _mapped = (mapped.File, mapped.Line + lines);
+        }
+    }
+
+    /// <summary>Attributes the following C lines to the first line of <paramref name="span"/> (§7); spanless code keeps the current line.</summary>
+    private void MapTo(TextSpan span)
+    {
+        if (_options.LineDirectives && _function is { } function && !(span.Start == 0 && span.Length == 0))
+        {
+            _wanted = (function.Source.Source, function.Source.Source.GetLinePosition(span.Start).Line);
+        }
+    }
+
+    /// <summary>Ends a function's mapping: the following lines belong to main.c again.</summary>
+    private void EndMapping()
+    {
+        if (_mapped is not null)
+        {
+            // The directive is physical line _cLines + 1, so the line after it is _cLines + 2.
+            _sb.Append(CultureInfo.InvariantCulture, $"#line {_cLines + 2} \"{CProgram.MainFileName}\"\n");
+            _cLines++;
+        }
+        _mapped = null;
+        _wanted = null;
+    }
 
     private void EmitProgram()
     {
@@ -976,7 +1040,9 @@ public sealed class CEmitter
     private void EmitFunction(NirFunction function)
     {
         _function = function;
+        MapTo(function.Source.Syntax.Name.Span);
         Line($"static {Signature(function, withNames: true)} {{");
+        var declarations = new List<string>();
         foreach (var local in function.Locals.Skip(function.ParameterCount))
         {
             // Zero-initialised: Nova's definite assignment already forbids reading it first.
@@ -990,7 +1056,22 @@ public sealed class CEmitter
                 TypeKind.Reference or TypeKind.Box => "NULL",
                 _ => "0",
             };
-            Line($"    NV_UNUSED {CType(local.Type)} {LocalName(local)} = {zero};");
+            declarations.Add($"NV_UNUSED {CType(local.Type)} {LocalName(local)} = {zero};");
+        }
+        // With directives, the declarations share one line, attributed to the function's name.
+        if (_options.LineDirectives)
+        {
+            if (declarations.Count > 0)
+            {
+                Line("    " + string.Join(" ", declarations));
+            }
+        }
+        else
+        {
+            foreach (var declaration in declarations)
+            {
+                Line("    " + declaration);
+            }
         }
 
         var targeted = new HashSet<NirBlock>();
@@ -1001,17 +1082,25 @@ public sealed class CEmitter
 
         foreach (var block in function.Blocks)
         {
-            if (targeted.Contains(block))
+            if (targeted.Contains(block) && _options.LineDirectives)
+            {
+                _pendingLabel = $"bb{block.Id}: ";
+            }
+            else if (targeted.Contains(block))
             {
                 Line($"bb{block.Id}:");
             }
             foreach (var statement in block.Statements)
             {
+                MapTo(statement.Span);
                 EmitStatement(statement);
             }
+            MapTo(block.Terminator!.Span);
             EmitTerminator(function, block.Terminator!);
         }
         Line("}");
+        EndMapping();
+        _function = null;
     }
 
     private void EmitStatement(NirStatement statement)

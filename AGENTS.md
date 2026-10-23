@@ -27,7 +27,8 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
   ADR 0003) are complete, and so is C2 (`docs/cosmoos/c2-report.md`; `integrations/cosmoos/c2.py`).
   M4 (regions; `docs/milestone-4.md`, ADR 0004) is complete. M6 (generics and collections;
   `docs/milestone-6.md`, ADR 0005) is complete, and so is M6x (region parameters, OD-3; `docs/milestone-6x.md`, ADR 0006). C3
-  (files, sockets, processes and the `nwc` utility; `docs/cosmoos/c3-report.md`) is complete. Next is M7. M5 may run in
+  (files, sockets, processes and the `nwc` utility; `docs/cosmoos/c3-report.md`) is complete. M7 (production C backend;
+  `docs/milestone-7.md`) is in progress: 7a (source maps) is done, 7b (structured C) is next. M5 may run in
   parallel (`docs/roadmap.md`).
 - Guest checks: `python3 integrations/cosmoos/c2.py --arch x86_64` (QEMU), and for aarch64 either
   QEMU or a running CosmoOS VM over ssh (`--arch aarch64 --ssh root@<host>`). `c3.py` takes the same

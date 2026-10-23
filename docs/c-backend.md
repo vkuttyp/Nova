@@ -171,11 +171,32 @@ Heap (M3b):
 - Source location encoding `NV_SRC(line, col)`. File IDs are resolved through a
   per-package table, so absolute host paths are never embedded (reproducibility).
 
-## 7. Debugging
+## 7. Debugging and source maps (M7a)
 
-- `#line` directives map C back to Nova source (optional, `--line-directives`;
-  on by default for debug builds). They must use package-relative paths.
-- Stable local names (`v_<name>_<n>`) so a C debugger shows recognisable variables.
+- **`#line` directives** map generated C back to Nova source. They are off by default and turned
+  on by `--line-directives`; `novac build -g` turns them on and compiles the C with `-g -O0`
+  instead of `-O2`.
+- With directives on, each function body maps to Nova lines:
+  - the function's opening line maps to the line of its name;
+  - each statement and terminator maps to the first line of the source construct it came from
+    (its span). A directive is written only when the line or file changes. Code without a span of
+    its own, such as compiler temporaries, keeps the line before it.
+  - A block's label shares the line of the block's first statement, so labels need no directive
+    of their own. The local declarations share one line, attributed to the function's name.
+  - After each function, `#line <n> "main.c"` hands the following lines back to the C file.
+    Everything outside function bodies (types, drop glue, helpers, `main`) is attributed to
+    `main.c`.
+- **Paths.** Directives and panic locations name a source by its *source path*. This is the path
+  given to the compiler, with `/` separators. The CLI rewrites an absolute path under the current
+  directory to a relative one. Any other absolute path is reduced to its file name. Generated C
+  therefore never contains a host path (`build-integration.md` §6).
+- `novac build` runs the C compiler with the current directory as its working directory. The
+  debug info's compilation directory then makes the source paths resolve, so a debugger finds
+  the `.nova` files.
+- Locals keep stable names: `v_<name>_<n>` for a named local, `t_<n>` for a temporary.
+  A C debugger therefore shows recognisable variables (`v_count_3`).
+- Directives never change the code itself. A program with directives must behave exactly like
+  one without them. The run corpus is built both ways (§8).
 
 ## 7a. Implementation notes (M1, increment 1c)
 
@@ -202,6 +223,9 @@ Heap (M3b):
 - Every `run-pass` test is compiled with clang and gcc (host) at `-O0` and `-O2`,
   with and without `-fsanitize=address,undefined`. Outputs must agree
   (differential testing).
+- M7a: every run-corpus program is also built with `#line` directives (clang `-O0 -g`) and must
+  produce the same results. `SourceMapTests` compiles programs with `-g` and checks the
+  debug line table: it names the `.nova` file and the lines of the statements.
 - M7: a Csmith-style random program generator for Nova; three-way
   differential testing (clang/gcc × opt levels), plus a reference
-  interpreter on NIR (`novac run --interp`) as an oracle.
+  interpreter on NIR (`novac run --interp`) as an oracle (`milestone-7.md`).

@@ -25,6 +25,8 @@ internal static class Program
           -o <path>         (build) output file or directory; default: name of the first input
           --cc <compiler>   (build) C compiler for --emit exe; default: $CC or cc
           --cflag <flag>    (build) extra flag for the C compiler (repeatable)
+          --line-directives (build) map the generated C to Nova lines with #line
+          -g                (build) debug build: #line directives, C compiled with -g -O0
         """;
 
     private sealed class Options
@@ -35,6 +37,7 @@ internal static class Program
         public string? Output { get; set; }
         public string Compiler { get; set; } = Environment.GetEnvironmentVariable("CC") is { Length: > 0 } cc ? cc : "cc";
         public List<string> CFlags { get; } = ["-O2"];
+        public bool LineDirectives { get; set; }
     }
 
     private static int Main(string[] args)
@@ -65,7 +68,7 @@ internal static class Program
         {
             try
             {
-                sources.Add(new SourceText(file, File.ReadAllText(file)));
+                sources.Add(new SourceText(SourceText.SourcePath(file, Environment.CurrentDirectory), File.ReadAllText(file)));
             }
             catch (IOException e)
             {
@@ -101,6 +104,16 @@ internal static class Program
             if (arg == dumpOption)
             {
                 options.Dump = true;
+            }
+            else if (command == "build" && arg == "--line-directives")
+            {
+                options.LineDirectives = true;
+            }
+            else if (command == "build" && arg == "-g")
+            {
+                options.LineDirectives = true;
+                options.CFlags.Remove("-O2");
+                options.CFlags.InsertRange(0, ["-g", "-O0"]);
             }
             else if (command == "build" && arg is "--emit" or "-o" or "--cc" or "--cflag")
             {
@@ -177,7 +190,8 @@ internal static class Program
             return Report(compilation.Diagnostics);
         }
 
-        var program = CBackend.Generate(compilation, requireMain: options.Emit == "exe", out var nir);
+        var program = CBackend.Generate(compilation, requireMain: options.Emit == "exe", out var nir,
+            new CEmitOptions(LineDirectives: options.LineDirectives));
         if (program is null)
         {
             return Report(compilation.Diagnostics);
@@ -200,7 +214,9 @@ internal static class Program
         try
         {
             program.WriteTo(workDirectory);
-            var result = Toolchain.CompileExecutable(options.Compiler, workDirectory, program, output, options.CFlags);
+            // Run in the current directory: the source paths in #line directives are relative to it (c-backend.md §7).
+            var result = Toolchain.CompileExecutable(options.Compiler, workDirectory, program, output, options.CFlags,
+                workingDirectory: Environment.CurrentDirectory);
             Console.Error.Write(result.StandardOutput);
             Console.Error.Write(result.StandardError);
             if (result.ExitCode != 0)

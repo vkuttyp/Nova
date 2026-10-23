@@ -4,7 +4,11 @@ using Nova.Compiler.Backend.C;
 namespace Nova.Compiler.Tests;
 
 /// <summary>A way of compiling generated C: a compiler plus flags (docs/testing.md §3).</summary>
-public sealed record CConfig(string Name, string Compiler, ImmutableArray<string> Flags);
+public sealed record CConfig(string Name, string Compiler, ImmutableArray<string> Flags)
+{
+    /// <summary>Build the program generated with <c>#line</c> directives (c-backend.md §7).</summary>
+    public bool LineDirectives { get; init; }
+}
 
 /// <summary>
 /// Discovers the C compilers available on this machine. clang is required. A real GCC
@@ -31,6 +35,7 @@ internal static class CToolchains
         }
         configs.Add(new("clang -O0", "clang", ["-O0", "-Werror"]));
         configs.Add(new("clang -O2", "clang", ["-O2", "-Werror"]));
+        configs.Add(new("clang -O0 -g line-directives", "clang", ["-O0", "-g", "-Werror"]) { LineDirectives = true });
         configs.Add(new("clang -O2 portable-overflow", "clang", ["-O2", "-Werror", "-DNV_NO_BUILTIN_OVERFLOW"]));
         configs.Add(new("clang -O1 asan+ubsan", "clang",
             ["-O1", "-Werror", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"]));
