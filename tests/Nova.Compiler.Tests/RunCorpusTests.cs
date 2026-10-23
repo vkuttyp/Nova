@@ -63,6 +63,8 @@ public partial class RunCorpusTests
         Assert.NotNull(mapped);
         var flat = CBackend.Generate(compilation, requireMain: true, out _, new CEmitOptions(Structured: false));
         Assert.NotNull(flat);
+        var placed = CBackend.Generate(compilation, requireMain: true, out _, new CEmitOptions(Placement: true));
+        Assert.NotNull(placed);
 
         using var temp = new TempDirectory();
         program.WriteTo(temp.Path);
@@ -70,6 +72,8 @@ public partial class RunCorpusTests
         mapped.WriteTo(mappedDirectory);
         var flatDirectory = Path.Combine(temp.Path, "flat");
         flat.WriteTo(flatDirectory);
+        var placedDirectory = Path.Combine(temp.Path, "placed");
+        placed.WriteTo(placedDirectory);
 
         var failures = new System.Collections.Concurrent.ConcurrentBag<string>();
         Parallel.ForEach(CToolchains.Configs, (config, _, index) =>
@@ -79,6 +83,7 @@ public partial class RunCorpusTests
             {
                 { LineDirectives: true } => Toolchain.CompileExecutable(config.Compiler, mappedDirectory, mapped, exe, config.Flags),
                 { Flat: true } => Toolchain.CompileExecutable(config.Compiler, flatDirectory, flat, exe, config.Flags),
+                { Placement: true } => Toolchain.CompileExecutable(config.Compiler, placedDirectory, placed, exe, config.Flags),
                 _ => Toolchain.CompileExecutable(config.Compiler, temp.Path, program, exe, config.Flags),
             };
             if (build.ExitCode != 0)

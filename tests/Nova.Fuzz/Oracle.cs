@@ -15,7 +15,7 @@ public sealed record Outcome(string Stdout, string Stderr, int ExitCode)
 }
 
 /// <summary>A way to compile the generated C (docs/testing.md §5).</summary>
-public sealed record FuzzConfig(string Name, string Compiler, ImmutableArray<string> Flags, bool Flat = false);
+public sealed record FuzzConfig(string Name, string Compiler, ImmutableArray<string> Flags, bool Flat = false, bool Placement = false);
 
 /// <summary>The result of checking one program.</summary>
 /// <param name="Finding">Null if every configuration agreed; otherwise what went wrong.</param>
@@ -38,6 +38,7 @@ public static class Oracle
         configs.Add(new("clang -O0", "clang", ["-O0", "-Werror"]));
         configs.Add(new("clang -O2", "clang", ["-O2", "-Werror"]));
         configs.Add(new("clang -O2 flat", "clang", ["-O2", "-Werror"], Flat: true));
+        configs.Add(new("clang -O2 placement", "clang", ["-O2", "-Werror"], Placement: true));
         if (s_gccCandidates.FirstOrDefault(c => Works(c, "Free Software Foundation")) is { } gcc)
         {
             configs.Add(new($"{gcc} -O0", gcc, ["-O0", "-Werror"]));
@@ -76,6 +77,7 @@ public static class Oracle
         }
         var structured = CBackend.Generate(compilation, requireMain: true, out var nir)!;
         var flat = CBackend.Generate(compilation, requireMain: true, out _, new CEmitOptions(Structured: false))!;
+        var placed = CBackend.Generate(compilation, requireMain: true, out _, new CEmitOptions(Placement: true))!;
 
         Outcome reference;
         using (var stdout = new MemoryStream())
@@ -101,11 +103,12 @@ public static class Oracle
         {
             structured.WriteTo(Path.Combine(directory, "structured"));
             flat.WriteTo(Path.Combine(directory, "flat"));
+            placed.WriteTo(Path.Combine(directory, "placed"));
             foreach (var (config, index) in Configs.Select((c, i) => (c, i)))
             {
-                var source = Path.Combine(directory, config.Flat ? "flat" : "structured");
+                var (form, generated) = config.Flat ? ("flat", flat) : config.Placement ? ("placed", placed) : ("structured", structured);
                 var exe = Path.Combine(directory, $"program-{index}");
-                var build = Toolchain.CompileExecutable(config.Compiler, source, config.Flat ? flat : structured, exe, config.Flags);
+                var build = Toolchain.CompileExecutable(config.Compiler, Path.Combine(directory, form), generated, exe, config.Flags);
                 if (build.ExitCode != 0)
                 {
                     return new Verdict(seed, program, $"[{config.Name}] C compilation failed:\n{build.StandardError}", reference, index);

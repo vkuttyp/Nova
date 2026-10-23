@@ -10,8 +10,9 @@ namespace Nova.Compiler.Backend.C;
 
 /// <summary>Options of the C emitter.</summary>
 /// <param name="LineDirectives">Map function bodies to Nova source with <c>#line</c> (c-backend.md §7).</param>
+/// <param name="Placement">Place non-escaping <c>SystemHeap</c> boxes on the stack (M5; c-backend.md §2.2).</param>
 /// <param name="Structured">Reconstruct if/else and loops (c-backend.md §3); false emits the flat form (one label per block).</param>
-public sealed record CEmitOptions(bool LineDirectives = false, bool Structured = true)
+public sealed record CEmitOptions(bool LineDirectives = false, bool Structured = true, bool Placement = false)
 {
     public static CEmitOptions Default { get; } = new();
 }
@@ -29,6 +30,8 @@ public sealed class CEmitter
     private readonly Dictionary<SourceText, int> _fileIds = [];
     private readonly StringBuilder _sb = new();
     private readonly CEmitOptions _options;
+    private readonly Analysis.PlacementAnalysis? _placement;
+    private Analysis.FunctionPlacement? _boxes; // the current function's stack-placed boxes
     private NirFunction? _function;
 
     // Source mapping (§7): the physical C lines written so far, the Nova line the next C line is
@@ -45,6 +48,7 @@ public sealed class CEmitter
         _symbols = symbols;
         _types = types;
         _options = options;
+        _placement = options.Placement ? Analysis.PlacementAnalysis.Analyze(program, symbols) : null;
         foreach (var source in sources)
         {
             _fileIds.TryAdd(source, _fileIds.Count);
@@ -1050,6 +1054,7 @@ public sealed class CEmitter
     private void EmitFunction(NirFunction function)
     {
         _function = function;
+        _boxes = _placement?.For(function);
         MapTo(function.Source.Syntax.Name.Span);
         Line($"static {Signature(function, withNames: true)} {{");
         var declarations = new List<string>();
@@ -1067,6 +1072,11 @@ public sealed class CEmitter
                 _ => "0",
             };
             declarations.Add($"NV_UNUSED {CType(local.Type)} {LocalName(local)} = {zero};");
+        }
+        for (var slot = 0; slot < (_boxes?.Slots.Count ?? 0); slot++)
+        {
+            // The storage of a stack-placed box (§2.2).
+            declarations.Add($"NV_UNUSED {CType(_boxes!.Slots[slot])} nv_box_{slot} = {{0}};");
         }
         // With directives, the declarations share one line, attributed to the function's name.
         if (_options.LineDirectives)
@@ -1241,6 +1251,13 @@ public sealed class CEmitter
             case NirAssign { Value: NirArrayRepeat repeat } assign:
                 Line($"    for (uint64_t nv_i = 0; nv_i < {repeat.Type.ArrayLength}u; nv_i++) {Place(assign.Target)}.e[nv_i] = {Operand(repeat.Value)};");
                 break;
+            case NirAssign { Value: NirBuiltin { Function: BuiltinFunction.BoxCreate } create } site when _boxes is not null && _boxes.IsSite(site, out var slot):
+            {
+                // A stack-placed box (§2.2): the value goes into the slot, and nothing is allocated.
+                Line($"    nv_box_{slot} = {Operand(create.Arguments[^1])};");
+                Line($"    {Place(site.Target)} = (({CTypeName(create.Type)}){{ .tag = 0, .u.v_Ok = {{ .f__0 = &nv_box_{slot} }} }});");
+                break;
+            }
             case NirAssign assign:
             {
                 var target = Place(assign.Target);
@@ -1261,6 +1278,8 @@ public sealed class CEmitter
                     }
                 }
                 break;
+            case NirBoxFree free when IsPlacedBox(free.Box):
+                break; // a stack-placed box's memory is the frame's (§2.2)
             case NirBoxFree free:
             {
                 var box = Place(free.Box);
@@ -1282,6 +1301,14 @@ public sealed class CEmitter
                 break;
             case NirStorageDead:
                 break; // storage is the C local's; destruction is an explicit NirDrop
+            case NirDrop drop when IsPlacedBox(drop.Place):
+                // A stack-placed box: destroy the contents, free nothing (§2.2).
+                if (TypeTable.NeedsDrop(drop.Place.Type.Pointee!))
+                {
+                    var contents = $"{DropGlueName(drop.Place.Type.Pointee!)}({Place(drop.Place)});";
+                    Line(drop.Flag is null ? $"    {contents}" : $"    if ({LocalName(drop.Flag)}) {contents}");
+                }
+                break;
             case NirDrop { Flag: null } drop:
                 Line($"    {DropGlueName(drop.Place.Type)}(&{Place(drop.Place)});");
                 break;
@@ -1301,6 +1328,8 @@ public sealed class CEmitter
                 throw new InvalidOperationException($"cannot emit statement {statement}");
         }
     }
+
+    private bool IsPlacedBox(NirPlace place) => place.IsLocal && _boxes is not null && _boxes.BoxLocals.Contains(place.Local);
 
     private void EmitBuiltin(NirBuiltin builtin)
     {

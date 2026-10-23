@@ -25,6 +25,12 @@ public sealed class InterpreterOptions
     /// <summary>NOVA_ALLOC_REPORT: print the allocation counters when <c>main</c> returns.</summary>
     public bool AllocationReport { get; init; }
 
+    /// <summary>Apply M5's placement: stack-placed boxes live in the frame, uncounted (intermediate-representation.md §5.5a).</summary>
+    public bool Placement { get; init; }
+
+    /// <summary>If set, every executed <c>Drop</c> is appended as <c>function line:column type</c> (§5.5a).</summary>
+    public List<string>? DropTrace { get; init; }
+
     /// <summary>The directory relative file paths and child processes resolve against; null: the process's own.</summary>
     public string? WorkingDirectory { get; init; }
 
@@ -52,10 +58,15 @@ public sealed partial class NirInterpreter
     private SourceText? _source;
     private TextSpan _span;
 
-    private NirInterpreter(NirProgram program, InterpreterOptions options)
+    private readonly SymbolTable _symbols;
+    private readonly Analysis.PlacementAnalysis? _placement;
+
+    private NirInterpreter(NirProgram program, SymbolTable symbols, InterpreterOptions options)
     {
         _program = program;
+        _symbols = symbols;
         _options = options;
+        _placement = options.Placement ? Analysis.PlacementAnalysis.Analyze(program, symbols) : null;
         foreach (var function in program.Functions)
         {
             _functions[function.Source] = function;
@@ -71,7 +82,7 @@ public sealed partial class NirInterpreter
         ArgumentNullException.ThrowIfNull(options);
         var main = program.Functions.FirstOrDefault(f => f.Source.Owner is null && symbols.GetName(f.Name) == "main")
             ?? throw new InvalidOperationException("the program has no 'main'");
-        var interpreter = new NirInterpreter(program, options);
+        var interpreter = new NirInterpreter(program, symbols, options);
         var status = 0;
         Exception? failure = null;
         // Calls recurse on the host stack: give it room for deep Nova recursion (§5.3).
@@ -139,11 +150,16 @@ public sealed partial class NirInterpreter
 
     // ---- Calls and frames (§5.3) ----
 
-    private sealed class Frame(NirFunction function, Allocation[] locals)
+    private sealed class Frame(NirFunction function, Allocation[] locals, Analysis.FunctionPlacement? boxes)
     {
         public NirFunction Function { get; } = function;
 
         public Allocation[] Locals { get; } = locals;
+
+        /// <summary>The function's stack-placed boxes (M5), and the slots made so far.</summary>
+        public Analysis.FunctionPlacement? Boxes { get; } = boxes;
+
+        public List<Allocation> Slots { get; } = [];
     }
 
     private Value? Call(NirFunction function, Value[] arguments)
@@ -153,7 +169,7 @@ public sealed partial class NirInterpreter
         {
             locals[i] = NewLocal(function.Locals[i]);
         }
-        var frame = new Frame(function, locals);
+        var frame = new Frame(function, locals, _placement?.For(function));
         for (var i = 0; i < arguments.Length; i++)
         {
             _memory.Store(locals[i].Base, arguments[i]);
@@ -215,7 +231,7 @@ public sealed partial class NirInterpreter
         }
         finally
         {
-            foreach (var local in frame.Locals)
+            foreach (var local in frame.Locals.Concat(frame.Slots))
             {
                 if (local.Live)
                 {
@@ -602,6 +618,17 @@ public sealed partial class NirInterpreter
             case NirAssign { Value: NirBuiltin { Function: BuiltinFunction.ScratchEnter } } enter:
                 _memory.Store(Address(frame, enter.Target, write: true), ScratchEnterRoot(Location(frame.Function.Source.Source, enter.Span)));
                 break;
+            case NirAssign { Value: NirBuiltin { Function: BuiltinFunction.BoxCreate } create } site
+                when frame.Boxes is { } boxes && boxes.IsSite(site, out _):
+            {
+                // A stack-placed box (§5.5a): the value goes into a slot of the frame, uncounted, and cannot fail.
+                var value = Operand(frame, create.Arguments[^1]);
+                var slot = _memory.Allocate(AllocationKind.Local, value.Size, initialised: false, "a stack-placed box");
+                frame.Slots.Add(slot);
+                _memory.Store(slot.Base, value);
+                _memory.Store(Address(frame, site.Target, write: true), Ok(create.Type, Value.Of(slot.Base, 8)));
+                break;
+            }
             case NirAssign { Value: NirArrayRepeat repeat } assign:
             {
                 var element = Operand(frame, repeat.Value);
@@ -632,6 +659,12 @@ public sealed partial class NirInterpreter
                 }
                 break;
             }
+            case NirBoxFree free when IsPlacedBox(frame, free.Box):
+                if (free.Flag is null || Flag(frame, free.Flag))
+                {
+                    _memory.AllocationAt(Pointer(Address(frame, free.Box, write: false))).End();
+                }
+                break;
             case NirBoxFree free:
                 if (free.Flag is null || Flag(frame, free.Flag))
                 {
@@ -682,7 +715,26 @@ public sealed partial class NirInterpreter
             case NirDrop drop:
                 if (drop.Flag is null || Flag(frame, drop.Flag))
                 {
-                    Destroy(drop.Place.Type, Address(frame, drop.Place, write: false));
+                    if (_options.DropTrace is { } trace)
+                    {
+                        var position = frame.Function.Source.Source.GetLinePosition(drop.Span.Start);
+                        trace.Add($"{_symbols.GetName(frame.Function.Name)} {position} {drop.Place.Type}");
+                    }
+                    var address = Address(frame, drop.Place, write: false);
+                    if (IsPlacedBox(frame, drop.Place))
+                    {
+                        // A stack-placed box: destroy the contents, then end the slot instead of freeing (§5.5a).
+                        var contents = Pointer(address);
+                        if (TypeTable.NeedsDrop(drop.Place.Type.Pointee!))
+                        {
+                            Destroy(drop.Place.Type.Pointee!, contents);
+                        }
+                        _memory.AllocationAt(contents).End();
+                    }
+                    else
+                    {
+                        Destroy(drop.Place.Type, address);
+                    }
                 }
                 break;
             case NirEval { Value: var value }:
@@ -692,6 +744,9 @@ public sealed partial class NirInterpreter
                 throw new InvalidOperationException($"cannot interpret statement {statement}");
         }
     }
+
+    private static bool IsPlacedBox(Frame frame, NirPlace place) =>
+        place.IsLocal && frame.Boxes is { } boxes && boxes.BoxLocals.Contains(place.Local);
 
     private bool Flag(Frame frame, NirLocal flag) => _memory.LoadBits(Address(frame, new NirPlace(flag), write: false), 1) != 0;
 

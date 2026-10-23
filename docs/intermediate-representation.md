@@ -273,6 +273,17 @@ violations that stay in bounds.
   When the interpreter's output streams are the process's own, the child inherits them. When the
   caller captures output (tests), the child's output is copied into the captured streams.
 
+### 5.5a Placement and the drop trace (M5)
+
+- `InterpreterOptions.Placement` applies the same `PlacementAnalysis` as the C backend. A
+  stack-placed site stores the value in a new *local* allocation, which is not counted.
+- A `Drop` of the site's box local destroys the contents, then ends that allocation. A `BoxFree`
+  just ends it. Ending it there, where C's slot lives on until the function returns, makes a
+  late use a fault: a stronger check.
+- `InterpreterOptions.DropTrace`, when given a list, records every executed `Drop` statement as
+  `<function> <line>:<column> <type>`, in order. M5's drop-timing check compares the traces
+  with and without placement.
+
 ### 5.5 Agreement tests
 
 - `InterpreterTests` run every run-pass and run-fail program. Standard output, standard error

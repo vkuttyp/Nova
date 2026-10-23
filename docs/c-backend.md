@@ -143,6 +143,22 @@ Until M7d, top-level functions were `nv_<name>`. A Nova function named `add_i32`
 the runtime's `nv_add_i32`, and the C failed to compile. The random program generator found this,
 and `run-pass/runtime-names.nova` keeps it fixed.
 
+## 2.2 Stack-placed boxes (M5; `--placement`)
+
+When `CEmitOptions.Placement` is on, `PlacementAnalysis` decides each `Box.create` site
+(`memory-model.md` §5.1).
+- **Slot.** A stack-placed site has a slot `NV_UNUSED T nv_box_<n> = {0};` among the function's
+  locals.
+- **Creation.** `R = nvB_…(v)` becomes `nv_box_<n> = v;` followed by
+  `R = ((Result){ .tag = 0, .u.v_Ok = { .f__0 = &nv_box_<n> } });`. Nothing is allocated, so
+  nothing can fail.
+- **Destruction.**
+  - A `Drop` of a box local of the site calls the contents' drop glue `nvD_T(b)` if `T` needs drop,
+    and nothing else. A drop flag still guards it.
+  - A `BoxFree` of one emits nothing.
+
+Everything else is unchanged. Heap boxes, and every other site, use the drop glue of §2.
+
 ## 3. Lowering of control flow and cleanup
 
 **Flat form** (M1; `--flat-c`): each NIR block becomes a C label. Terminators become `goto`, `switch`

@@ -11,6 +11,9 @@ public sealed record CConfig(string Name, string Compiler, ImmutableArray<string
 
     /// <summary>Build the flat form (one label per block; c-backend.md §3), the oracle for the structured form.</summary>
     public bool Flat { get; init; }
+
+    /// <summary>Build with M5's placement (stack-placed boxes; c-backend.md §2.2).</summary>
+    public bool Placement { get; init; }
 }
 
 /// <summary>
@@ -40,6 +43,7 @@ internal static class CToolchains
         configs.Add(new("clang -O2", "clang", ["-O2", "-Werror"]));
         configs.Add(new("clang -O0 -g line-directives", "clang", ["-O0", "-g", "-Werror"]) { LineDirectives = true });
         configs.Add(new("clang -O2 flat", "clang", ["-O2", "-Werror"]) { Flat = true });
+        configs.Add(new("clang -O2 placement", "clang", ["-O2", "-Werror"]) { Placement = true });
         configs.Add(new("clang -O2 portable-overflow", "clang", ["-O2", "-Werror", "-DNV_NO_BUILTIN_OVERFLOW"]));
         configs.Add(new("clang -O1 asan+ubsan", "clang",
             ["-O1", "-Werror", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"]));

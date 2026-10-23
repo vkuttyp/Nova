@@ -31,6 +31,8 @@ internal static class Program
           -g                (build) debug build: #line directives, C compiled with -g -O0
           --flat-c          (build) emit the flat form: one label per block, no if/loop reconstruction
           --interp          (run) interpret the checked NIR (intermediate-representation.md §5)
+          --placement       (build, run) place non-escaping SystemHeap boxes on the stack (M5)
+          --explain-allocations  (build) print where every allocation site's memory comes from
         """;
 
     private sealed class Options
@@ -44,6 +46,8 @@ internal static class Program
         public bool LineDirectives { get; set; }
         public bool Flat { get; set; }
         public bool Interpret { get; set; }
+        public bool Placement { get; set; }
+        public bool ExplainAllocations { get; set; }
         public List<string> ProgramArguments { get; } = [];
     }
 
@@ -117,6 +121,14 @@ internal static class Program
             if (command == "run" && arg == "--interp")
             {
                 options.Interpret = true;
+            }
+            else if (command is "build" or "run" && arg == "--placement")
+            {
+                options.Placement = true;
+            }
+            else if (command == "build" && arg == "--explain-allocations")
+            {
+                options.ExplainAllocations = true;
             }
             else if (arg == dumpOption)
             {
@@ -217,7 +229,7 @@ internal static class Program
         }
 
         var program = CBackend.Generate(compilation, requireMain: options.Emit == "exe", out var nir,
-            new CEmitOptions(LineDirectives: options.LineDirectives, Structured: !options.Flat));
+            new CEmitOptions(LineDirectives: options.LineDirectives, Structured: !options.Flat, Placement: options.Placement));
         if (program is null)
         {
             return Report(compilation.Diagnostics);
@@ -225,6 +237,11 @@ internal static class Program
         if (options.Dump && nir is not null)
         {
             Console.Out.Write(NirPrinter.Print(nir, compilation.Symbols));
+        }
+        if (options.ExplainAllocations && nir is not null)
+        {
+            // The decisions --placement would act on (memory-model.md §5, rule 4).
+            Console.Out.Write(Nova.Compiler.Analysis.PlacementAnalysis.Analyze(nir, compilation.Symbols).Explain());
         }
 
         var defaultName = Path.GetFileNameWithoutExtension(sources[0].Path);
@@ -284,6 +301,7 @@ internal static class Program
             FailAllocationAt = Config("NOVA_FAIL_ALLOC_AT"),
             AllocationReport = Config("NOVA_ALLOC_REPORT") != 0,
             InheritStandardStreams = true,
+            Placement = options.Placement,
         });
     }
 

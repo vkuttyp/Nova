@@ -32,7 +32,8 @@ public class InterpreterTests
 
     /// <summary>Interprets a program in-process with captured streams.</summary>
     internal static Outcome Interpret(string relativePath, string text, ulong failAt = 0, bool report = false, IReadOnlyList<string>? arguments = null,
-        byte[]? input = null, string? workingDirectory = null, Action<NirProgram>? mutate = null)
+        byte[]? input = null, string? workingDirectory = null, Action<NirProgram>? mutate = null, bool placement = false,
+        List<string>? dropTrace = null)
     {
         var compilation = Compilation.Create([new SourceText(relativePath, text)], TargetInfo.Lp64);
         Assert.False(compilation.Diagnostics.HasErrors, string.Join("\n", compilation.Diagnostics.Items));
@@ -50,6 +51,8 @@ public class InterpreterTests
             FailAllocationAt = failAt,
             AllocationReport = report,
             WorkingDirectory = workingDirectory,
+            Placement = placement,
+            DropTrace = dropTrace,
         });
         return new Outcome(Encoding.UTF8.GetString(stdout.ToArray()), Encoding.UTF8.GetString(stderr.ToArray()), status);
     }

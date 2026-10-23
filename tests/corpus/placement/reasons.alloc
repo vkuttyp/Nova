@@ -1,0 +1,17 @@
+placement/reasons.nova:9:39: Box<i32> stays on heap: stored outside the function's own locals at 9:35
+placement/reasons.nova:12:13: Box<i32> stays on heap: returned at 13:5
+placement/reasons.nova:17:13: Box<i32> placed on stack (does not escape; SystemHeap is placement-transparent)
+placement/reasons.nova:22:13: Box<Pair> placed on stack (does not escape; SystemHeap is placement-transparent)
+placement/reasons.nova:24:18: Box<i32> placed on stack (does not escape; SystemHeap is placement-transparent)
+placement/reasons.nova:26:19: Box<i32, FailingAllocator> stays on heap: FailingAllocator is not placement-transparent
+placement/reasons.nova:27:15: Box<[u8; 2000]> stays on heap: 2000 bytes is over the 1024-byte stack limit
+placement/reasons.nova:29:20: Box<i32> stays on heap: created in a loop
+placement/reasons.nova:31:17: Box<i32> stays on heap: 'again' is assigned more than once
+placement/reasons.nova:32:13: Box<i32> stays on heap: 'again' is assigned more than once
+placement/reasons.nova:33:17: Box<i32> stays on heap: moved into call to 'consume' at 34:5
+placement/reasons.nova:35:16: Box<i32> stays on heap: borrowed mutably as a box at 36:10
+placement/reasons.nova:37:32: Box<i32> stays on heap: stored in an aggregate at 37:5
+placement/reasons.nova:39:5: vector storage stays on heap: growable storage is not analysed (M5)
+placement/reasons.nova:39:12: Box<i32> stays on heap: passed to VectorPush at 39:5
+placement/reasons.nova:40:12: Box<i32> stays on heap: may be destroyed inside Result<Box<i32>, AllocError> at 42:22
+placement/reasons.nova:44:15: Box<Two> placed on stack (does not escape; SystemHeap is placement-transparent)

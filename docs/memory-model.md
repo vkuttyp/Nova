@@ -213,6 +213,49 @@ The analysis may change *where* a value lives only under these conditions:
    `src/a.nova:12:9: Box<Node> placed on stack (does not escape; SystemHeap is placement-transparent)`
    `src/a.nova:20:9: Box<Node> stays on heap: moved into call to 'insert' at 21:5`
 
+### 5.1 The M5 implementation (`PlacementAnalysis`)
+
+The analysis works per function on NIR after drop elaboration. It is deliberately simple and
+conservative: a box it cannot follow stays on the heap. Rule 1's conditions become the
+following checks.
+
+- **Sites.** A site is `R = Box.create(v)` or `Box.createIn(a, v)`, with `R` a whole local. The
+  site is **eligible** when:
+  - the allocator is `SystemHeap`, the only placement-transparent allocator so far (rule 1d).
+    `FailingAllocator` is not transparent: its failures are its purpose;
+  - `T` is at most 1 KiB, and the function's stack-placed boxes total at most 4 KiB (rule 1e);
+  - the site's block is in no loop of the function's graph. Each site then has at most one box
+    alive at a time, so one storage slot per site suffices.
+- **The flow set** `F` of a site is the set of locals that may hold its box: `R` itself, and every
+  whole local assigned (moved or copied) from a place rooted in `F` whose type is the box type or
+  `R`'s result type. That includes the unpacked `Ok` payload and copies of the result. The
+  analysis iterates until `F` stops growing.
+- **Escapes.** The box stays on the heap, with the first reason found, if:
+  1. a local in `F` has more than one definition. Its drops could then see a box from elsewhere;
+  2. a value of the box type or of `R`'s type, read from a place rooted in `F`, flows anywhere
+     but into a local of `F`: a call or built-in argument, an aggregate, a return, or a
+     non-local place (rule 1b);
+  3. a place rooted in `F` of the box type is borrowed **mutably** (`borrow mut Box<T>`). The
+     borrower could replace the box, and drop ours with the heap's drop glue. Borrowing the box
+     shared, or borrowing its contents either way, is fine: the borrow checker ends those
+     borrows before the box's drop;
+  4. a `Drop` destroys a place rooted in `F` that is neither a whole local of the box type nor
+     inside its contents. Destroying contents in place is fine: drop elaboration does that to
+     the fields left after a move out. A result holding the box, though, would be destroyed by
+     the heap's drop glue. A result *may* be destroyed where it cannot hold the box: in a block
+     dominated by a non-`Ok` target of a switch on that result's own discriminant, where the target
+     is entered only from the switch. That is the error path of `?` and `!`, whose drop glue sees
+     an `Err`.
+
+  Reads through the box (`b.f`, `b.f = x`, moving a field out) and `discriminant` of the result
+  are not escapes. Rule 1c (unsafe and FFI) has nothing to check before M8. Rule 1a (created and
+  dropped in one function) follows from rules 2 and 4.
+- **Demotion.** A stack-placed site writes `v` into a per-site slot of the function's frame and
+  makes `Ok(&slot)` without allocating; that allocation cannot fail.
+  - A `Drop` of a box local in `F` destroys the contents only, and does not free.
+  - A `BoxFree` of one does nothing.
+  - Drops therefore run at the same NIR points with the same contents (rule 3).
+
 ## 6. No-GC baseline and cycles
 
 No tracing GC, no implicit RC. Ownership is a forest (H3). Graph-shaped data

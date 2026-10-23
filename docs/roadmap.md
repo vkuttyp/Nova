@@ -23,7 +23,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **M3** ✅ 2026-10-22 Safe heap (ADR 0003: built-in `Result`/`Box`/allocators) | `Allocator`, `SystemHeap`, `Box`, `AllocError`, `Result`/`?`, `FailingAllocator`, recursive types, iterative drops | Fault-injection sweep: for every test that allocates *n* times, run with failure at each *k ≤ n*; no leaks/double frees under ASan. Ex4, Ex5, Ex11, Ex14 pass |
 | **C2** ✅ 2026-10-22 Safe allocation in CosmoOS ([report](cosmoos/c2-report.md)) | M2+M3 features in Profile A | Allocation, destruction and fault-injection tests pass inside QEMU on both arches |
 | **M4** ✅ 2026-10-22 Regions (ADR 0004) | `Arena`, `Scratch`, `FixedBufferAllocator`, `Pool` | Compile-fail: every arena-escape form (return, store in Box, outlive via `reset`/drop). Run tests for bulk release. R2 enforced |
-| **M5** Escape/placement analysis | CFG analysis, classification, `--explain-allocations`, Box→stack demotion | Optimised vs unoptimised outputs equal on the whole run-pass corpus. Drop timing identical (instrumented). Report snapshots. No program accepted only because of placement |
+| **M5** ✅ 2026-10-23 Escape/placement analysis ([milestone-5.md](milestone-5.md)) | CFG analysis, classification, `--explain-allocations`, Box→stack demotion | Optimised vs unoptimised outputs equal on the whole run-pass corpus. Drop timing identical (instrumented). Report snapshots. No program accepted only because of placement |
 | **M6** ✅ 2026-10-23 Generics & collections (ADR 0005) | Monomorphisation, interfaces, `Vector`, `String`, `StringView`, `StableVector`, `SlotMap`, iterators. OD-3 design | Invalidation compile-fail tests. Property tests of collections against a model. Ex9, Ex10, Ex12, Ex13 |
 | **C3** ✅ 2026-10-23 Collections & syscalls ([report](cosmoos/c3-report.md)) | Files, sockets, processes in Profile A; a useful utility (candidate: a `wc`/`sha256sum`-class tool or a hexdump) | The utility runs in QEMU on both arches, with output compared to the C/BusyBox equivalent on a test corpus |
 | **M7** Production C backend ([plan](milestone-7.md); 7a source maps, 7b structured C, 7c interpreter, 7d generator ✅ 2026-10-23) | Source maps, structured C, Csmith-style fuzzer, NIR reference interpreter, MSVC best-effort | 24 h fuzz campaign with no miscompile across clang/gcc × O0/O2. Interpreter agrees with native output |
@@ -100,6 +100,7 @@ uses of ended or uninitialised memory.
 C name collision with the runtime, a borrow-checker false positive and four kinds of warnings in
 generated C, all fixed.
 
-Next: **7e** (the 24-hour campaign, MSVC). **M5** (escape and placement analysis) may run in
-parallel. In parallel, when the owner wants it: propose the
+Next: **7e** (the 24-hour campaign, MSVC; MSVC done, campaign running). **M5**, escape and placement
+analysis, was done in parallel (2026-10-23; `milestone-5.md`): non-escaping `SystemHeap` boxes on the
+stack with `--placement`, `--explain-allocations`, equal outputs and identical drop traces. In parallel, when the owner wants it: propose the
 S1 in-tree port for C1 (OD-20).

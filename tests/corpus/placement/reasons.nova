@@ -1,0 +1,53 @@
+// --explain-allocations (memory-model.md §5.1): one site for each reason a box stays on the heap,
+// and the boxes that move to the stack.
+struct Pair { a: i32; b: i32; }
+struct Holder { inner: Box<i32>; }
+struct Noisy { id: i32; drop { Console.writeLine(this.id); } }
+struct Two { first: Noisy; second: Noisy; }
+
+fn consume(b: Box<i32>) -> i32 { return b; }
+fn grow(r: borrow mut Box<i32>) { r = Box.create(9)!; }
+fn read(r: borrow Box<i32>) -> i32 { return r; }
+fn make() -> Box<i32> {
+    let b = Box.create(1)!;
+    return b;                                     // returned
+}
+
+fn viaQuestion() -> Result<i32, AllocError> {
+    let q = Box.create(20)?;                     // stack: `?`'s error path destroys only an Err
+    return Ok(q + 1);
+}
+
+fn main() -> i32 {
+    var p = Box.create(Pair { a: 1, b: 2 })!;    // stack: read and written through
+    p.b = p.a + 10;
+    let shared = Box.create(4)!;                 // stack: a shared borrow of the box is fine
+    let seen = read(borrow shared);
+    let failing = Box.createIn(FailingAllocator {}, 3)!; // heap: not placement-transparent
+    let big = Box.create([0u8; 2000])!;          // heap: over the size limit
+    for (i in 0..2) {
+        let each = Box.create(i)!;               // heap: in a loop
+    }
+    var again = Box.create(5)!;                  // heap: assigned twice
+    again = Box.create(6)!;                      // (this one too)
+    let given = Box.create(7)!;                  // heap: moved into a call
+    let used = consume(given);
+    var lent = Box.create(8)!;                   // heap: borrowed mutably as a box
+    grow(mut lent);
+    let held = Holder { inner: Box.create(10)! }; // heap: stored in an aggregate
+    var v = Vector<Box<i32>>.create();
+    v.push(Box.create(11)!)!;                    // heap: passed to a built-in (and vector storage)
+    match (Box.create(12)) {                     // heap: the result may be destroyed holding it
+        Ok(_) => { }
+        Err(_) => { }
+    }
+    let two = Box.create(Two { first: Noisy { id: 1 }, second: Noisy { id: 2 } })!; // stack
+    let first = two.first;                       // a field moved out: the rest is destroyed, nothing freed
+    Console.writeLine(p.b + seen + used + make());
+    Console.writeLine(viaQuestion()!);
+    return 0;
+}
+// expect-stdout: 23
+// expect-stdout: 21
+// expect-stdout: 1
+// expect-stdout: 2

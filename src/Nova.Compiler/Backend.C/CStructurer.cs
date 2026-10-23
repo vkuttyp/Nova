@@ -126,6 +126,11 @@ internal sealed class ControlFlow
 
     public bool IsLoopHeader(NirBlock block) => _loops.ContainsKey(block);
 
+    public IReadOnlyList<NirBlock> PredecessorsOf(NirBlock block) => _predecessors[block];
+
+    /// <summary>Whether the block belongs to a loop (an irreducible graph counts every block as in one).</summary>
+    public bool InLoop(NirBlock block) => !IsReducible || _loops.Values.Any(members => members.Contains(block));
+
     public bool IsBackEdge(NirBlock from, NirBlock to) => Dominates(to, from);
 
     public bool Dominates(NirBlock a, NirBlock b)
