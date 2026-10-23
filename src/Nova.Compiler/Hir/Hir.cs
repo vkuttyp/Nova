@@ -115,6 +115,9 @@ public sealed class HirFunction
     /// <summary>How many instantiations led here (§20.4: at most 64).</summary>
     internal int InstantiationDepth { get; set; }
 
+    /// <summary>Where an instantiation was first written, for N0274 (type-system.md §25.4).</summary>
+    internal (SourceText Source, TextSpan Span)? InstantiationSite { get; set; }
+
     /// <summary>True for a method: its first parameter is the <c>this</c> receiver (type-system.md §12).</summary>
     public bool IsMethod => Syntax.Receiver is not null && Owner is not null;
 
@@ -125,6 +128,12 @@ public sealed class HirFunction
     /// parameters the result may be derived from (lifetimes.md §7). Empty otherwise.
     /// </summary>
     public ImmutableArray<int> ReturnSources { get; internal set; } = [];
+
+    /// <summary>
+    /// Parameter flows into <c>borrow mut</c> parameters (type-system.md §25.6): <c>(Target, Source)</c> means the
+    /// callee may store the loans of parameter <c>Source</c> in what parameter <c>Target</c> refers to.
+    /// </summary>
+    public ImmutableArray<(int Target, int Source)> MutableFlows { get; internal set; } = [];
 
     public int Id { get; }
 

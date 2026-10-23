@@ -55,8 +55,19 @@ internal sealed class BorrowChecker
         checker.CheckReturns();
     }
 
-    /// <summary>A local of a scoped type: a reference, a slice, or a scoped result (type-system.md §19.1).</summary>
-    private static bool IsReference(NirLocal local) => TypeTable.IsScoped(local.Type);
+    /// <summary>
+    /// A local that may hold loans: of a scoped type (type-system.md §19.1, §25.3), or in generic code of a type
+    /// that mentions a type parameter (§25.7 rule 5).
+    /// </summary>
+    private static bool IsReference(NirLocal local) => TypeChecker.MayHoldLoans(local.Type);
+
+    /// <summary>
+    /// A write of a value that may hold loans through the reference (or reference-holding value) <see cref="Holder"/>
+    /// (type-system.md §25.7 rules 2–4): the loans also reach what the holder's mutable loans point to.
+    /// </summary>
+    private sealed record ThroughWrite(NirLocal Holder, ImmutableArray<NirLocal> Sources, bool Shared, TextSpan Span);
+
+    private readonly List<ThroughWrite> _throughWrites = [];
 
     private HashSet<int> LoansOf(NirLocal local)
     {
@@ -89,6 +100,7 @@ internal sealed class BorrowChecker
         {
             for (var i = 0; i < block.Statements.Count; i++)
             {
+                CollectWrites(block.Statements[i], edges);
                 if (block.Statements[i] is NirUnpack unpack && IsReference(unpack.Source.Local))
                 {
                     // The payloads of a scoped result carry its loans (lifetimes.md §3, M4a).
@@ -138,8 +150,11 @@ internal sealed class BorrowChecker
                         // the `Err(AllocError)` payload of a scoped result does not.
                         // A region allocation borrows only from its region (argument 0), not from a frame's
                         // allocation right, which it needs for the call only (type-system.md §19.5).
-                        var sources = assign.Value is NirBuiltin { Function: BuiltinFunction.ArenaAlloc or BuiltinFunction.ArenaAllocArray } allocation
-                            ? [allocation.Arguments[0]]
+                        // The allocated value's loans are the allocation's too (§25.4).
+                        var sources = assign.Value is NirBuiltin { Function: BuiltinFunction.ArenaAlloc } alloc
+                            ? [alloc.Arguments[0], alloc.Arguments[1]]
+                            : assign.Value is NirBuiltin { Function: BuiltinFunction.ArenaAllocArray } array
+                            ? [array.Arguments[0]]
                             : MoveData.Operands(assign.Value);
                         foreach (var operand in sources.OfType<NirPlaceOperand>()
                                      .Where(o => IsReference(o.Place.Local) && (TypeTable.IsScoped(o.Type) || DerefsReference(o.Place))))
@@ -151,6 +166,37 @@ internal sealed class BorrowChecker
             }
         }
 
+        // Writes through references reach what the references' loans point to, which depends on the loans
+        // computed so far: iterate until nothing changes (§25.7 rule 2).
+        var known = new HashSet<(NirLocal, NirLocal)>(edges);
+        while (true)
+        {
+            Propagate(edges);
+            var added = false;
+            foreach (var write in _throughWrites)
+            {
+                foreach (var loan in LoansOf(write.Holder).Select(id => _loans[id]).Where(l => l.Place is not null && (l.IsMutable || write.Shared)))
+                {
+                    foreach (var source in write.Sources)
+                    {
+                        if (known.Add((source, loan.Place!.Local)))
+                        {
+                            edges.Add((source, loan.Place.Local));
+                            added = true;
+                        }
+                    }
+                }
+            }
+            if (!added)
+            {
+                break;
+            }
+        }
+        CheckParameterWrites();
+    }
+
+    private void Propagate(List<(NirLocal From, NirLocal To)> edges)
+    {
         var changed = true;
         while (changed)
         {
@@ -160,6 +206,108 @@ internal sealed class BorrowChecker
                 var before = LoansOf(to).Count;
                 LoansOf(to).UnionWith(LoansOf(from));
                 changed |= LoansOf(to).Count != before;
+            }
+        }
+    }
+
+    /// <summary>The loan-carrying locals an operand list reads.</summary>
+    private static ImmutableArray<NirLocal> Carriers(IEnumerable<NirOperand> operands) =>
+        [.. operands.OfType<NirPlaceOperand>().Select(o => o.Place.Local).Where(IsReference).Distinct()];
+
+    /// <summary>
+    /// Writes that store loans somewhere other than a fresh local (type-system.md §25.7 rules 1–4): into a place of
+    /// a local, through a reference, into a collection, or into a <c>borrow mut</c> argument of a call.
+    /// </summary>
+    private void CollectWrites(NirStatement statement, List<(NirLocal From, NirLocal To)> edges)
+    {
+        var (value, span) = statement switch
+        {
+            NirAssign a => (a.Value, a.Span),
+            NirEval e => (e.Value, e.Span),
+            _ => (null, default),
+        };
+        if (value is null)
+        {
+            return;
+        }
+        void Write(NirLocal holder, ImmutableArray<NirLocal> sources, bool throughReference, bool shared)
+        {
+            if (sources.IsEmpty)
+            {
+                return;
+            }
+            foreach (var source in sources)
+            {
+                edges.Add((source, holder));
+            }
+            if (throughReference)
+            {
+                _throughWrites.Add(new ThroughWrite(holder, sources, shared, span));
+            }
+        }
+        // Rule 1/2: a value stored into a place that is not a whole local.
+        if (statement is NirAssign { Target.IsLocal: false } store && TypeChecker.MayHoldLoans(store.Target.Type))
+        {
+            Write(store.Target.Local, Carriers(MoveData.Operands(store.Value)), DerefsReference(store.Target), shared: false);
+        }
+        switch (value)
+        {
+            // Rule 3: collection writes store their argument through the receiver.
+            case NirBuiltin { Function: BuiltinFunction.VectorPush or BuiltinFunction.SlotMapInsert or BuiltinFunction.StableVectorPush } push
+                when push.Arguments[0] is NirPlaceOperand receiver:
+                Write(receiver.Place.Local, Carriers([push.Arguments[1]]), throughReference: true,
+                    shared: push.Function == BuiltinFunction.StableVectorPush);
+                break;
+            // Rule 4: a call may store an argument's loans through a `borrow mut` argument (§25.6 flows).
+            case NirCall call:
+                foreach (var (target, source) in call.Callee.MutableFlows)
+                {
+                    if (target < call.Arguments.Length && source < call.Arguments.Length && call.Arguments[target] is NirPlaceOperand receiver)
+                    {
+                        Write(receiver.Place.Local, Carriers([call.Arguments[source]]), throughReference: true, shared: false);
+                    }
+                }
+                break;
+        }
+    }
+
+    /// <summary>
+    /// N0272 (§25.7 rule 2): a write that reaches memory a <c>borrow mut</c> parameter refers to may only store
+    /// loans of parameters that the signature lets flow into that parameter.
+    /// </summary>
+    private void CheckParameterWrites()
+    {
+        var flows = _function.Source.MutableFlows;
+        foreach (var write in _throughWrites)
+        {
+            var targets = LoansOf(write.Holder).Select(id => _loans[id])
+                .Where(l => l.IsMutable || write.Shared)
+                .Select(l => l.Place is null ? l.ParameterIndex : DerefOfParameter(l.Place))
+                .Where(p => p >= 0 && _function.Locals[p].Type.IsMutableReference)
+                .Distinct().ToList();
+            if (targets.Count == 0)
+            {
+                continue;
+            }
+            var stored = write.Sources.SelectMany(LoansOf).Distinct().Select(id => _loans[id]).ToList();
+            foreach (var target in targets)
+            {
+                var foreign = stored.FirstOrDefault(l =>
+                {
+                    var from = l.Place is null ? l.ParameterIndex : DerefOfParameter(l.Place);
+                    return from < 0 || !flows.Contains((target, from));
+                });
+                if (foreign is not null)
+                {
+                    var name = _function.Locals[target].Name is { } n ? _symbols.GetName(n) : "?";
+                    var origin = foreign.Place is null
+                        ? $"parameter '{(_function.Locals[foreign.ParameterIndex].Name is { } p ? _symbols.GetName(p) : "?")}'"
+                        : Quoted(foreign.Place);
+                    _diagnostics.Error(DiagnosticCodes.ForeignLoanStored, _source, write.Span,
+                        $"this stores a value borrowed from {origin} into what '{name}' refers to, which outlives this call; the signature must let it flow there, e.g. with a shared region: 'fn f<region r>({name}: borrow mut X<r>, v: Y<r>)' (type-system.md §25.6)",
+                        foreign.Place is null ? [] : [new DiagnosticNote(foreign.Span, "borrowed here")]);
+                    break;
+                }
             }
         }
     }
@@ -244,7 +392,8 @@ internal sealed class BorrowChecker
 
     /// <summary>Reference locals read by a place (its root, if it is a reference).</summary>
     private static IEnumerable<NirLocal> Uses(IEnumerable<(AccessKind Kind, NirPlace Place)> accesses) =>
-        accesses.Where(a => a.Kind != AccessKind.Dead && IsReference(a.Place.Local)
+        accesses.Where(a => IsReference(a.Place.Local)
+                            && (a.Kind != AccessKind.Dead || TypeTable.DropReadsLoans(a.Place.Local.Type)) // §25.7 rule 6
                             && !(a.Kind == AccessKind.Write && a.Place.IsLocal))
                 .Select(a => a.Place.Local);
 
@@ -323,11 +472,11 @@ internal sealed class BorrowChecker
                     : TerminatorAccesses(block.Terminator!).ToList();
                 var span = i < block.Statements.Count ? block.Statements[i].Span : block.Terminator!.Span;
                 var created = _loanAt.GetValueOrDefault((block, i));
-                var liveLoans = LiveLoans(live[i], created);
+                var liveLoans = LiveLoans(live[i], created, block, i);
                 // An assignment writes its target after the value is computed: loans only used by the
                 // value (`a[0] = sum(a[..])`) have ended by then, so the write is judged after the statement.
                 var write = i < block.Statements.Count && block.Statements[i] is NirAssign ? accesses[^1] : default;
-                var liveAfterLoans = write.Place is null ? liveLoans : LiveLoans(live[i + 1], created);
+                var liveAfterLoans = write.Place is null ? liveLoans : LiveLoans(live[i + 1], created, block, i);
                 foreach (var access in accesses)
                 {
                     var (kind, place) = access;
@@ -346,8 +495,45 @@ internal sealed class BorrowChecker
         }
     }
 
-    private List<Loan> LiveLoans(HashSet<NirLocal> live, Loan? created) =>
-        [.. live.SelectMany(LoansOf).Distinct().Select(id => _loans[id]).Where(l => l.Place is not null && l != created)];
+    private List<Loan> LiveLoans(HashSet<NirLocal> live, Loan? created, NirBlock block, int index) =>
+        [.. live.SelectMany(LoansOf).Distinct().Select(id => _loans[id])
+            .Where(l => l.Place is not null && l != created && Reached(l, block, index))];
+
+    private readonly Dictionary<int, HashSet<NirBlock>> _reachedBlocks = [];
+
+    /// <summary>
+    /// Is position (<paramref name="block"/>, <paramref name="index"/>) reachable from where <paramref name="loan"/> is
+    /// created? A loan does not exist before that, even in a holder that is live there (type-system.md §25.7: holders
+    /// such as a vector receive loans after they are defined).
+    /// </summary>
+    private bool Reached(Loan loan, NirBlock block, int index)
+    {
+        if (loan.Block is null)
+        {
+            return true;
+        }
+        if (block == loan.Block && index > loan.Index)
+        {
+            return true;
+        }
+        if (!_reachedBlocks.TryGetValue(loan.Id, out var reached))
+        {
+            reached = [];
+            var work = new Queue<NirBlock>(loan.Block.Terminator!.Successors);
+            while (work.TryDequeue(out var next))
+            {
+                if (reached.Add(next))
+                {
+                    foreach (var successor in next.Terminator!.Successors)
+                    {
+                        work.Enqueue(successor);
+                    }
+                }
+            }
+            _reachedBlocks.Add(loan.Id, reached);
+        }
+        return reached.Contains(block);
+    }
 
     /// <summary>Does the place go through a reference? (A box deref does not: the box owns what it points to.)</summary>
     private static bool DerefsReference(NirPlace place)
@@ -437,7 +623,7 @@ internal sealed class BorrowChecker
 
     private void CheckReturns()
     {
-        if (!TypeTable.IsScoped(_function.ReturnType))
+        if (!TypeChecker.MayHoldLoans(_function.ReturnType))
         {
             return;
         }

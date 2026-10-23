@@ -864,7 +864,51 @@ public sealed class TypeTable
         ArgumentNullException.ThrowIfNull(type);
         return type.IsReference || type.IsPoolBox || type.Region is RegionKind.FixedBuffer or RegionKind.ScratchFrame
             || (type.Enum?.ResultTypes is var (ok, err) && (IsScoped(ok) || IsScoped(err)))
-            || (type.Enum?.OptionType is { } value && IsScoped(value));
+            || (type.Enum?.OptionType is { } value && IsScoped(value))
+            // §25.3: region parameters, scoped type arguments, scoped collection elements.
+            || (type.Struct is { } s && (!s.Syntax.RegionParameters.IsEmpty || s.TypeArguments.Any(IsScoped)))
+            || (type.Enum is { Syntax: { } e } definition && (!e.RegionParameters.IsEmpty || definition.TypeArguments.Any(IsScoped)))
+            || (type.Kind is TypeKind.Vector or TypeKind.StableVector && IsScoped(type.Pointee!.Element!))
+            || (type.Kind == TypeKind.SlotMap && IsScoped(type.Element!));
+    }
+
+    /// <summary>
+    /// Can destroying a value of <paramref name="type"/> read the loans it holds (type-system.md §25.7 rule 6)? Only
+    /// a user <c>drop</c> block of a scoped struct can, directly or inside the value (fields, payloads, elements).
+    /// </summary>
+    public static bool DropReadsLoans(NovaType type) => DropReadsLoans(type, []);
+
+    private static bool DropReadsLoans(NovaType type, HashSet<NovaType> visiting)
+    {
+        if (!IsScoped(type) || !NeedsDrop(type) || !visiting.Add(type))
+        {
+            return false;
+        }
+        return type switch
+        {
+            { Struct: { } s } => s.DropFunction is not null || s.Fields.Any(f => DropReadsLoans(f.Type, visiting)),
+            { Enum: { } e } => e.Variants.Any(v => v.Payload.Any(f => DropReadsLoans(f.Type, visiting))),
+            { Kind: TypeKind.Vector or TypeKind.StableVector } => DropReadsLoans(type.Pointee!.Element!, visiting),
+            { Kind: TypeKind.SlotMap } => DropReadsLoans(type.Element!, visiting),
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Does a value of <paramref name="type"/> contain a scoped region value (a fixed-buffer allocator, a
+    /// scratch frame) or a pool box? Those stay out of fields, collections and type arguments even
+    /// where other scoped values may go (type-system.md §25.4): they must stay pinned or LIFO.
+    /// </summary>
+    public static bool HoldsRegionValue(NovaType type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        return type.Region is RegionKind.FixedBuffer or RegionKind.ScratchFrame || type.IsPoolBox
+            || (type.Enum?.ResultTypes is var (ok, err) && (HoldsRegionValue(ok) || HoldsRegionValue(err)))
+            || (type.Enum?.OptionType is { } value && HoldsRegionValue(value))
+            || (type.Struct?.TypeArguments.Any(HoldsRegionValue) ?? false)
+            || (type.Enum?.TypeArguments.Any(HoldsRegionValue) ?? false)
+            || (type.Kind is TypeKind.Vector or TypeKind.StableVector && HoldsRegionValue(type.Pointee!.Element!))
+            || (type.Kind == TypeKind.SlotMap && HoldsRegionValue(type.Element!));
     }
 
     /// <summary>Is every value of <paramref name="from"/> representable in <paramref name="to"/>? (type-system.md §7)</summary>

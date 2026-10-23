@@ -4,7 +4,7 @@ struct Res { id: i32; drop { } }
 enum Holder { One(Res) }
 enum Dup { A, A } // error[N0228]
 enum Loop { Next(Loop) } // error[N0227]
-enum HasRef { R(borrow i64) } // error[N0246]
+enum HasRef { R(borrow i64) } // error[N0270]
 fn f(s: Shape, n: i32, b: bool, h: Holder) {
     match (s) { Shape.Empty => { } Shape.Circle(r) => { } } // error[N0256]
     match (s) { _ => { } Shape.Empty => { } } // error[N0257]

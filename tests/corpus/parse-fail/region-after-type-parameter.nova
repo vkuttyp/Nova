@@ -1,0 +1,1 @@
+struct Late<T, region r> { v: T; } // error[N0100]

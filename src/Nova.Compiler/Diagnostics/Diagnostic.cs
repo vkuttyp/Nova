@@ -107,6 +107,12 @@ public static class DiagnosticCodes
     public const string ImplMismatch = "N0267";
     public const string BoundNotSatisfied = "N0268";
 
+    // Region parameters (type-system.md §25): N0270-N0279
+    public const string ScopedFieldNeedsRegion = "N0270";
+    public const string ForeignLoanStored = "N0272";
+    public const string UnknownRegion = "N0273";
+    public const string ScopedTypeArgument = "N0274";
+
     // Build: N0300-N0399
     public const string MissingMain = "N0300";
 }

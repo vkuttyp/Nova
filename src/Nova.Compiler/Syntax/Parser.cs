@@ -308,7 +308,8 @@ public sealed class Parser
 
         return new FunctionDecl(visibility, name, receiver, parameters.ToImmutable(), returnType, body, expressionBody, SpanFrom(start))
         {
-            TypeParameters = typeParameters,
+            TypeParameters = [.. typeParameters.Where(p => !p.IsRegion)],
+            RegionParameters = [.. typeParameters.Where(p => p.IsRegion)],
         };
     }
 
@@ -389,7 +390,8 @@ public sealed class Parser
         return new StructDecl(visibility, name, fields.ToImmutable(), functions.ToImmutable(), SpanFrom(start))
         {
             Drop = drop,
-            TypeParameters = typeParameters,
+            TypeParameters = [.. typeParameters.Where(p => !p.IsRegion)],
+            RegionParameters = [.. typeParameters.Where(p => p.IsRegion)],
         };
     }
 
@@ -408,7 +410,11 @@ public sealed class Parser
         }
         _parsingSignatures = false;
         Expect(TokenKind.CloseBrace);
-        return new InterfaceDecl(visibility, name, methods.ToImmutable(), SpanFrom(start)) { TypeParameters = typeParameters };
+        foreach (var region in typeParameters.Where(p => p.IsRegion))
+        {
+            Error(DiagnosticCodes.Unsupported, region.Span, "interfaces cannot have region parameters");
+        }
+        return new InterfaceDecl(visibility, name, methods.ToImmutable(), SpanFrom(start)) { TypeParameters = [.. typeParameters.Where(p => !p.IsRegion)] };
     }
 
     /// <summary><c>impl I for T { fn … }</c> (type-system.md §21.1).</summary>
@@ -464,7 +470,11 @@ public sealed class Parser
             }
         }
         Expect(TokenKind.CloseBrace);
-        return new EnumDecl(visibility, name, variants.ToImmutable(), SpanFrom(start)) { TypeParameters = typeParameters };
+        return new EnumDecl(visibility, name, variants.ToImmutable(), SpanFrom(start))
+        {
+            TypeParameters = [.. typeParameters.Where(p => !p.IsRegion)],
+            RegionParameters = [.. typeParameters.Where(p => p.IsRegion)],
+        };
     }
 
     /// <summary>Recovery inside a struct body (grammar.md §3): skip to the next member start or the closing brace.</summary>
@@ -569,9 +579,9 @@ public sealed class Parser
                 var builder = ImmutableArray.CreateBuilder<Identifier>();
                 do
                 {
-                    // `this` may be named as a source too.
-                    builder.Add(At(TokenKind.ThisKeyword)
-                        ? new Identifier(_symbols.Intern("this"), Advance().Span)
+                    // `this` may be named as a source too, and `static` as a region (§25.2).
+                    builder.Add(At(TokenKind.ThisKeyword) ? new Identifier(_symbols.Intern("this"), Advance().Span)
+                        : At(TokenKind.StaticKeyword) ? new Identifier(_symbols.Intern("static"), Advance().Span)
                         : ParseIdentifier());
                 }
                 while (Eat(TokenKind.Comma));
@@ -589,6 +599,13 @@ public sealed class Parser
             var length = ParsePrimary();
             Expect(TokenKind.CloseBracket);
             return new ArrayType(element, length, SpanFrom(start));
+        }
+        if (At(TokenKind.StaticKeyword))
+        {
+            // The region `static` as a region argument (type-system.md §25.2).
+            var token = Advance();
+            var identifier = new Identifier(_symbols.Intern("static"), token.Span);
+            return new NamedType(new QualifiedName([identifier], token.Span), token.Span);
         }
         if (At(TokenKind.Identifier))
         {
@@ -1256,6 +1273,18 @@ public sealed class Parser
         do
         {
             var start = Current.Span.Start;
+            var afterTypeParameter = parameters.Any(p => !p.IsRegion);
+            // `region r` declares a region (type-system.md §25.1); `region` alone is an ordinary name.
+            var isRegion = At(TokenKind.Identifier) && Peek(1).Kind == TokenKind.Identifier
+                && _symbols.GetName(new Symbol(Current.Data)) == "region";
+            if (isRegion)
+            {
+                if (afterTypeParameter)
+                {
+                    Error(DiagnosticCodes.ExpectedToken, Current.Span, "region parameters come before type parameters (type-system.md §25.1)");
+                }
+                Advance();
+            }
             var name = ParseIdentifier();
             var bounds = ImmutableArray.CreateBuilder<TypeSyntax>();
             if (Eat(TokenKind.Colon))
@@ -1266,7 +1295,7 @@ public sealed class Parser
                 }
                 while (Eat(TokenKind.Plus));
             }
-            parameters.Add(new TypeParameter(name, bounds.ToImmutable(), SpanFrom(start)));
+            parameters.Add(new TypeParameter(name, bounds.ToImmutable(), SpanFrom(start)) { IsRegion = isRegion });
         }
         while (Eat(TokenKind.Comma));
         Expect(TokenKind.Greater);

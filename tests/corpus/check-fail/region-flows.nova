@@ -1,0 +1,121 @@
+// Borrow checking with region parameters (type-system.md §25.7): one loan set per value.
+struct Token<region src> { text: StringView<src>; }
+struct Logger<region r> { name: StringView<r>; drop { Console.writeLine(this.name); } }
+struct Node<region a> { value: i32; next: borrow(a) Node<a>?; }
+struct Pair<T> { first: T; second: T; }
+
+fn makeString() -> String { var s = String.create(); s.append("xy")!; return s; }
+fn store<region r>(out: borrow mut Vector<StringView<r>>, text: StringView<r>) { out.push(text)!; }
+fn keep<T>(out: borrow mut Vector<T>, x: T) { out.push(x)!; }
+
+// Rule 1: a value stored in a field or element of a local.
+fn fieldWrite() {
+    var s = makeString();
+    var t = Token { text: "" };
+    t.text = s.view();
+    s.append("z")!; // error[N0241]
+    Console.writeLine(t.text);
+}
+
+fn constructed() {
+    var s = makeString();
+    let t = Token { text: s.view() };
+    s.clear(); // error[N0241]
+    Console.writeLine(t.text);
+}
+
+// Rule 2: through a reference, the loans reach what it refers to.
+fn throughReference() {
+    var s = makeString();
+    var t = Token { text: "" };
+    let r = borrow mut t;
+    r.text = s.view();
+    s.clear(); // error[N0241]
+    Console.writeLine(t.text);
+}
+
+fn crossArena(outer: borrow Arena) {
+    let kept = outer.alloc(Node { value: 1, next: null })!;
+    {
+        using inner = Arena.create(SystemHeap {}, 256u64);
+        let temp = inner.alloc(Node { value: 2, next: null })!;
+        kept.next = temp;
+    } // error[N0243]
+    Console.writeLine(kept.next!.value);
+}
+
+// Rule 3: collection writes.
+fn vectorPush() {
+    var s = makeString();
+    var v = Vector<StringView>.create();
+    v.push(s.view())!;
+    s.clear(); // error[N0241]
+    Console.writeLine(v[0]);
+}
+
+fn slotMapInsert() {
+    var s = makeString();
+    var m = SlotMap<StringView>.create();
+    let h = m.insert(s.view())!;
+    s.clear(); // error[N0241]
+    Console.writeLine(m.get(h)!);
+}
+
+fn stablePush() {
+    var s = makeString();
+    let sv = StableVector<StringView>.create();
+    sv.push(s.view())!;
+    s.clear(); // error[N0241]
+    Console.writeLine(sv[0]);
+}
+
+// Rule 4: calls that may store into a `borrow mut` argument (by their flows).
+fn callFlow() {
+    var v = Vector<StringView>.create();
+    var s = makeString();
+    store(mut v, s.view());
+    s.clear(); // error[N0241]
+    Console.writeLine(v[0]);
+}
+
+fn genericCallFlow() {
+    var v = Vector<StringView>.create();
+    {
+        let s = makeString();
+        keep(mut v, s.view());
+    } // error[N0243]
+    Console.writeLine(v[0]);
+}
+
+// N0272: storing into a parameter's memory what the signature does not let flow there.
+fn escapeIntoParameter(out: borrow mut Vector<StringView>) {
+    let s = makeString();
+    out.push(s.view())!; // error[N0272]
+}
+
+fn foreignParameter(out: borrow mut Vector<StringView>, text: StringView) {
+    out.push(text)!; // error[N0272]
+}
+
+fn foreignField<region a>(out: borrow mut Token<a>, other: StringView) {
+    out.text = other; // error[N0272]
+}
+
+// Rule 6: a value whose drop reads its loans must not outlive them.
+fn dropCheck() {
+    var logger = Logger { name: "" };
+    {
+        let s = makeString();
+        logger = Logger { name: s.view() };
+    } // error[N0243]
+}
+
+fn dropCheckInVector() {
+    var loggers = Vector<Logger>.create();
+    {
+        let s = makeString();
+        loggers.push(Logger { name: s.view() })!;
+    } // error[N0243]
+}
+
+fn main() { }

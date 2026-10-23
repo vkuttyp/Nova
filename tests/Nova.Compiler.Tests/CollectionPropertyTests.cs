@@ -17,7 +17,7 @@ public class CollectionPropertyTests
     public static TheoryData<string, int> Cases()
     {
         var data = new TheoryData<string, int>();
-        foreach (var kind in new[] { "vector", "string", "slotmap", "stablevector" })
+        foreach (var kind in new[] { "vector", "string", "slotmap", "stablevector", "views" })
         {
             for (var seed = 1; seed <= 6; seed++)
             {
@@ -55,6 +55,9 @@ public class CollectionPropertyTests
                 break;
             case "slotmap":
                 generator.SlotMap(random);
+                break;
+            case "views":
+                generator.Views(random);
                 break;
             default:
                 generator.StableVector(random);
@@ -256,6 +259,85 @@ public class CollectionPropertyTests
             }
             result.Add(offset);
             return result;
+        }
+
+        /// <summary>
+        /// <c>Vector&lt;StringView&gt;</c> of slices into one <c>String</c> (scoped elements, type-system.md §25). After
+        /// the vector's last use the string is changed, which the borrow checker must allow (its loans have ended).
+        /// </summary>
+        public void Views(Random random)
+        {
+            string[] pieces = ["ab", "é", "日本", "xyz", "ñ", "🙂", "q"];
+            var text = string.Concat(Enumerable.Range(0, 12).Select(_ => pieces[random.Next(pieces.Length)]));
+            Program.Append("fn main() {\n");
+            Line("var text = String.create();");
+            Line($"text.append(\"{text}\")!;");
+            Line("let base = text.view();");
+            Line("var v = Vector<StringView>.create();");
+            var bytes = Encoding.UTF8.GetBytes(text);
+            var boundaries = Boundaries(text);
+            string Slice(out int lo, out int hi)
+            {
+                lo = boundaries[random.Next(boundaries.Count)];
+                hi = boundaries[random.Next(boundaries.Count)];
+                (lo, hi) = (Math.Min(lo, hi), Math.Max(lo, hi));
+                return Encoding.UTF8.GetString(bytes, lo, hi - lo);
+            }
+            var model = new List<string>();
+            for (var op = 0; op < Operations; op++)
+            {
+                var choice = random.Next(100);
+                if (choice < 40 || model.Count == 0 && choice < 60)
+                {
+                    model.Add(Slice(out var lo, out var hi));
+                    Line($"v.push(base[{lo}..{hi}])!;");
+                }
+                else if (choice < 55 && model.Count > 0)
+                {
+                    var i = random.Next(model.Count);
+                    Line($"Console.writeLine(v[{i}]);");
+                    Expect(model[i]);
+                }
+                else if (choice < 65 && model.Count > 0)
+                {
+                    var i = random.Next(model.Count);
+                    model[i] = Slice(out var lo, out var hi);
+                    Line($"v[{i}] = base[{lo}..{hi}];");
+                }
+                else if (choice < 75)
+                {
+                    if (model.Count == 0)
+                    {
+                        Line("Console.writeLine(v.pop() == null);");
+                        Expect("true");
+                    }
+                    else
+                    {
+                        Line("Console.writeLine(v.pop()!);");
+                        Expect(model[^1]);
+                        model.RemoveAt(model.Count - 1);
+                    }
+                }
+                else if (choice < 85)
+                {
+                    Line("Console.writeLine(v.length);");
+                    Expect(model.Count);
+                }
+                else
+                {
+                    var name = Fresh("t");
+                    Line($"var {name}: usize = 0;");
+                    Line($"for (part in v) {{ {name} += part.length; }}");
+                    Line($"Console.writeLine({name});");
+                    Expect(model.Sum(m => Encoding.UTF8.GetByteCount(m)));
+                }
+            }
+            Line("Console.writeLine(v.length);");
+            Expect(model.Count);
+            Line("text.clear(); // the vector and its views are dead here");
+            Line("Console.writeLine(text.length);");
+            Expect(0);
+            Program.Append("}\n");
         }
 
         /// <summary><c>SlotMap&lt;i32&gt;</c> with every handle kept in a vector, including stale ones.</summary>

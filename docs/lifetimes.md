@@ -152,8 +152,13 @@ reference local used after the statement, the `Dead` access conflicts with the l
 
 ## 8. What the v0 checker deliberately does not do
 
-- No references in aggregates, and no reference re-pointing. Both are rejected by type rules.
-  Relaxing them requires region variables on types (OD-3; designed in `od3-design.md`).
+- No references in aggregates, and no reference re-pointing — **relaxed in M6x** (OD-3,
+  `type-system.md` §25): aggregates with region parameters, scoped collections and re-pointable
+  reference fields. The checker keeps one loan set per value; writes into fields, elements and
+  through references add the written loans to the holder and to what its mutable loans point to
+  (iterated to a fixpoint); calls apply their signature flows; and a loan conflicts only at points
+  reachable from where it was created (holders such as a vector receive loans after their own
+  definition). Destroying a value whose `drop` may read its loans is a use of them.
 - Index-sensitive disjointness (`a[i]` versus `a[j]`) comes in 2d with arrays. It will be
   conservative there: all elements overlap.
 - Moves and drops are 2c. The `StorageDead` points emitted now are where drops will go.

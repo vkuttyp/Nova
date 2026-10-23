@@ -5,7 +5,7 @@ fn takesSlice(xs: Slice<i32>) { }
 
 fn main() {
     let a = Vector.create(); // error[N0260]
-    let b: Vector<borrow i32> = Vector.create(); // error[N0246]
+    let b: Vector<borrow i32> = Vector.create(); // accepted since M6x: elements may be scoped (type-system.md §25.4)
     let c: Vector<i32, Arena> = Vector.create(); // error[N0263]
     let d: Vector = Vector.create(); // error[N0204]
     let e = Vector<i32>.make(); // error[N0200]

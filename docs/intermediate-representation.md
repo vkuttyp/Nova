@@ -148,6 +148,8 @@ Lowering rules (HIR → NIR, `NirBuilder`):
     a vector, so `sv[i]` is the place `sv.*[i]`; the C backend renders its elements through the
     chunk table. Liveness treats the targets of `Unpack` as definitions (fixed in M6e: a reference
     payload bound by a consuming match used to be live from the function's start).
+  - **Region parameters (M6x).** A loan-carrying value stored into a field or element is lowered
+    into a temporary first, so the borrow checker sees a local whose loans flow into the target.
   - **String views (M6c).** A literal is a constant operand of type `StringView` (no loans); a place
     is needed only when it is spilled into a temporary. `s[lo..hi]` always emits a `RangeCheck`
     with `Text`; `s.bytes()` is a `Cast` to `Slice<u8>` that keeps the view's loans.

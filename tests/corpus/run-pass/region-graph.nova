@@ -1,0 +1,25 @@
+// Nodes allocated in one arena, linked by shared references into the same arena.
+struct Node<region a> { value: i32; next: borrow(a) Node<a>?; }
+
+fn sum<region a>(start: borrow(a) Node<a>) -> i32 {
+    var total = 0;
+    var at: borrow(a) Node<a>? = start;
+    while (at != null) {
+        let node = at!;
+        total += node.value;
+        at = node.next;
+    }
+    return total;
+}
+
+fn main() {
+    using arena = Arena.create(SystemHeap {}, 256u64);
+    let last = arena.alloc(Node { value: 3, next: null })!;
+    let middle = arena.alloc(Node { value: 2, next: last })!;
+    let first = arena.alloc(Node { value: 1, next: middle })!;
+    Console.writeLine(sum(first));
+    first.next = null;                      // re-linking writes through the mutable reference
+    Console.writeLine(sum(first));
+}
+// expect-stdout: 6
+// expect-stdout: 1

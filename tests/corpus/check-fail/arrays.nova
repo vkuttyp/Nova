@@ -3,7 +3,7 @@ struct Res {
     drop { }
 }
 struct Holder {
-    view: Slice<i32>; // error[N0246]
+    view: Slice<i32>; // error[N0270]
     items: [Res; 2]; // error[N0259]
 }
 const TABLE: [i32; 2] = [1, 2]; // error[N0216]

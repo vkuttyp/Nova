@@ -1,0 +1,65 @@
+// Zero-copy tokenizing and field splitting with region parameters (type-system.md §25; milestone-6x.md criterion 3).
+enum Kind { Word, Number }
+struct Token<region src> { kind: Kind; text: StringView<src>; }
+struct Lexer<region src> { input: StringView<src>; position: usize; }
+
+fn isDigit(b: u8) -> bool => b >= 48u8 && b <= 57u8;
+
+fn next<region src>(lexer: borrow mut Lexer<src>) -> Token<src>? {
+    while (lexer.position < lexer.input.length && lexer.input[lexer.position] == 32u8) {
+        lexer.position += 1;
+    }
+    if (lexer.position >= lexer.input.length) { return null; }
+    let start = lexer.position;
+    let digits = isDigit(lexer.input[start]);
+    while (lexer.position < lexer.input.length && lexer.input[lexer.position] != 32u8) {
+        lexer.position += 1;
+    }
+    let kind = if_kind(digits);
+    return Token { kind: kind, text: lexer.input[start..lexer.position] };
+}
+
+fn if_kind(digits: bool) -> Kind {
+    if (digits) { return Kind.Number; }
+    return Kind.Word;
+}
+
+fn split<region r>(line: StringView<r>) -> Result<Vector<StringView<r>>, AllocError> {
+    var out = Vector<StringView<r>>.create();
+    var start: usize = 0;
+    for (i in 0..line.length) {
+        if (line[i] == 44u8) { out.push(line[start..i])?; start = i + 1; }
+    }
+    out.push(line[start..])?;
+    return Ok(out);
+}
+
+fn main() {
+    var lexer = Lexer { input: "let x 42 y7", position: 0 };
+    loop {
+        match (next(mut lexer)) {
+            Some(token) => {
+                match (token.kind) {
+                    Kind.Word => { Console.write("word "); }
+                    Kind.Number => { Console.write("number "); }
+                }
+                Console.writeLine(token.text);
+            }
+            null => { break; }
+        }
+    }
+    var text = String.create();
+    text.append("a,bc,,d")!;
+    let parts = split(text.view())!;
+    Console.writeLine(parts.length);
+    for (part in parts) { Console.writeLine(part); }
+}
+// expect-stdout: word let
+// expect-stdout: word x
+// expect-stdout: number 42
+// expect-stdout: word y7
+// expect-stdout: 4
+// expect-stdout: a
+// expect-stdout: bc
+// expect-stdout: 
+// expect-stdout: d

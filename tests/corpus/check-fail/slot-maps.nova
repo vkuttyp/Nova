@@ -3,8 +3,8 @@ struct Res { id: i32; drop { } }
 
 fn misuse() {
     let a = SlotMap.create(); // error[N0260]
-    let b: SlotMap<borrow i32> = SlotMap.create(); // error[N0246]
-    var c: Handle<borrow i32>; // error[N0246]
+    let b: SlotMap<borrow i32> = SlotMap.create(); // accepted since M6x: elements may be scoped (type-system.md §25.4)
+    var c: Handle<borrow i32>; // accepted since M6x: elements may be scoped (type-system.md §25.4)
     let d: SlotMap<i32, Arena> = SlotMap.create(); // error[N0263]
     let e: Handle = a; // error[N0204]
     let m = SlotMap<i32>.create();

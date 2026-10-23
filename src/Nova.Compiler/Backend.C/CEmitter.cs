@@ -161,7 +161,13 @@ public sealed class CEmitter
     }
 
     /// <summary>Types defined as C structs, which must be defined before a struct containing them by value.</summary>
-    private static bool IsAggregate(NovaType type) => type.Kind is TypeKind.Struct or TypeKind.Enum or TypeKind.Array;
+    /// <summary>
+    /// A type whose C definition must come before a struct that holds it by value: user and built-in aggregates,
+    /// and since M6x the composites a field or payload may now be (slices, collections; type-system.md §25.4).
+    /// </summary>
+    private static bool IsAggregate(NovaType type) =>
+        type.Kind is TypeKind.Struct or TypeKind.Enum or TypeKind.Array or TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap
+        || (type.IsSlice && !type.IsStringView) || type.IsPoolBox;
 
     /// <summary>
     /// <c>[T; N]</c> is <c>struct { T e[N]; }</c>, so arrays are values in C too; a slice is

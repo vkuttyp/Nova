@@ -50,10 +50,17 @@ public sealed record FunctionDecl(
 {
     /// <summary><c>fn f&lt;T, U&gt;</c> (type-system.md §20); empty for a non-generic function.</summary>
     public ImmutableArray<TypeParameter> TypeParameters { get; init; } = [];
+
+    /// <summary>The <c>region</c> parameters, declared before the type parameters (type-system.md §25.1).</summary>
+    public ImmutableArray<TypeParameter> RegionParameters { get; init; } = [];
 }
 
 /// <summary>A type parameter <c>T</c>, with the interface bounds of <c>T: I + J</c> (§21; empty without).</summary>
-public sealed record TypeParameter(Identifier Name, ImmutableArray<TypeSyntax> Bounds, TextSpan Span) : SyntaxNode(Span);
+public sealed record TypeParameter(Identifier Name, ImmutableArray<TypeSyntax> Bounds, TextSpan Span) : SyntaxNode(Span)
+{
+    /// <summary><c>region r</c>: a region parameter (type-system.md §25.1), not a type.</summary>
+    public bool IsRegion { get; init; }
+}
 
 public enum ReceiverKind
 {
@@ -77,6 +84,9 @@ public sealed record StructDecl(
 
     /// <summary><c>struct S&lt;T&gt;</c> (type-system.md §20); empty for a non-generic struct.</summary>
     public ImmutableArray<TypeParameter> TypeParameters { get; init; } = [];
+
+    /// <summary>The <c>region</c> parameters, declared before the type parameters (type-system.md §25.1).</summary>
+    public ImmutableArray<TypeParameter> RegionParameters { get; init; } = [];
 }
 
 public sealed record DropBlock(BlockStmt Body, TextSpan Span) : SyntaxNode(Span);
@@ -89,6 +99,9 @@ public sealed record EnumDecl(
 {
     /// <summary><c>enum E&lt;T&gt;</c> (type-system.md §20); empty for a non-generic enum.</summary>
     public ImmutableArray<TypeParameter> TypeParameters { get; init; } = [];
+
+    /// <summary>The <c>region</c> parameters, declared before the type parameters (type-system.md §25.1).</summary>
+    public ImmutableArray<TypeParameter> RegionParameters { get; init; } = [];
 }
 
 /// <summary><c>interface I&lt;T&gt; { fn m(borrow this) -> R; … }</c> (type-system.md §21.1): signatures only.</summary>

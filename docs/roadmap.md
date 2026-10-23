@@ -79,8 +79,11 @@ corpus and a guest-side fault-injection sweep inside CosmoOS on both arches.
   ([`od3-design.md`](od3-design.md)), done 2026-10-23. **M6 is complete** (acceptance results in
   `milestone-6.md`).
 
-Next, in the order above: **C3** (collections and syscalls in CosmoOS: a useful utility). Before
-it, the owner should decide whether to implement OD-3 first (`od3-design.md` §10; recommended,
-since C3's parsers benefit). **M5** (escape and placement analysis) may run in parallel. **M5** (escape and
+**M6x, region parameters (OD-3), is done** (2026-10-23; `milestone-6x.md`; ADR 0006): references
+in structs, enums, generic instances and collections, checked by signature flows and one loan set
+per value.
+
+Next, in the order above: **C3** (collections and syscalls in CosmoOS: a useful utility). **M5**
+(escape and placement analysis) may run in parallel. **M5** (escape and
 placement analysis) may follow M4 in parallel. In parallel, when the owner wants it: propose the
 S1 in-tree port for C1 (OD-20).

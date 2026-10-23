@@ -1,0 +1,73 @@
+// Programs close to the region rules that must be accepted (type-system.md §25; the M2 near-miss standard).
+struct Token<region src> { text: StringView<src>; }
+struct Logger<region r> { name: StringView<r>; drop { Console.writeLine(this.name); } }
+enum Field<region r> { Text(StringView<r>), Missing }
+struct Pair<T> { first: T; second: T; }
+struct Window<region r> {
+    bytes: Slice<r, u8>;
+    fn first(borrow this) -> u8 => this.bytes[0];
+}
+
+fn makeString(t: StringView) -> String { var s = String.create(); s.append(t)!; return s; }
+fn store<region r>(out: borrow mut Vector<StringView<r>>, text: StringView<r>) { out.push(text)!; }
+fn keep<T>(out: borrow mut Vector<T>, x: T) { out.push(x)!; }
+fn pick<T: Copy>(p: borrow Pair<T>, first: bool) -> T { if (first) { return p.first; } return p.second; }
+fn describe<region r>(f: Field<r>) -> StringView<r> {
+    match (f) {
+        Field.Text(t) => { return t; }
+        Field.Missing => { return "missing"; }
+    }
+}
+fn longest<region r>(a: StringView<r>, b: StringView<r>) -> StringView<r> {
+    if (a.length >= b.length) { return a; }
+    return b;
+}
+
+fn main() {
+    // A token is dead before its string changes.
+    var s = makeString("xy");
+    var t = Token { text: "" };
+    t.text = s.view();
+    Console.writeLine(t.text);
+    s.append("z")!;
+    Console.writeLine(s);
+
+    // Flows by shared region, by type parameter, and of static text.
+    var v = Vector<StringView>.create();
+    store(mut v, s.view());
+    store(mut v, "static");
+    keep(mut v, "generic");
+    Console.writeLine(v.length);
+    let p = Pair { first: v[0], second: v[2] };
+    Console.writeLine(pick(p, false));
+
+    // The logger is declared after the string it borrows, so it is destroyed first.
+    let owner = makeString("logged");
+    let logger = Logger { name: owner.view() };
+
+    // Scoped payloads, slices with regions, methods on region structs, results with two sources.
+    Console.writeLine(describe(Field.Text(s.view())));
+    Console.writeLine(describe(Field.Missing));
+    let w = Window { bytes: s.view().bytes() };
+    Console.writeLine(w.first());
+    Console.writeLine(longest(s.view(), "a much longer text"));
+
+    // Collections of views.
+    var m = SlotMap<StringView>.create();
+    let h = m.insert(s.view())!;
+    Console.writeLine(m.get(h)!);
+    let sv = StableVector<StringView>.create();
+    sv.push("stable")!;
+    Console.writeLine(sv[0]);
+}
+// expect-stdout: xy
+// expect-stdout: xyz
+// expect-stdout: 3
+// expect-stdout: generic
+// expect-stdout: xyz
+// expect-stdout: missing
+// expect-stdout: 120
+// expect-stdout: a much longer text
+// expect-stdout: xyz
+// expect-stdout: stable
+// expect-stdout: logged

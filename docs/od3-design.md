@@ -1,7 +1,7 @@
 # OD-3 design: lifetime-parameterised aggregates
 
-- Status: **design (M6f, 2026-10-23)**, not implemented. It needs an owner decision to schedule the
-  implementation (§9). Until then E3 holds: user structs and enums, and the elements of built-in
+- Status: **accepted (ADR 0006) and implemented in M6x (2026-10-23)** (`milestone-6x.md`). The normative
+  rules are `type-system.md` §25, which refines this design (e.g. regions are erased; N0271 is not used). Until then E3 holds: user structs and enums, and the elements of built-in
   collections, cannot be scoped (`ownership.md` E3/E4, N0246).
 - Normative once accepted: this document, then `ownership.md` E1–E4 and `lifetimes.md` §7–§8 as
   amended by it.

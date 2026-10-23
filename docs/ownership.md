@@ -122,13 +122,16 @@ function. "At point p" means on entry to the NIR statement at p.
   value's region is constrained to be within the named parameter's loan at the call
   site. A function with no borrow parameters cannot return a scoped type, except
   `static` data (string literals, `static let`), which have the `static` region.
-- **E3 — No scoped fields (v0).** User `struct`/`enum` declarations may not
-  contain scoped types in v0. Lifetime-parameterised aggregates
-  (`struct Parser<'src> { input: StringView<'src> }` or similar syntax) are a
-  *future* extension (OD-3).
+- **E3 — Scoped fields only with region parameters.** In v0, user `struct`/`enum`
+  declarations could not contain scoped types. Since M6x (OD-3, ADR 0006) a struct
+  or enum may hold scoped fields if it declares region parameters
+  (`struct Parser<region src> { input: StringView<src> }`), and generic instances
+  with scoped type arguments are scoped themselves (`type-system.md` §25.3–§25.4).
+  Region values and pool boxes still stay in locals.
 - **E4 — No scoped globals or heap.** Scoped values may not be stored in
-  `static`s, `Box`, `Vector`, or any free-standing container. In v0 this follows
-  from E3 and from generic containers requiring free-standing element types.
+  `static`s, constants, `Box`, pools, or arrays. Since M6x, `Vector`,
+  `StableVector`, `SlotMap` and region memory may hold scoped values; the container
+  is then scoped and carries their loans (`type-system.md` §25.4, §25.7).
 
 E1–E4 deliberately trade expressiveness for an implementation of tractable size
 (see "Why not full Rust lifetimes" below).

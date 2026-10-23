@@ -731,6 +731,17 @@ public sealed class NirBuilder
             }
             return;
         }
+        if (!target.IsLocal && TypeChecker.MayHoldLoans(target.Type))
+        {
+            // A loan-carrying value stored into a field or element is made in a temporary first, so its loans
+            // are those of a local that the borrow checker can follow into the target (type-system.md §25.7).
+            if (LowerOperand(value) is { } spilled)
+            {
+                _span = statementSpan;
+                Emit(new NirAssign(target, new NirUse(spilled)));
+            }
+            return;
+        }
         var rvalue = LowerRvalue(value);
         if (rvalue is not null)
         {

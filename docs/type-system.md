@@ -1223,3 +1223,94 @@ fn main() {
   `push` fails with `OutOfMemory`.
 
 Diagnostics: none new. The errors reuse N0205, N0209, N0240–N0251, N0260 and N0263.
+
+## 25. Region parameters (M6x; OD-3, ADR 0006)
+
+```nova
+enum Kind { Word, Number }
+struct Token<region src> { kind: Kind; text: StringView<src>; }
+
+struct Lexer<region src> { input: StringView<src>; position: usize; }
+
+fn next<region src>(lexer: borrow mut Lexer<src>) -> Token<src>? { … }   // the token views the input
+
+fn split<region r>(line: StringView<r>) -> Result<Vector<StringView<r>>, AllocError> { … }
+```
+
+### 25.1 Declaring regions
+- Structs, enums and functions may declare **region parameters** before their type parameters:
+  `struct Lexer<region src, T>`, `fn f<region a, region b, T>(…)`. In a parameter list, `region`
+  followed by a name declares a region; `region` alone is still an ordinary name.
+- A method may use its struct's regions. `static` is the built-in region of static data (string
+  literals); it outlives everything.
+
+### 25.2 Region arguments
+- A type with region parameters takes region arguments first, then its type arguments:
+  `Token<src>`, `Pair<r, i32>`. The built-in scoped types take one region optionally:
+  `StringView<r>`, `Slice<r, T>`, `SliceMut<r, T>`, and references `borrow(r) T`,
+  `borrow mut(r) T`.
+- Region arguments may be **omitted** (all of them, never some): in function bodies they are
+  inferred, in signatures elided (§25.6), and in fields they are simply not checked (regions are
+  erased, §25.5).
+- A written region must be in scope: a region parameter of the enclosing item or function, or
+  `static`. In a function's result, `borrow(p)` may also name a parameter, as in v0 (§13.5).
+  Otherwise, or with the wrong number of arguments: N0273.
+
+### 25.3 Scoped types
+A type is **scoped** (§19.1) iff it is a reference, slice or `StringView`, a scoped region value,
+a `PoolBox`, an optional or result with a scoped part, a struct or enum that declares region
+parameters, an instance of a generic struct or enum with a scoped type argument, or a `Vector`,
+`StableVector` or `SlotMap` with a scoped element. `Handle<T>` is not scoped (it holds no loan).
+
+### 25.4 Where scoped values may be stored
+- **Fields and payloads:** a struct field or enum payload may have a scoped type only if the
+  struct or enum declares at least one region parameter, or the type is a type parameter (its
+  instances are scoped then, §25.3). Otherwise: N0270.
+- **Generic instances:** a user generic type or function may be instantiated with scoped type
+  arguments. If the generic needs an unscoped type there (it boxes `T`, makes an array of `T`, …),
+  the instantiation is rejected where it is written: N0274.
+- **Collections:** `Vector`, `StableVector` and `SlotMap` elements may be scoped; so may the value
+  passed to a region's `alloc`, except a bare reference (N0264: region memory holds values).
+- **Assignment:** assigning to a reference *local* still writes through it (§13.3). Assigning to a
+  field or element of reference type replaces the reference stored there (`token.text = view`).
+- **Still rejected (N0246):** `Box`, `Pool`, statics and constants, array and slice elements, and
+  written references to references. **Region values and pool boxes** (`FixedBufferAllocator`,
+  `ScratchFrame`, `PoolBox<T>`) stay out of every place this section opens up (fields, payloads,
+  collection elements, type arguments of user types): they must stay pinned or LIFO in locals.
+
+### 25.5 Regions are erased
+Regions do not change types: `Token<a>` and `Token<b>` are the same type, and a value's loans are
+one set (ADR 0006). Region arguments matter only for the checks of §25.2–§25.4 and for signatures.
+
+### 25.6 Signatures: flows
+Each parameter and the result of a function have **flow names**:
+- the regions written in their types; `borrow(p)` in the result contributes `p`'s flow names;
+- the type parameters their types mention;
+- for a parameter of scoped type without written regions: a fresh name of its own (elision);
+- for a result of scoped type without written regions: the flow names of the single scoped
+  parameter (v0 elision); with several scoped parameters and none written, N0245 (as in v0).
+
+`static` is never a flow name. A function's **flows** are then:
+- **result ← parameter `i`** iff they share a flow name: the result may carry `i`'s loans (this
+  generalises v0's return sources, §13.5);
+- **parameter `i` ← parameter `j`**, for `i` of type `borrow mut T` whose `T` shares a flow name
+  with `j`: the callee may store `j`'s loans into what `i` refers to.
+
+A v0 signature (no regions) has exactly its v0 return sources and no parameter flows.
+
+### 25.7 Borrow checking (`lifetimes.md` §3)
+With one loan set per value:
+1. Writing a scoped value into a place of a local (a field, an element, a payload) adds its
+   loans to that local.
+2. Writing it through a reference adds its loans to the reference and to what the reference was
+   borrowed from, followed back through reborrows, calls (by their result flows) and region
+   allocation. If that reaches a `borrow mut` parameter `p` of the current function, the value's
+   loans must all come from parameters that flow into `p` (§25.6): otherwise N0272.
+3. `push`, `insert` and `append` write their argument through their receiver (rule 2).
+4. At a call, an argument that flows into a `borrow mut` parameter adds its loans to what that
+   argument refers to.
+5. In generic code, values whose type mentions a type parameter carry loans like scoped values.
+6. Destroying a value that is scoped and needs drop is a use of its loans: its `drop` may read
+   them, so they must still be live (N0243 otherwise).
+
+Diagnostics: N0270, N0272, N0273, N0274 (`diagnostics.md`).

@@ -63,7 +63,7 @@ public sealed class AstPrinter
                 PrintFunction(fn);
                 break;
             case StructDecl s:
-                Line($"(struct {visibility} {Name(s.Name)}{TypeParams(s.TypeParameters)}");
+                Line($"(struct {visibility} {Name(s.Name)}{TypeParams([.. s.RegionParameters, .. s.TypeParameters])}");
                 _indent++;
                 foreach (var field in s.Fields)
                 {
@@ -85,7 +85,7 @@ public sealed class AstPrinter
                 Line(")");
                 break;
             case EnumDecl e:
-                Line($"(enum {visibility} {Name(e.Name)}{TypeParams(e.TypeParameters)}");
+                Line($"(enum {visibility} {Name(e.Name)}{TypeParams([.. e.RegionParameters, .. e.TypeParameters])}");
                 _indent++;
                 foreach (var variant in e.Variants)
                 {
@@ -137,7 +137,7 @@ public sealed class AstPrinter
         }
         var parameters = string.Join(" ", parts);
         var returns = fn.ReturnType is null ? "" : $" (returns {Type(fn.ReturnType)})";
-        Line($"(fn {visibility} {Name(fn.Name)}{TypeParams(fn.TypeParameters)} (params{(parameters.Length > 0 ? " " + parameters : "")}){returns}");
+        Line($"(fn {visibility} {Name(fn.Name)}{TypeParams([.. fn.RegionParameters, .. fn.TypeParameters])} (params{(parameters.Length > 0 ? " " + parameters : "")}){returns}");
         _indent++;
         if (fn.Body is not null)
         {
@@ -324,8 +324,8 @@ public sealed class AstPrinter
 
     /// <summary>` (type-params T (U I J))` for generic declarations; empty otherwise.</summary>
     private string TypeParams(ImmutableArray<TypeParameter> parameters) => parameters.IsEmpty ? "" :
-        " (type-params " + string.Join(" ", parameters.Select(p => p.Bounds.IsEmpty
-            ? Name(p.Name)
+        " (type-params " + string.Join(" ", parameters.Select(p => p.IsRegion ? $"(region {Name(p.Name)})"
+            : p.Bounds.IsEmpty ? Name(p.Name)
             : $"({Name(p.Name)} {string.Join(" ", p.Bounds.Select(Type))})")) + ")";
 
     private string Name(QualifiedName name) => string.Join(".", name.Parts.Select(Name));

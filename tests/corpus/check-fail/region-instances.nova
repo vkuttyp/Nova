@@ -1,0 +1,19 @@
+// N0274 (type-system.md §25.4): a generic used with a scoped type argument where it needs an
+// unscoped one. The same generics with unscoped arguments, and Pair with a scoped one, are fine.
+struct Pair<T> { first: T; second: T; }
+struct Cell<T> { b: Box<T>; }
+fn boxed<T>(v: T) -> Result<Box<T>, AllocError> { return Box.create(v); }
+fn pair<T: Copy>(v: T) -> [T; 2] { return [v, v]; }
+fn makeString() -> String { var s = String.create(); s.append("xy")!; return s; }
+
+fn main() {
+    let s = makeString();
+    let ok = boxed(5)!;
+    let alsoOk = pair(5);
+    let views = Pair { first: s.view(), second: "z" };
+    let b = boxed(s.view()); // error[N0274]
+    let a = pair(s.view()); // error[N0274]
+    let c: Cell<StringView> = Cell { b: Box.create(1)! }; // error[N0274]
+}
+
+

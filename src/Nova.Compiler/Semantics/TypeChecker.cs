@@ -95,6 +95,8 @@ internal sealed class TypeChecker
     private DiagnosticBag _diagnostics;
     /// <summary>Type parameters in scope while resolving types (§20): the current declaration's substitution.</summary>
     private IReadOnlyDictionary<Symbol, NovaType> _typeEnvironment = new Dictionary<Symbol, NovaType>();
+    /// <summary>The region names in scope (§25.1): the current item's region parameters (and its struct's, for a method).</summary>
+    private HashSet<Symbol> _regions = [];
     /// <summary>Set once every item is declared and every member resolved; later instantiations resolve at once.</summary>
     private bool _membersResolved;
     private readonly List<(ImplDecl Decl, SourceText Source)> _impls = [];
@@ -236,7 +238,10 @@ internal sealed class TypeChecker
             var function = _functions[i];
             if (function.IsInstantiation)
             {
-                Quietly(() => { CheckFunctionBody(function); return 0; }); // its generic version reports (§20.3)
+                // Its generic version reports (§20.3); a scoped type argument the body cannot take is N0274.
+                var (site, span) = function.InstantiationSite ?? (function.Source, function.Syntax.Name.Span);
+                CheckInstance(() => { CheckFunctionBody(function); return 0; }, function.TypeArguments,
+                    Name(function.Syntax.Name.Name), site, span);
             }
             else
             {
@@ -368,21 +373,63 @@ internal sealed class TypeChecker
     private HirFunction DeclareFunction(FunctionDecl fn, NovaType? owner, IReadOnlyDictionary<Symbol, NovaType>? environment = null,
         bool register = true)
     {
-        var savedEnvironment = _typeEnvironment;
+        var (savedEnvironment, savedRegions) = (_typeEnvironment, _regions);
         _typeEnvironment = environment ?? new Dictionary<Symbol, NovaType>();
+        _regions = RegionScope(fn, owner);
         try
         {
             return DeclareFunctionCore(fn, owner, register);
         }
         finally
         {
-            _typeEnvironment = savedEnvironment;
+            (_typeEnvironment, _regions) = (savedEnvironment, savedRegions);
         }
     }
+
+    /// <summary>The regions a function may name: its own and, for a method, its struct's (§25.1).</summary>
+    private static HashSet<Symbol> RegionScope(FunctionDecl fn, NovaType? owner) =>
+        [.. fn.RegionParameters.Select(r => r.Name.Name), .. (owner?.Struct?.Syntax.RegionParameters ?? []).Select(r => r.Name.Name)];
+
+    /// <summary>Region parameters are declared once each, and not twice with the same name (§25.1).</summary>
+    private void CheckRegionParameters(ImmutableArray<TypeParameter> regions, ImmutableArray<TypeParameter> types)
+    {
+        var names = new HashSet<Symbol>();
+        foreach (var region in regions)
+        {
+            if (!names.Add(region.Name.Name) || types.Any(t => t.Name.Name == region.Name.Name) || Name(region.Name.Name) == "static")
+            {
+                Error(DiagnosticCodes.DuplicateParameter, region.Name.Span, $"the region name '{Name(region.Name.Name)}' is already used");
+            }
+        }
+    }
+
+    /// <summary>Is <paramref name="syntax"/> a region name in scope (or <c>static</c>)? Reports N0273 if it is a plain name that is not.</summary>
+    private bool CheckRegionArgument(TypeSyntax syntax)
+    {
+        if (syntax is NamedType { Name.Parts.Length: 1 } named
+            && (Name(named.Name.Parts[0].Name) == "static" || _regions.Contains(named.Name.Parts[0].Name)))
+        {
+            return true;
+        }
+        Error(DiagnosticCodes.UnknownRegion, syntax.Span, syntax is NamedType { Name.Parts.Length: 1 } unknown
+            ? $"'{Name(unknown.Name.Parts[0].Name)}' is not a region in scope; declare it with 'region {Name(unknown.Name.Parts[0].Name)}' or use 'static'"
+            : "a region argument must be a region name");
+        return false;
+    }
+
+    private bool IsRegionName(TypeSyntax syntax) =>
+        syntax is NamedType { Name.Parts.Length: 1 } named
+        && (Name(named.Name.Parts[0].Name) == "static" || _regions.Contains(named.Name.Parts[0].Name));
 
     /// <param name="register">False for a signature only (an interface method): checked, never compiled.</param>
     private HirFunction DeclareFunctionCore(FunctionDecl fn, NovaType? owner, bool register)
     {
+        if (owner is not null && !fn.RegionParameters.IsEmpty)
+        {
+            Error(DiagnosticCodes.Unsupported, fn.RegionParameters[0].Span,
+                "methods cannot declare region parameters of their own; use the struct's regions (type-system.md §25.1)");
+        }
+        CheckRegionParameters(fn.RegionParameters, fn.TypeParameters);
         if (owner is not null && !fn.TypeParameters.IsEmpty)
         {
             Error(DiagnosticCodes.Unsupported, fn.TypeParameters[0].Span,
@@ -414,10 +461,7 @@ internal sealed class TypeChecker
             hir.AddLocal(parameter.Name.Name, type, isMutable: false, isParameter: true, parameter.Name.Span);
         }
         hir.Parameters = [.. hir.Locals];
-        if (TypeTable.IsScoped(returnType))
-        {
-            hir.ReturnSources = ResolveReturnSources(fn, hir);
-        }
+        ResolveFlows(fn, hir, owner);
         if (register)
         {
             _functions.Add(hir);
@@ -434,6 +478,147 @@ internal sealed class TypeChecker
         { Enum.OptionType: { } value } => OnlyViews(value),
         _ => false,
     };
+
+    /// <summary>
+    /// The flows of a signature (type-system.md §25.6): which parameters' loans the result may carry (its return
+    /// sources) and which parameters' loans the callee may store through each <c>borrow mut</c> parameter.
+    /// </summary>
+    private void ResolveFlows(FunctionDecl fn, HirFunction hir, NovaType? owner)
+    {
+        var typeParameters = fn.TypeParameters.Select(p => p.Name.Name)
+            .Concat(owner?.Struct?.Syntax.TypeParameters.Select(p => p.Name.Name) ?? []).ToHashSet();
+        var ownerRegions = owner?.Struct?.Syntax.RegionParameters.Select(r => "r:" + Name(r.Name.Name)) ?? [];
+        var receiverOffset = hir.Parameters.Length - fn.Parameters.Length;
+        var names = new List<HashSet<string>>();
+        for (var i = 0; i < hir.Parameters.Length; i++)
+        {
+            var set = new HashSet<string>();
+            if (i < receiverOffset)
+            {
+                set.UnionWith(ownerRegions);
+                set.UnionWith(typeParameters.Where(t => owner!.Struct!.Syntax.TypeParameters.Any(p => p.Name.Name == t)).Select(t => "t:" + Name(t)));
+            }
+            else
+            {
+                CollectFlowNames(fn.Parameters[i - receiverOffset].Type, typeParameters, set, parameterNames: null);
+            }
+            if (TypeTable.IsScoped(hir.Parameters[i].Type) && !set.Any(n => n.StartsWith("r:", StringComparison.Ordinal)))
+            {
+                set.Add($"#{i}"); // elided: a region of its own
+            }
+            names.Add(set);
+        }
+
+        if (MayHoldLoans(hir.ReturnType))
+        {
+            var byName = hir.Parameters.Select((p, i) => (p.Name, i)).ToDictionary(x => x.Name, x => names[x.i]);
+            var resultNames = new HashSet<string>();
+            CollectFlowNames(fn.ReturnType!, typeParameters, resultNames, byName);
+            var sources = Enumerable.Range(0, hir.Parameters.Length).Where(i => names[i].Overlaps(resultNames)).ToHashSet();
+            var named = resultNames.Any(n => n.StartsWith("r:", StringComparison.Ordinal) || n.StartsWith('#'))
+                || (fn.ReturnType is ReferenceType { HasSources: true });
+            if (fn.ReturnType is ReferenceType { HasSources: true } || (TypeTable.IsScoped(hir.ReturnType) && !named))
+            {
+                sources.UnionWith(ResolveReturnSources(fn, hir)); // v0: `borrow(a, b)`, or elision (§13.5)
+            }
+            hir.ReturnSources = [.. sources.Order()];
+        }
+
+        var flows = ImmutableArray.CreateBuilder<(int, int)>();
+        for (var i = 0; i < hir.Parameters.Length; i++)
+        {
+            if (hir.Parameters[i].Type is not { IsMutableReference: true } reference || !MayHoldLoans(reference.Pointee!))
+            {
+                continue;
+            }
+            var target = new HashSet<string>();
+            if (i < receiverOffset)
+            {
+                target.UnionWith(names[i]);
+            }
+            else if (fn.Parameters[i - receiverOffset].Type is ReferenceType { Pointee: var pointee })
+            {
+                CollectFlowNames(pointee, typeParameters, target, parameterNames: null);
+            }
+            target.RemoveWhere(n => n.StartsWith('#'));
+            for (var j = 0; j < hir.Parameters.Length; j++)
+            {
+                if (j != i && names[j].Overlaps(target))
+                {
+                    flows.Add((i, j));
+                }
+            }
+        }
+        hir.MutableFlows = flows.ToImmutable();
+    }
+
+    /// <summary>Can a value of this type carry loans? Scoped types, and in generic code anything mentioning a type parameter (§25.7).</summary>
+    internal static bool MayHoldLoans(NovaType type) => TypeTable.IsScoped(type) || type.IsGeneric;
+
+    /// <summary>
+    /// The flow names a type written in a signature mentions (§25.6): <c>r:name</c> for a region it names (not
+    /// <c>static</c>), <c>t:name</c> for a type parameter. In a result, <c>borrow(p)</c> adds parameter <c>p</c>'s names.
+    /// </summary>
+    private void CollectFlowNames(TypeSyntax syntax, HashSet<Symbol> typeParameters, HashSet<string> names,
+        Dictionary<Symbol, HashSet<string>>? parameterNames)
+    {
+        void Region(TypeSyntax argument)
+        {
+            if (IsRegionName(argument) && argument is NamedType region && Name(region.Name.Parts[0].Name) != "static")
+            {
+                names.Add("r:" + Name(region.Name.Parts[0].Name));
+            }
+        }
+        switch (syntax)
+        {
+            case OptionalType optional:
+                CollectFlowNames(optional.Inner, typeParameters, names, parameterNames);
+                break;
+            case ArrayType array:
+                CollectFlowNames(array.Element, typeParameters, names, parameterNames);
+                break;
+            case ReferenceType reference:
+                foreach (var source in reference.Sources)
+                {
+                    if (parameterNames is not null && parameterNames.TryGetValue(source.Name, out var parameter))
+                    {
+                        names.UnionWith(parameter);
+                    }
+                    else
+                    {
+                        Region(new NamedType(new QualifiedName([source], source.Span), source.Span));
+                    }
+                }
+                CollectFlowNames(reference.Pointee, typeParameters, names, parameterNames);
+                break;
+            case NamedType { Name.Parts.Length: 1 } named when typeParameters.Contains(named.Name.Parts[0].Name):
+                names.Add("t:" + Name(named.Name.Parts[0].Name));
+                break;
+            case GenericType { Name.Parts.Length: 1 } generic:
+            {
+                var text = Name(generic.Name.Parts[0].Name);
+                var regions = _items.GetValueOrDefault(generic.Name.Parts[0].Name) switch
+                {
+                    StructEntry s => s.Decl.RegionParameters.Length,
+                    EnumEntry e => e.Decl.RegionParameters.Length,
+                    _ => text == "StringView" || (text is "Slice" or "SliceMut" && generic.Arguments.Length == 2) ? 1 : 0,
+                };
+                var hasRegions = regions > 0 && generic.Arguments.Length > 0 && IsRegionName(generic.Arguments[0]);
+                for (var i = 0; i < generic.Arguments.Length; i++)
+                {
+                    if (hasRegions && i < regions)
+                    {
+                        Region(generic.Arguments[i]);
+                    }
+                    else
+                    {
+                        CollectFlowNames(generic.Arguments[i], typeParameters, names, parameterNames);
+                    }
+                }
+                break;
+            }
+        }
+    }
 
     /// <summary>The parameters a returned reference may be derived from (type-system.md §13.5, lifetimes.md §7).</summary>
     private ImmutableArray<int> ResolveReturnSources(FunctionDecl fn, HirFunction hir)
@@ -466,6 +651,10 @@ internal sealed class TypeChecker
         var sources = ImmutableArray.CreateBuilder<int>();
         foreach (var source in syntax.Sources)
         {
+            if (IsRegionName(new NamedType(new QualifiedName([source], source.Span), source.Span)))
+            {
+                continue; // a region: its parameters were found by name (§25.6)
+            }
             var parameter = hir.Parameters.FirstOrDefault(p => p.Name == source.Name);
             if (parameter is null || !TypeTable.IsScoped(parameter.Type))
             {
@@ -493,6 +682,7 @@ internal sealed class TypeChecker
         {
             return;
         }
+        CheckRegionParameters(decl.RegionParameters, decl.TypeParameters);
         if (_types.Lookup(text) is not null)
         {
             Error(DiagnosticCodes.DuplicateItem, decl.Name.Span, $"'{text}' is the name of a built-in type");
@@ -876,7 +1066,7 @@ internal sealed class TypeChecker
         if (_membersResolved)
         {
             _instantiating++;
-            Quietly(() => { ResolveStructMembers(entry); return 0; }); // checked in the generic version
+            CheckInstance(() => { ResolveStructMembers(entry); return 0; }, arguments, text, _source, span); // checked in the generic version
             _instantiating--;
             FinishLateTypes();
         }
@@ -906,7 +1096,7 @@ internal sealed class TypeChecker
         if (_membersResolved)
         {
             _instantiating++;
-            Quietly(() => { ResolveEnumVariants(entry); return 0; }); // checked in the generic version
+            CheckInstance(() => { ResolveEnumVariants(entry); return 0; }, arguments, text, _source, span); // checked in the generic version
             _instantiating--;
             FinishLateTypes();
         }
@@ -956,10 +1146,12 @@ internal sealed class TypeChecker
         var savedSource = _source;
         _source = entry.Source;
         // The generic version's signature was checked; the instantiation's would only repeat it (§20.3).
-        var instance = Quietly(() => DeclareFunction(entry.Decl, owner: null, environment));
+        var instance = CheckInstance(() => DeclareFunction(entry.Decl, owner: null, environment), arguments,
+            Name(entry.Decl.Name.Name), savedSource, span);
         _source = savedSource;
         instance.TypeArguments = arguments;
         instance.InstantiationDepth = depth;
+        instance.InstantiationSite = (savedSource, span);
         entry.Instances.Add(key, instance);
         return instance;
     }
@@ -972,6 +1164,7 @@ internal sealed class TypeChecker
         {
             return;
         }
+        CheckRegionParameters(decl.RegionParameters, decl.TypeParameters);
         if (_types.Lookup(text) is not null || _items.ContainsKey(name))
         {
             Error(DiagnosticCodes.DuplicateItem, decl.Name.Span, _types.Lookup(text) is not null
@@ -996,15 +1189,16 @@ internal sealed class TypeChecker
 
     private void ResolveEnumVariants(EnumEntry entry)
     {
-        var (savedSource, savedEnvironment) = (_source, _typeEnvironment);
+        var (savedSource, savedEnvironment, savedRegions) = (_source, _typeEnvironment, _regions);
         _typeEnvironment = entry.Environment;
+        _regions = entry.Decl.RegionParameters.Select(r => r.Name.Name).ToHashSet();
         try
         {
             ResolveEnumVariantsCore(entry);
         }
         finally
         {
-            (_source, _typeEnvironment) = (savedSource, savedEnvironment);
+            (_source, _typeEnvironment, _regions) = (savedSource, savedEnvironment, savedRegions);
         }
     }
 
@@ -1024,10 +1218,16 @@ internal sealed class TypeChecker
             for (var i = 0; i < variantDecl.Payload.Length; i++)
             {
                 var type = ResolveType(variantDecl.Payload[i], allowVoid: false);
-                if (TypeTable.IsScoped(type))
+                if (TypeTable.HoldsRegionValue(type))
                 {
                     Error(DiagnosticCodes.ReferenceNotAllowed, variantDecl.Payload[i].Span,
-                        "enum payloads cannot be references in v0 (they would need lifetime parameters)");
+                        $"an enum payload cannot hold '{type}': region values and pool boxes stay in locals (type-system.md §25.4)");
+                    type = _types.Error;
+                }
+                else if (TypeTable.IsScoped(type) && entry.Decl.RegionParameters.IsEmpty && entry.Template is null)
+                {
+                    Error(DiagnosticCodes.ScopedFieldNeedsRegion, variantDecl.Payload[i].Span,
+                        $"a payload of scoped type '{type}' needs a region parameter on the enum: 'enum {Name(entry.Decl.Name.Name)}<region r>' (type-system.md §25.4)");
                     type = _types.Error;
                 }
                 variant.Payload.Add(new StructField(_symbols.Intern($"_{i}"), type, i, variantDecl.Payload[i].Span));
@@ -1038,15 +1238,16 @@ internal sealed class TypeChecker
 
     private void ResolveStructMembers(StructEntry entry)
     {
-        var (savedSource, savedEnvironment) = (_source, _typeEnvironment);
+        var (savedSource, savedEnvironment, savedRegions) = (_source, _typeEnvironment, _regions);
         _typeEnvironment = entry.Environment;
+        _regions = entry.Decl.RegionParameters.Select(r => r.Name.Name).ToHashSet();
         try
         {
             ResolveStructMembersCore(entry);
         }
         finally
         {
-            (_source, _typeEnvironment) = (savedSource, savedEnvironment);
+            (_source, _typeEnvironment, _regions) = (savedSource, savedEnvironment, savedRegions);
         }
     }
 
@@ -1058,10 +1259,16 @@ internal sealed class TypeChecker
         foreach (var field in entry.Decl.Fields)
         {
             var type = ResolveType(field.Type, allowVoid: false);
-            if (TypeTable.IsScoped(type))
+            if (TypeTable.HoldsRegionValue(type))
             {
                 Error(DiagnosticCodes.ReferenceNotAllowed, field.Type.Span,
-                    "struct fields cannot be references in v0 (they would need lifetime parameters)");
+                    $"a struct field cannot hold '{type}': region values and pool boxes stay in locals (type-system.md §25.4)");
+                type = _types.Error;
+            }
+            else if (TypeTable.IsScoped(type) && entry.Decl.RegionParameters.IsEmpty && entry.Template is null)
+            {
+                Error(DiagnosticCodes.ScopedFieldNeedsRegion, field.Type.Span,
+                    $"a field of scoped type '{type}' needs a region parameter on the struct: 'struct {Name(entry.Decl.Name.Name)}<region r>' (type-system.md §25.4)");
                 type = _types.Error;
             }
             if (!memberNames.Add(field.Name.Name))
@@ -1212,8 +1419,19 @@ internal sealed class TypeChecker
         {
             if (reference.HasSources && !allowSources)
             {
-                Error(DiagnosticCodes.ReferenceNotAllowed, reference.Span,
-                    "a source list 'borrow(...)' is only allowed in a function's return type");
+                // Outside a return type, the list names regions (§25.2), which are erased.
+                if (_regions.Count == 0 && reference.Sources.All(s => Name(s.Name) != "static"))
+                {
+                    Error(DiagnosticCodes.ReferenceNotAllowed, reference.Span,
+                        "a source list 'borrow(...)' is only allowed in a function's return type, or naming regions (type-system.md §25.2)");
+                }
+                else
+                {
+                    foreach (var source in reference.Sources)
+                    {
+                        CheckRegionArgument(new NamedType(new QualifiedName([source], source.Span), source.Span));
+                    }
+                }
             }
             var pointee = ResolveType(reference.Pointee, allowVoid: false);
             if (pointee.IsReference)
@@ -1243,6 +1461,17 @@ internal sealed class TypeChecker
         if (syntax is GenericType generic)
         {
             var genericName = generic.Name.Parts.Length == 1 ? Name(generic.Name.Parts[0].Name) : "";
+            if (genericName == "StringView" && generic.Arguments.Length == 1)
+            {
+                CheckRegionArgument(generic.Arguments[0]);
+                return _types.StringView; // regions are erased (§25.5)
+            }
+            if (genericName is "Slice" or "SliceMut" && generic.Arguments.Length == 2 && IsRegionName(generic.Arguments[0]))
+            {
+                CheckRegionArgument(generic.Arguments[0]);
+                var viewed = ResolveType(generic.Arguments[1], allowVoid: false);
+                return CheckElement(viewed, -1, generic.Arguments[1].Span) ? _types.SliceOf(viewed, genericName == "SliceMut") : _types.Error;
+            }
             if (genericName == "Box" && generic.Arguments.Length is 1 or 2)
             {
                 var contents = ResolveType(generic.Arguments[0], allowVoid: false);
@@ -1284,13 +1513,7 @@ internal sealed class TypeChecker
                 {
                     return _types.Error;
                 }
-                if (TypeTable.IsScoped(handled))
-                {
-                    Error(DiagnosticCodes.ReferenceNotAllowed, generic.Arguments[0].Span,
-                        "a 'Handle' names a slot-map value, which cannot be a reference or other scoped value in v0");
-                    return _types.Error;
-                }
-                return _types.HandleOf(handled);
+                return _types.HandleOf(handled); // a handle holds no loan, whatever it names (§25.3)
             }
             if (genericName == "Result" && generic.Arguments.Length == 2)
             {
@@ -1393,13 +1616,13 @@ internal sealed class TypeChecker
                 $"'{allocator}' is not an allocator type; use 'SystemHeap' or 'FailingAllocator'");
             return _types.Error;
         }
-        if (element is not null && TypeTable.IsScoped(element))
+        if (element is not null && TypeTable.HoldsRegionValue(element))
         {
             Error(DiagnosticCodes.ReferenceNotAllowed, arguments[0].Span,
-                "a 'Vector' cannot hold a reference or other scoped value in v0 (references in aggregates are OD-3)");
+                $"a 'Vector' cannot hold '{element}': region values and pool boxes stay in locals (type-system.md §25.4)");
             return _types.Error;
         }
-        return VectorType(element, allocator);
+        return VectorType(element, allocator); // scoped elements make a scoped vector (§25.3, §25.4)
     }
 
     /// <summary><c>SlotMap&lt;T, A&gt;</c> or <c>StableVector&lt;T, A&gt;</c> from type syntax (§24).</summary>
@@ -1417,13 +1640,13 @@ internal sealed class TypeChecker
             Error(DiagnosticCodes.NotAnAllocator, arguments[1].Span, $"'{allocator}' is not an allocator type; use 'SystemHeap' or 'FailingAllocator'");
             return _types.Error;
         }
-        if (TypeTable.IsScoped(element))
+        if (TypeTable.HoldsRegionValue(element))
         {
             Error(DiagnosticCodes.ReferenceNotAllowed, arguments[0].Span,
-                $"a '{name}' cannot hold a reference or other scoped value in v0 (references in aggregates are OD-3)");
+                $"a '{name}' cannot hold '{element}': region values and pool boxes stay in locals (type-system.md §25.4)");
             return _types.Error;
         }
-        return ContainerType(kind, element, allocator);
+        return ContainerType(kind, element, allocator); // scoped elements make a scoped container (§25.3, §25.4)
     }
 
     /// <summary>The slot map or stable vector, with the types its built-in operations return (§24).</summary>
@@ -1653,7 +1876,9 @@ internal sealed class TypeChecker
             return false;
         }
         var problem = type.Kind is TypeKind.Void or TypeKind.Never ? "it has no value"
-            : TypeTable.IsScoped(type) ? "it is scoped (a reference or slice), and region memory cannot hold loans (E3)"
+            : TypeTable.IsScoped(type) && needCopy ? "it is scoped, and arrays cannot hold scoped elements (type-system.md §25.4)"
+            : type.IsReference ? "it is a reference, and region memory holds values, not bare references (type-system.md §25.4)"
+            : TypeTable.HoldsRegionValue(type) ? "region values and pool boxes stay in locals (type-system.md §25.4)"
             : TypeTable.NeedsDrop(type) ? "it needs drop, and a region releases its memory without destroying values (R2)"
             : needCopy && !TypeTable.IsCopy(type) ? "an array allocation copies its fill value, so the type must be Copy"
             : null;
@@ -1987,7 +2212,28 @@ internal sealed class TypeChecker
     {
         var item = _items[syntax.Name.Parts[0].Name];
         var parameters = item is StructEntry s ? s.Decl.TypeParameters : ((EnumEntry)item).Decl.TypeParameters;
+        var regions = item is StructEntry r ? r.Decl.RegionParameters : ((EnumEntry)item).Decl.RegionParameters;
         var text = Name(syntax.Name.Parts[0].Name);
+        var typeArguments = syntax.Arguments;
+        if (!regions.IsEmpty && syntax.Arguments.Length == regions.Length + parameters.Length)
+        {
+            // Region arguments come first and are erased (§25.2, §25.5).
+            foreach (var region in syntax.Arguments[..regions.Length])
+            {
+                CheckRegionArgument(region);
+            }
+            typeArguments = syntax.Arguments[regions.Length..];
+        }
+        else if (regions.IsEmpty && syntax.Arguments.Any(IsRegionName))
+        {
+            Error(DiagnosticCodes.UnknownRegion, syntax.Span, $"'{text}' has no region parameters");
+            return _types.Error;
+        }
+        if (typeArguments.IsEmpty && parameters.IsEmpty)
+        {
+            return item is StructEntry plainStruct ? Used(plainStruct).Type : Used((EnumEntry)item).Type;
+        }
+        syntax = syntax with { Arguments = typeArguments };
         if (parameters.Length != syntax.Arguments.Length)
         {
             Error(DiagnosticCodes.UnknownType, syntax.Span, parameters.IsEmpty
@@ -2003,13 +2249,13 @@ internal sealed class TypeChecker
             {
                 return _types.Error;
             }
-            if (TypeTable.IsScoped(type))
+            if (TypeTable.HoldsRegionValue(type))
             {
                 Error(DiagnosticCodes.ReferenceNotAllowed, argument.Span,
-                    "a type argument of a user type cannot be scoped in v0 (references in aggregates are OD-3)");
+                    $"'{type}' cannot be a type argument of a user type: region values and pool boxes stay in locals (type-system.md §25.4)");
                 return _types.Error;
             }
-            arguments.Add(type);
+            arguments.Add(type); // scoped arguments make a scoped instance (§25.3)
         }
         return item is StructEntry structEntry
             ? Used(InstantiateStruct(structEntry, arguments.MoveToImmutable(), syntax.Span)).Type
@@ -2081,6 +2327,32 @@ internal sealed class TypeChecker
     }
 
     /// <summary>Runs <paramref name="trial"/> without reporting its diagnostics (for inferring type arguments).</summary>
+    /// <summary>
+    /// Checks an instance quietly (§20.3). If that fails for an instance with a scoped type argument, the generic
+    /// needs an unscoped type there (it boxes `T`, …), which is reported where the instance is written (N0274).
+    /// </summary>
+    private T CheckInstance<T>(Func<T> trial, ImmutableArray<NovaType> arguments, string generic, SourceText source, TextSpan span)
+    {
+        var saved = _diagnostics;
+        _diagnostics = new DiagnosticBag();
+        try
+        {
+            return trial();
+        }
+        finally
+        {
+            var failed = _diagnostics.HasErrors;
+            _diagnostics = saved;
+            if (failed && arguments.FirstOrDefault(TypeTable.IsScoped) is { } scoped && _scopedInstanceReports.Add((source, span)))
+            {
+                _diagnostics.Error(DiagnosticCodes.ScopedTypeArgument, source, span,
+                    $"'{generic}' cannot be used with the scoped type '{scoped}': it needs an unscoped type there (for example, it puts the value in a 'Box' or an array; type-system.md §25.4)");
+            }
+        }
+    }
+
+    private readonly HashSet<(SourceText, TextSpan)> _scopedInstanceReports = [];
+
     private T Quietly<T>(Func<T> trial)
     {
         var saved = _diagnostics;
@@ -2336,6 +2608,7 @@ internal sealed class TypeChecker
         _source = function.Source;
         _function = function;
         _typeEnvironment = function.Environment;
+        _regions = RegionScope(function.Syntax, function.Owner);
         _loopDepth = 0;
         _scopes = [[]];
         foreach (var parameter in function.Parameters)
@@ -2366,6 +2639,7 @@ internal sealed class TypeChecker
         FlowAnalysis.Analyze(function, _symbols, _types, _diagnostics);
         _function = null;
         _typeEnvironment = new Dictionary<Symbol, NovaType>();
+        _regions = [];
     }
 
     private HirBlock CheckBlock(BlockStmt block)
@@ -2870,7 +3144,9 @@ internal sealed class TypeChecker
                 $"cannot assign to '{Name(place.Root.Name)}': a 'using' binding stays the same value until the end of its block");
             return null;
         }
-        if (place.Type.IsReference)
+        // Assigning to a reference local writes through it (§13.3); assigning to a reference-typed field or
+        // element replaces the reference stored there (§25.4).
+        if (place.Type.IsReference && place.IsLocal)
         {
             place = Project(place, Projection.Deref);
         }

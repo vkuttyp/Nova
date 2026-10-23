@@ -7,7 +7,7 @@ fn Ok() { } // error[N0201]
 enum AllocError { Other } // error[N0201]
 struct Loop { r: Result<Loop, i32>; } // error[N0227]
 
-struct HoldsScoped { r: Result<borrow i32, E>; } // error[N0246] (a scoped result, §19.1)
+struct HoldsScoped { r: Result<borrow i32, E>; } // error[N0270] (a scoped result, §19.1)
 fn voidErr(a: Result<i32, void>) { } // error[N0226]
 fn arity(a: Result<i32>) { } // error[N0204]
 fn give() -> Result<i32, E> => Ok(1);

@@ -1,0 +1,29 @@
+// Region parameters and arguments (type-system.md §25.1-§25.4).
+struct NoRegion { text: StringView; } // error[N0270]
+enum Choice { Text(StringView), Nothing } // error[N0270]
+struct Nested { inner: Holder; } // error[N0270]
+struct Holder<region r> { text: StringView<r>; }
+struct Fine<region r> { text: StringView<r>; again: StringView; part: Slice<r, u8>; } // elided regions are fine
+struct Generic<T> { value: T; } // a type parameter: scoped only in scoped instances
+
+struct BadRegion<region r> { text: StringView<q>; } // error[N0273]
+struct BadArgument<region r> { other: Holder<nowhere>; } // error[N0273]
+struct NoRegionsHere { plain: Generic<i32>; }
+fn regionOnPlain<region r>(x: NoRegionsHere<r>) { } // error[N0273]
+fn unknownBorrow(x: borrow(somewhere) i32) { } // error[N0246]
+
+struct KeepsFrame<region r> { frame: ScratchFrame; } // error[N0246]
+struct KeepsBuffer<region r> { fba: FixedBufferAllocator; } // error[N0246]
+struct KeepsPoolBox<region r> { b: PoolBox<i32>; } // error[N0246]
+
+struct Twice<region r, region r> { text: StringView<r>; } // error[N0202]
+
+struct Owner<region r> {
+    text: StringView<r>;
+    fn view(borrow this) -> StringView<r> => this.text; // methods use the struct's regions
+}
+
+fn main() {
+    var frames = Vector<ScratchFrame>.create(); // error[N0246]
+    let h: Holder = Holder { text: "x" };
+}

@@ -90,7 +90,11 @@ TypeParams = '<' TypeParam (',' TypeParam)* '>'               (* M6a; type-syste
 InterfaceDecl = 'interface' Identifier TypeParams? '{' MethodSig* '}'   (* M6b; §21 *)
 MethodSig  = 'fn' Identifier '(' Receiver (',' Param)* ')' ('->' Type)? ';'
 ImplDecl   = 'impl' Type 'for' Type '{' FunctionDecl* '}'              (* M6b; §21 *)
-TypeParam  = Identifier (':' Type ('+' Type)*)?                (* bounds: M6b *)
+TypeParam  = 'region' Identifier                               (* M6x: a region, before any type parameter; §25.1 *)
+           | Identifier (':' Type ('+' Type)*)?                (* bounds: M6b *)
+(* `region` is contextual: only `region` followed by a name declares a region. In a type, a region
+   argument is a region name or `static`, written first in the argument list (`Token<src>`,
+   `StringView<r>`, `Slice<r, T>`) or in `borrow(r) T`; type-system.md §25.2. *)
 EnumDecl   = 'enum' Identifier TypeParams? '{' (Variant (',' Variant)* ','?)? '}'        (* M2d *)
 Variant    = Identifier ('(' Type (',' Type)* ','? ')')?
 Visibility = 'public' | 'internal' | 'private'

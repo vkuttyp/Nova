@@ -1,0 +1,2 @@
+// Interfaces cannot declare regions (type-system.md §25.1).
+interface Shaped<region r> { } // error[N0216]

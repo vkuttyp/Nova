@@ -1,6 +1,6 @@
 // R2 and the scoped-type rules for arena allocations (type-system.md §19.1-19.2).
 struct Res { id: i32; drop { } }
-struct Holder { r: borrow mut i32; } // error[N0246]
+struct Holder { r: borrow mut i32; } // error[N0270]
 struct Arena { x: i32; } // error[N0201]
 
 fn f(x: borrow i32, s: Slice<u8>) -> Result<void, AllocError> {

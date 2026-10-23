@@ -1,4 +1,4 @@
-struct HasRef { r: borrow i64; } // error[N0246]
+struct HasRef { r: borrow i64; } // error[N0270]
 const C: borrow i64 = 1; // error[N0246]
 fn nested(r: borrow borrow i64) { } // error[N0246]
 fn sourcesInParam(r: borrow(x) i64) { } // error[N0246]
