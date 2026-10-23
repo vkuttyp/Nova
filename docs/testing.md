@@ -133,6 +133,7 @@ reveals a compiler bug is fixed, and its program, reduced by hand, joins the cor
 | 2026-10-22 | `dotnet test` on macOS arm64 (.NET 10.0.401): lexer and parser unit tests, 20 parse-pass and 18 parse-fail corpus files | 151 passed, 0 failed |
 | 2026-10-22 | same, plus 11 check-pass and 19 check-fail files and the checker crash test (increment 1b) | 201 passed, 0 failed |
 | 2026-10-22 | Linux CI run 39792099920 (ubuntu-24.04, clang 18.1.3, GCC 13.3.0): every corpus and run test passed under both compilers. The runtime harness failed only on GCC `-Wclobbered` (harness-only; fixed) | 379/380 |
+| 2026-10-23 | After the CosmoOS VM was reinstalled (now v1.0.11-rc1, AArch64): `c2.py` and `c3.py` over ssh on the current code (M5 and the campaign fix included) | 141/141 programs, 230/230 sweep runs, 26/26 `nwc` cases, `c3-io` pass |
 | 2026-10-23 | M7e campaign, interim: 3 findings in the first 25,600 programs (constant slice index, `-Warray-bounds`); fixed, CI run 39953749461 green; `c2.py` in QEMU (x86-64) passes (141/141, 230/230). The CosmoOS AArch64 VM was not reachable (ssh refused), so AArch64 was not repeated | fixed |
 | 2026-10-23 | M5 (placement): local suite on macOS with `PlacementTests`, the `clang -O2 placement` run configuration, and 500 fuzz programs with a placement configuration (`milestone-5.md`) | 1843 passed; 0 fuzz findings |
 | 2026-10-23 | M7e MSVC: `MsvcTests` on a Windows 11 ARM64 VM (MSVC 19.51) and on x64 in CI (`test-windows`, run 39944590259) | 145/145 on both |
