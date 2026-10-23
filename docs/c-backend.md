@@ -38,14 +38,19 @@ Status: Milestone 0 proposal. Applies from M1. CosmoOS-specific flags are covere
 
 ## 1.1 MSVC, best effort (M7e)
 
-The hosted profile also builds with Microsoft's C compiler: `cl /std:c11 /W3 /WX`, x64. This is
+The hosted profile also builds with Microsoft's C compiler: `cl /std:c11 /W3 /WX`, checked on
+x64 (CI) and ARM64 (a Windows 11 VM). Programs are linked with an 8 MiB stack
+(`/link /STACK:8388608`), as Linux and macOS give the main thread. Windows' default is 1 MiB, which
+`run-pass/deep-recursion.nova` overflows. This is
 **best effort**: no CosmoOS profile uses MSVC, and the strict warning set (§1) is checked with clang and
 GCC only. What differs:
 
 - **`rt.h`** uses compiler builtins only behind a test for GCC or clang, with portable code otherwise:
   - checked arithmetic falls back to the portable overflow checks, as with `NV_NO_BUILTIN_OVERFLOW`;
   - counting leading zeros (stable vectors) uses `nv_clz64`, a shift loop off GCC and clang;
-  - `NV_UNUSED` and `NV_COLD` are empty.
+  - `NV_UNUSED` and `NV_COLD` are empty;
+  - `nv_max_align_t` stands for C11's `max_align_t`, which MSVC's `<stddef.h>` lacks in C mode.
+    There it is `double`. The generated alignment assertions use it.
 - **Process behaviour** (`nova_rt_hosted.c`, under `_WIN32`):
   - standard output and standard error are switched to binary mode at the first write, so
     `"\n"` stays one byte;

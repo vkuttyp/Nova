@@ -235,7 +235,7 @@ static void nvD_RXi32S16FailingAllocatorE10AllocError(nvR_Xi32S16FailingAllocato
 }
 
 static nvR_XE4ListS10SystemHeapE10AllocError nvB_XE4ListS10SystemHeap(nvE_List v) {
-    _Static_assert(_Alignof(nvE_List) <= _Alignof(max_align_t), "novac: Box<List> needs over-aligned memory");
+    _Static_assert(_Alignof(nvE_List) <= _Alignof(nv_max_align_t), "novac: Box<List> needs over-aligned memory");
     nvE_List *p = (nvE_List *)nova_alloc(sizeof(nvE_List), NV_ALLOC_SYSTEM);
     if (p == NULL) {
         nvD_4List(&v);
@@ -246,7 +246,7 @@ static nvR_XE4ListS10SystemHeapE10AllocError nvB_XE4ListS10SystemHeap(nvE_List v
 }
 
 static nvR_Xi32S16FailingAllocatorE10AllocError nvB_Xi32S16FailingAllocator(int32_t v) {
-    _Static_assert(_Alignof(int32_t) <= _Alignof(max_align_t), "novac: Box<i32, FailingAllocator> needs over-aligned memory");
+    _Static_assert(_Alignof(int32_t) <= _Alignof(nv_max_align_t), "novac: Box<i32, FailingAllocator> needs over-aligned memory");
     int32_t *p = (int32_t *)nova_alloc(sizeof(int32_t), NV_ALLOC_FAILING);
     if (p == NULL) {
         return ((nvR_Xi32S16FailingAllocatorE10AllocError){ .tag = 1, .u.v_Err = { .f__0 = ((nvE_AllocError){ .tag = 0 }) } });

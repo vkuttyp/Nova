@@ -24,6 +24,16 @@
 #define NV_COLD
 #endif
 
+/*
+ * The most-aligned fundamental type: C11's max_align_t, which MSVC's <stddef.h> lacks in C mode; there
+ * `double` is the strictest fundamental alignment (8; docs/c-backend.md §1.1).
+ */
+#if defined(_MSC_VER) && !defined(__clang__)
+typedef double nv_max_align_t;
+#else
+typedef max_align_t nv_max_align_t;
+#endif
+
 #if !defined(NV_NO_BUILTIN_OVERFLOW) && (defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 5))
 #define NV_HAVE_BUILTIN_OVERFLOW 1
 #endif
@@ -293,7 +303,7 @@ void nova_fail_reset(void);
  * The buffer address of every empty vector: valid and aligned for any element type (elements are
  * at most max_align_t-aligned, asserted by the generated helpers), and never dereferenced.
  */
-extern max_align_t nova_vec_empty;
+extern nv_max_align_t nova_vec_empty;
 
 /*
  * Room for `extra` more elements of `size` bytes after the `len` in use. Returns the buffer to use:

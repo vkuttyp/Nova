@@ -120,6 +120,9 @@ public static class Toolchain
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = standardInput is not null,
+            // Nova programs write UTF-8; the default would be the console's code page on Windows.
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
             UseShellExecute = false,
             WorkingDirectory = workingDirectory ?? "",
         };

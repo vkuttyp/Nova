@@ -119,7 +119,7 @@ static void nvD_VZS10SystemHeap(nvV_ZS10SystemHeap *p) {
 }
 
 static nvR_vE10AllocError nvVP_VUi32S10SystemHeap(nvV_Ui32S10SystemHeap *v, int32_t x) {
-    _Static_assert(_Alignof(int32_t) <= _Alignof(max_align_t), "novac: Vector<i32> needs over-aligned memory");
+    _Static_assert(_Alignof(int32_t) <= _Alignof(nv_max_align_t), "novac: Vector<i32> needs over-aligned memory");
     void *p = nova_vec_grow(v->ptr, v->len, &v->cap, 1u, sizeof(int32_t), NV_ALLOC_SYSTEM);
     if (p == NULL) {
         return ((nvR_vE10AllocError){ .tag = 1, .u.v_Err = { .f__0 = ((nvE_AllocError){ .tag = 0 }) } });

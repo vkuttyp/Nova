@@ -168,7 +168,7 @@ static bool nvKV_Ki32S10SystemHeap(const nvK_i32S10SystemHeap *map, nv_handle h)
 }
 
 static nvR_Hi32E10AllocError nvKI_Ki32S10SystemHeap(nvK_i32S10SystemHeap *map, int32_t v) {
-    _Static_assert(_Alignof(nvKS_Ki32S10SystemHeap) <= _Alignof(max_align_t), "novac: SlotMap<i32> needs over-aligned memory");
+    _Static_assert(_Alignof(nvKS_Ki32S10SystemHeap) <= _Alignof(nv_max_align_t), "novac: SlotMap<i32> needs over-aligned memory");
     uint32_t index;
     if (map->free != UINT32_MAX) {
         index = map->free;
@@ -215,7 +215,7 @@ static int32_t *nvSVE_Wi32S10SystemHeap(nvSV_i32S10SystemHeap *v, uint64_t i) {
 }
 
 static nvR_usizeE10AllocError nvSVP_Wi32S10SystemHeap(nvSV_i32S10SystemHeap *v, int32_t x) {
-    _Static_assert(_Alignof(int32_t) <= _Alignof(max_align_t), "novac: StableVector<i32> needs over-aligned memory");
+    _Static_assert(_Alignof(int32_t) <= _Alignof(nv_max_align_t), "novac: StableVector<i32> needs over-aligned memory");
     int32_t *slot = (int32_t *)nova_svec_slot(v->chunks, v->len, sizeof(int32_t), NV_ALLOC_SYSTEM);
     if (slot == NULL) {
         return ((nvR_usizeE10AllocError){ .tag = 1, .u.v_Err = { .f__0 = ((nvE_AllocError){ .tag = 0 }) } });

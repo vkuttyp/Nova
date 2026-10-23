@@ -44,7 +44,7 @@ void nova_write_str(const char *text, size_t length) {
     nova_platform_write_stdout((const uint8_t *)text, length);
 }
 
-max_align_t nova_vec_empty;
+nv_max_align_t nova_vec_empty;
 
 void *nova_vec_grow(void *ptr, uint64_t len, uint64_t *cap, uint64_t extra, uint64_t size, uint32_t allocator) {
     if (extra > UINT64_MAX - len) return NULL;

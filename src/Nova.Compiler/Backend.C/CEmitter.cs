@@ -561,7 +561,7 @@ public sealed class CEmitter
             var name = CTypeName(result);
             var errorType = result.Enum.ResultTypes.Value.Err;
             Line($"static {name} {BoxCreateName(result)}({CType(contents)} v) {{");
-            Line($"    _Static_assert(_Alignof({CType(contents)}) <= _Alignof(max_align_t), \"novac: {box} needs over-aligned memory\");");
+            Line($"    _Static_assert(_Alignof({CType(contents)}) <= _Alignof(nv_max_align_t), \"novac: {box} needs over-aligned memory\");");
             Line($"    {CType(contents)} *p = ({CType(contents)} *)nova_alloc(sizeof({CType(contents)}), {AllocatorId(box.Allocator!)});");
             Line("    if (p == NULL) {");
             if (TypeTable.NeedsDrop(contents))
@@ -691,7 +691,7 @@ public sealed class CEmitter
                 Line("}");
                 Line();
                 Line($"static {CTypeName(result)} nvSVP_{m}({name} *v, {element} x) {{");
-                Line($"    _Static_assert(_Alignof({element}) <= _Alignof(max_align_t), \"novac: {type} needs over-aligned memory\");");
+                Line($"    _Static_assert(_Alignof({element}) <= _Alignof(nv_max_align_t), \"novac: {type} needs over-aligned memory\");");
                 Line($"    {element} *slot = ({element} *)nova_svec_slot(v->chunks, v->len, sizeof({element}), {allocator});");
                 Line("    if (slot == NULL) {");
                 if (TypeTable.NeedsDrop(elementType))
@@ -716,7 +716,7 @@ public sealed class CEmitter
             Line("}");
             Line();
             Line($"static {CTypeName(insertResult)} nvKI_{m}({name} *map, {value} v) {{");
-            Line($"    _Static_assert(_Alignof({slot}) <= _Alignof(max_align_t), \"novac: {type} needs over-aligned memory\");");
+            Line($"    _Static_assert(_Alignof({slot}) <= _Alignof(nv_max_align_t), \"novac: {type} needs over-aligned memory\");");
             Line("    uint32_t index;");
             Line("    if (map->free != UINT32_MAX) {");
             Line("        index = map->free;");
@@ -817,7 +817,7 @@ public sealed class CEmitter
             {
                 var option = CTypeName(_types.Composites.First(t => t.Enum?.OptionType == elementType));
                 Line($"static {result} nvVP_{m}({name} *v, {element} x) {{");
-                Line($"    _Static_assert(_Alignof({element}) <= _Alignof(max_align_t), \"novac: {vector} needs over-aligned memory\");");
+                Line($"    _Static_assert(_Alignof({element}) <= _Alignof(nv_max_align_t), \"novac: {vector} needs over-aligned memory\");");
                 Line($"    void *p = nova_vec_grow(v->ptr, v->len, &v->cap, 1u, sizeof({element}), {allocator});");
                 Line("    if (p == NULL) {");
                 if (TypeTable.NeedsDrop(elementType))
