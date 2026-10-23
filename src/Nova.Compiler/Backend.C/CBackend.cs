@@ -102,6 +102,13 @@ public static class Toolchain
         return Run(compiler, args);
     }
 
+    /// <summary>
+    /// At most one running tool per core. Test suites start tools from many threads at once; more
+    /// than the machine can run only slows every tool down (and starved the runtime's process
+    /// bookkeeping on small CI machines).
+    /// </summary>
+    private static readonly SemaphoreSlim s_toolSlots = new(Environment.ProcessorCount, Environment.ProcessorCount);
+
     public static ToolResult Run(string fileName, IEnumerable<string> arguments, TimeSpan? timeout = null,
         IReadOnlyDictionary<string, string>? environment = null)
     {
@@ -120,20 +127,32 @@ public static class Toolchain
             info.Environment[name] = value;
         }
 
-        using var process = Process.Start(info) ?? throw new InvalidOperationException($"cannot start '{fileName}'");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
         var limit = timeout ?? TimeSpan.FromMinutes(2);
-        if (!process.WaitForExit(limit))
+        s_toolSlots.Wait();
+        try
         {
-            process.Kill(entireProcessTree: true);
-            throw new TimeoutException($"'{fileName}' did not finish in {limit.TotalSeconds} s");
+            using var process = Process.Start(info) ?? throw new InvalidOperationException($"cannot start '{fileName}'");
+            // Dedicated reader threads: async reads would need thread-pool threads, which blocked callers may hold.
+            var stdout = ReadOnOwnThread(process.StandardOutput);
+            var stderr = ReadOnOwnThread(process.StandardError);
+            if (!process.WaitForExit(limit))
+            {
+                process.Kill(entireProcessTree: true);
+                throw new TimeoutException($"'{fileName}' did not finish in {limit.TotalSeconds} s");
+            }
+            // The output ends when every process holding the pipes exits; a leftover child must not hang the caller.
+            if (!Task.WaitAll([stdout, stderr], limit))
+            {
+                throw new TimeoutException($"'{fileName}' exited, but its output did not end within {limit.TotalSeconds} s");
+            }
+            return new ToolResult(process.ExitCode, stdout.Result, stderr.Result);
         }
-        // The output ends when every process holding the pipes exits; a leftover child must not hang the caller.
-        if (!Task.WaitAll([stdout, stderr], limit))
+        finally
         {
-            throw new TimeoutException($"'{fileName}' exited, but its output did not end within {limit.TotalSeconds} s");
+            s_toolSlots.Release();
         }
-        return new ToolResult(process.ExitCode, stdout.Result, stderr.Result);
     }
+
+    private static Task<string> ReadOnOwnThread(StreamReader reader) =>
+        Task.Factory.StartNew(reader.ReadToEnd, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 }
