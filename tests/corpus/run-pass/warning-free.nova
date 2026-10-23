@@ -9,6 +9,15 @@ fn main() -> i32 {
     Console.writeLine(x < x);
     Console.writeLine(y >= y);
     Console.writeLine(x);
+    // GCC -Wtype-limits: comparisons a type's own limit decides.
+    let u = 3u8;
+    Console.writeLine(u < 0u8);
+    Console.writeLine(u >= 0u8);
+    Console.writeLine(u > 255u8);
+    Console.writeLine(255u8 >= u);
+    Console.writeLine(x <= 2147483647);
+    Console.writeLine((-2147483648) > x);
+    Console.writeLine(0u64 <= 18446744073709551615u64);
     return 0;
 }
 // expect-stdout: true
@@ -16,3 +25,10 @@ fn main() -> i32 {
 // expect-stdout: false
 // expect-stdout: true
 // expect-stdout: 5
+// expect-stdout: false
+// expect-stdout: true
+// expect-stdout: false
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: false
+// expect-stdout: true

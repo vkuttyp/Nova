@@ -1517,6 +1517,10 @@ public sealed class CEmitter
                 var helper = binary.Op == BinaryOp.ShiftLeft ? "shl" : "shr";
                 return $"nv_{helper}_{Suffix(operandType)}({left}, {amount})";
             }
+            // Comparing with the type's own limit (`u < 0`, `x <= MAX`): GCC warns (-Wtype-limits); a constant (§5).
+            case BinaryOp.Less or BinaryOp.LessEqual or BinaryOp.Greater or BinaryOp.GreaterEqual
+                when AgainstLimit(binary.Op, binary.Left, binary.Right) is { } constant:
+                return constant ? "true" : "false";
             // Comparing a place with itself: C warns (-Wtautological-compare); the result is a constant (§5).
             case BinaryOp.Equal or BinaryOp.LessEqual or BinaryOp.GreaterEqual when left == right: return "true";
             case BinaryOp.NotEqual or BinaryOp.Less or BinaryOp.Greater when left == right: return "false";
@@ -1528,6 +1532,37 @@ public sealed class CEmitter
             case BinaryOp.GreaterEqual: return $"({left} >= {right})";
             default: throw new InvalidOperationException($"operator {binary.Op} must have been lowered");
         }
+    }
+
+    /// <summary>
+    /// The value of an ordering comparison that one operand, a constant at its type's minimum or maximum,
+    /// decides by itself (<c>x &lt; MIN</c> is false, <c>x &lt;= MAX</c> true, ...); null otherwise.
+    /// </summary>
+    private static bool? AgainstLimit(BinaryOp op, NirOperand left, NirOperand right)
+    {
+        if (left is NirConst l && right is NirConst r)
+        {
+            return IntegerSemantics.Compare(op, (System.Numerics.BigInteger)l.Value, (System.Numerics.BigInteger)r.Value); // two constants
+        }
+        // Write it as `x op c`: a constant on the left mirrors the operator.
+        var (op2, value, constant) = right is NirConst rc && left is not NirConst
+            ? (op, left, rc)
+            : left is NirConst lc && right is not NirConst
+                ? (op switch { BinaryOp.Less => BinaryOp.Greater, BinaryOp.Greater => BinaryOp.Less, BinaryOp.LessEqual => BinaryOp.GreaterEqual, _ => BinaryOp.LessEqual }, right, lc)
+                : (op, left, (NirConst?)null);
+        if (constant is null || value.Type.Kind != TypeKind.Integer)
+        {
+            return null;
+        }
+        var c = (System.Numerics.BigInteger)constant.Value;
+        return op2 switch
+        {
+            BinaryOp.Less when c == value.Type.Min => false,
+            BinaryOp.GreaterEqual when c == value.Type.Min => true,
+            BinaryOp.Greater when c == value.Type.Max => false,
+            BinaryOp.LessEqual when c == value.Type.Max => true,
+            _ => null,
+        };
     }
 
     /// <summary>
