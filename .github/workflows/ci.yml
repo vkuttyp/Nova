@@ -40,3 +40,26 @@ jobs:
           # Resource samples go to this step's own log, so they survive a killed job (diagnoses stalls).
           (while true; do echo "[res] $(date -u +%T) $(free -m | awk '/Mem/{print "used=" $3 "MB avail=" $7 "MB"}') load=$(cut -d' ' -f1-3 /proc/loadavg) zombies=$(ps -eo stat | grep -c '^Z')"; ps -eo rss,pcpu,etime,comm --sort=-pcpu | sed -n 2,4p | sed 's/^/[res]   /'; sleep 15; done) &
           dotnet test Nova.slnx -c Release --no-build --logger "console;verbosity=normal"
+
+  test-windows:
+    # MSVC, best effort (docs/c-backend.md §1.1): the run corpus built with cl /std:c11 /W3 /WX and run.
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Toolchain versions
+        shell: pwsh
+        run: |
+          dotnet --version
+          cl 2>&1 | Select-Object -First 1
+      - name: Test
+        shell: pwsh
+        env:
+          NOVA_MSVC: "1"
+        run: dotnet test tests/Nova.Compiler.Tests -c Release --filter "FullyQualifiedName~MsvcTests" --logger "console;verbosity=normal"

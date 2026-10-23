@@ -36,6 +36,31 @@ Status: Milestone 0 proposal. Applies from M1. CosmoOS-specific flags are covere
 - Plain C `char` is **never** used for Nova data (`char` is signed on x86-64 and
   unsigned on AArch64; CosmoOS's `limits.h` is also wrong about it on AArch64). Bytes are `uint8_t`.
 
+## 1.1 MSVC, best effort (M7e)
+
+The hosted profile also builds with Microsoft's C compiler: `cl /std:c11 /W3 /WX`, x64. This is
+**best effort**: no CosmoOS profile uses MSVC, and the strict warning set (§1) is checked with clang and
+GCC only. What differs:
+
+- **`rt.h`** uses compiler builtins only behind a test for GCC or clang, with portable code otherwise:
+  - checked arithmetic falls back to the portable overflow checks, as with `NV_NO_BUILTIN_OVERFLOW`;
+  - counting leading zeros (stable vectors) uses `nv_clz64`, a shift loop off GCC and clang;
+  - `NV_UNUSED` and `NV_COLD` are empty.
+- **Process behaviour** (`nova_rt_hosted.c`, under `_WIN32`):
+  - standard output and standard error are switched to binary mode at the first write, so
+    `"\n"` stays one byte;
+  - a panic ends with exit status 134 (`_exit(134)` after flushing), the status `abort()` gives
+    on Linux and macOS. Windows' own `abort()` would give 3.
+- **I/O** (`nova_rt_io.c`, under `_WIN32`):
+  - program arguments work as elsewhere;
+  - files use the C runtime's `_open`, `_read`, `_write`, `_close` and `_unlink` in binary mode;
+  - `Process.run` uses `_spawnvp(_P_WAIT, …)`;
+  - **TCP is not supported**: after the same address check as elsewhere, every socket call fails
+    with `ENOSYS` (`IoError.Other`).
+- **Test.** The `test-windows` CI job builds every run-pass and run-fail program with MSVC and
+  runs it. Each must give the corpus expectations, except programs that open sockets, which are
+  listed in the test.
+
 ## 2. Lowering of types
 
 | Nova | C |

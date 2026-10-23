@@ -1,20 +1,31 @@
 /*
  * Nova runtime: program arguments, files and TCP sockets (type-system.md §26) for hosted C
  * environments (Linux, macOS) and CosmoOS userland. Only public C library functions (L1, OD-15).
+ * Windows (MSVC, best effort; docs/c-backend.md §1.1): files and processes through its C runtime;
+ * TCP is not supported there.
  */
+#if defined(_WIN32) && !defined(_CRT_SECURE_NO_WARNINGS)
+#define _CRT_SECURE_NO_WARNINGS
+#endif
 #include "nova/rt.h"
 
 #include <errno.h>
 #include <fcntl.h>
-#include <netinet/in.h>
-#include <spawn.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef _WIN32
+#include <io.h>
+#include <process.h>
+#include <sys/stat.h>
+#else
+#include <netinet/in.h>
+#include <spawn.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
-#ifndef COSMO_AF_INET
+#if !defined(COSMO_AF_INET) && !defined(_WIN32)
 extern char **environ;
 #endif
 
@@ -87,7 +98,12 @@ nv_io_result nova_file_open(nv_str path, uint32_t mode) {
     if (!nova_c_path(path, name)) return nova_io_fail(EINVAL);
     int fd;
     do {
+#ifdef _WIN32
+        fd = mode == 0u ? _open(name, _O_RDONLY | _O_BINARY)
+                        : _open(name, _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
+#else
         fd = mode == 0u ? open(name, O_RDONLY) : open(name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+#endif
     } while (fd < 0 && errno == EINTR);
     return fd < 0 ? nova_io_errno() : nova_io_ok(fd);
 }
@@ -95,15 +111,26 @@ nv_io_result nova_file_open(nv_str path, uint32_t mode) {
 nv_io_result nova_file_remove(nv_str path) {
     char name[4096];
     if (!nova_c_path(path, name)) return nova_io_fail(EINVAL);
+#ifdef _WIN32
+    return _unlink(name) < 0 ? nova_io_errno() : nova_io_ok(0);
+#else
     return unlink(name) < 0 ? nova_io_errno() : nova_io_ok(0);
+#endif
 }
 
 nv_io_result nova_fd_read(int32_t fd, uint8_t *buffer, uint64_t length) {
     size_t chunk = length > (1u << 30) ? (size_t)1u << 30 : (size_t)length;
+#ifdef _WIN32
+    int n;
+    do {
+        n = _read(fd, buffer, (unsigned)chunk);
+    } while (n < 0 && errno == EINTR);
+#else
     ssize_t n;
     do {
         n = read(fd, buffer, chunk);
     } while (n < 0 && errno == EINTR);
+#endif
     return n < 0 ? nova_io_errno() : nova_io_ok((int64_t)n);
 }
 
@@ -112,7 +139,9 @@ nv_io_result nova_fd_write(int32_t fd, const uint8_t *bytes, uint64_t length) {
     while (done < length) {
         uint64_t rest = length - done;
         size_t chunk = rest > (1u << 30) ? (size_t)1u << 30 : (size_t)rest;
-#ifdef MSG_NOSIGNAL
+#if defined(_WIN32)
+        int n = _write(fd, bytes + done, (unsigned)chunk);
+#elif defined(MSG_NOSIGNAL)
         /* A socket whose peer is gone reports EPIPE instead of raising SIGPIPE (Linux). */
         ssize_t n = send(fd, bytes + done, chunk, MSG_NOSIGNAL);
         if (n < 0 && errno == ENOTSOCK) n = write(fd, bytes + done, chunk);
@@ -128,7 +157,11 @@ nv_io_result nova_fd_write(int32_t fd, const uint8_t *bytes, uint64_t length) {
 }
 
 void nova_fd_drop(int32_t *fd) {
+#ifdef _WIN32
+    if (*fd >= 0) (void)_close(*fd);
+#else
     if (*fd >= 0) (void)close(*fd);
+#endif
 }
 
 /* ---- TCP over IPv4 ---------------------------------------------------------------------- */
@@ -154,6 +187,35 @@ static bool nova_ipv4(nv_str text, uint8_t out[4]) {
     return i == text.len;
 }
 
+#ifdef _WIN32
+/* TCP is not supported on Windows (best effort, docs/c-backend.md §1.1): addresses are still checked. */
+nv_io_result nova_tcp_listen(nv_str address, uint16_t port) {
+    uint8_t bytes[4];
+    (void)port;
+    return nova_io_fail(nova_ipv4(address, bytes) ? ENOSYS : EINVAL);
+}
+
+nv_io_result nova_tcp_port(int32_t fd) {
+    (void)fd;
+    return nova_io_fail(ENOSYS);
+}
+
+nv_io_result nova_tcp_accept(int32_t fd) {
+    (void)fd;
+    return nova_io_fail(ENOSYS);
+}
+
+nv_io_result nova_tcp_connect(nv_str address, uint16_t port) {
+    uint8_t bytes[4];
+    (void)port;
+    return nova_io_fail(nova_ipv4(address, bytes) ? ENOSYS : EINVAL);
+}
+
+nv_io_result nova_tcp_shutdown_write(int32_t fd) {
+    (void)fd;
+    return nova_io_fail(ENOSYS);
+}
+#else
 #ifdef COSMO_AF_INET
 /* CosmoOS's own address layout: host-order port, address bytes in network order (sys/socket.h). */
 typedef struct sockaddr nova_address;
@@ -247,6 +309,7 @@ nv_io_result nova_tcp_connect(nv_str address, uint16_t port) {
 nv_io_result nova_tcp_shutdown_write(int32_t fd) {
     return shutdown(fd, SHUT_WR) < 0 ? nova_io_errno() : nova_io_ok(0);
 }
+#endif /* _WIN32 */
 
 /* ---- Processes -------------------------------------------------------------------------- */
 
@@ -282,6 +345,10 @@ nv_io_result nova_process_run(nv_str program, const nv_str *arguments, uint64_t 
     } else {
         argv[count + 1u] = NULL;
         (void)fflush(stdout);
+#ifdef _WIN32
+        intptr_t status = _spawnvp(_P_WAIT, argv[0], (const char *const *)argv);
+        result = status < 0 ? nova_io_errno() : nova_io_ok((int64_t)status);
+#else
         pid_t pid;
 #ifdef COSMO_AF_INET
         pid = spawnvp(argv[0], (const char *const *)argv, NULL, 0);
@@ -305,6 +372,7 @@ nv_io_result nova_process_run(nv_str program, const nv_str *arguments, uint64_t 
                 result = nova_io_ok(128 + WTERMSIG(status));
             }
         }
+#endif
     }
     for (uint64_t i = 0; i < made; i++) nova_free(argv[i], NV_ALLOC_SYSTEM);
     nova_free(argv, NV_ALLOC_SYSTEM);

@@ -308,10 +308,24 @@ void *nova_vec_grow(void *ptr, uint64_t len, uint64_t *cap, uint64_t extra, uint
 /* A StableVector's 32 chunks hold 8, 16, 32, ... elements: element i is in chunk log2(i + 8) - 3. */
 #define NV_SVEC_CHUNKS 32u
 
+/* Leading zero bits of a nonzero value: the builtin where GCC or clang has it, else a loop (MSVC, c-backend.md §1.1). */
+static inline unsigned nv_clz64(uint64_t x) {
+#if defined(__GNUC__) || defined(__clang__)
+    return (unsigned)__builtin_clzll(x);
+#else
+    unsigned n = 0;
+    while ((x & ((uint64_t)1 << 63)) == 0) {
+        x <<= 1;
+        n++;
+    }
+    return n;
+#endif
+}
+
 /* The address of element `i` (i < length) of a stable vector with elements of `size` bytes. */
 static inline void *nova_svec_at(void *const *chunks, uint64_t i, uint64_t size) {
     uint64_t j = i + 8u;
-    unsigned k = (unsigned)(60 - __builtin_clzll(j));
+    unsigned k = 60u - nv_clz64(j);
     return (uint8_t *)chunks[k] + (j - ((uint64_t)8u << k)) * size;
 }
 

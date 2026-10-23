@@ -66,7 +66,7 @@ void *nova_vec_grow(void *ptr, uint64_t len, uint64_t *cap, uint64_t extra, uint
 void *nova_svec_slot(void **chunks, uint64_t len, uint64_t size, uint32_t allocator) {
     if (len > UINT64_MAX - 8u) return NULL;
     uint64_t j = len + 8u;
-    unsigned k = (unsigned)(60 - __builtin_clzll(j));
+    unsigned k = 60u - nv_clz64(j);
     if (k >= NV_SVEC_CHUNKS) return NULL;
     if (chunks[k] == NULL) {
         uint64_t count = (uint64_t)8u << k;
