@@ -19,7 +19,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **M0/C0** ✅ 2026-10-22 | Research, architecture, specs, audits | This document set. All decisions accepted (ADR 0002) |
 | **M1** ✅ 2026-10-22 Minimal compiler | Lexer, parser, AST, primitives, locals, functions, arithmetic, conditions, loops, semantic checks, HIR, NIR, LIR, C emission, executable | See `milestone-1.md`: ≥ 150 corpus tests, generated C clean under strict warnings, clang + gcc host runs agree, both CosmoOS triples compile, determinism check |
 | **C1** ✅ 2026-10-22 Native Hello World | M1 output linked against CosmoOS libc and run in QEMU (S0, out of tree) | `NOVATEST: PASS` printed by the Nova program inside CosmoOS on **x86-64 and AArch64**. `.note.cosmo` present. `llvm-nm -u` shows only libc symbols. Exact flags recorded. No CosmoOS file modified (`git status` clean) |
-| **M2** Ownership & borrowing | Structs, enums, references, moves, init check, NLL borrow check, drop elaboration, `drop`, `using`, `defer`, slices of arrays | Each of O1–O5, B1–B5, E1–E4 has ≥ 2 compile-fail and ≥ 1 near-miss compile-pass test (≥ 120 total). Drop-order run tests. Mutation suite. ASan/UBSan clean |
+| **M2** ✅ 2026-10-22 Ownership & borrowing ([milestone-2.md](milestone-2.md)) | Structs, enums, references, moves, init check, NLL borrow check, drop elaboration, `drop`, `using`, `defer`, slices of arrays | Each of O1–O5, B1–B5, E1–E4 has ≥ 2 compile-fail and ≥ 1 near-miss compile-pass test (≥ 120 total). Drop-order run tests. Mutation suite. ASan/UBSan clean |
 | **M3** ✅ 2026-10-22 Safe heap (ADR 0003: built-in `Result`/`Box`/allocators) | `Allocator`, `SystemHeap`, `Box`, `AllocError`, `Result`/`?`, `FailingAllocator`, recursive types, iterative drops | Fault-injection sweep: for every test that allocates *n* times, run with failure at each *k ≤ n*; no leaks/double frees under ASan. Ex4, Ex5, Ex11, Ex14 pass |
 | **C2** ✅ 2026-10-22 Safe allocation in CosmoOS ([report](cosmoos/c2-report.md)) | M2+M3 features in Profile A | Allocation, destruction and fault-injection tests pass inside QEMU on both arches |
 | **M4** ✅ 2026-10-22 Regions (ADR 0004) | `Arena`, `Scratch`, `FixedBufferAllocator`, `Pool` | Compile-fail: every arena-escape form (return, store in Box, outlive via `reset`/drop). Run tests for bulk release. R2 enforced |
@@ -38,6 +38,28 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **C9** Gradual adoption | Evaluate further components | Per-component ADR |
 
 ## Next highest-priority task
+
+**C7b — C state embedded by value** (`cosmoos/c7-report.md`, ADR 0009 §2; spec to be written as `type-system.md` §33).
+C7a (context effects) is done; C7b is the language part the lock guards and kernel objects of C7c–C7d stand on.
+
+- Scope: imported C types by value as fields of Nova structs and as embedded members of imported structs;
+  such types are C-laid-out (no Nova layout, transitively) and immovable; they are made in place only by a
+  struct literal given to `Box.createIn`, with imported fields zero-filled; `@placed` methods run C's
+  initialisers at the final address; `Ptr.containerOf` (unsafe) recovers the containing struct.
+- Done when: the spec is written; positive run tests (in every C configuration, against a C half whose
+  self-referential state, like a list head, survives because nothing moves it) and negative tests (every way
+  of moving or copying a C-laid-out value, every use that needs its Nova layout) pass; the interpreter faults
+  instead of guessing a layout; generated C is unchanged for programs without such types; CosmoOS guest
+  checks pass if generated C changes.
+- Then: C7c (`SpinLock<T>`, `IrqSpinLock<T>`, `Mutex<T>` guards), C7d (`KRef<T>`, `Quiesce.synchronize`,
+  `Quiesce.deferDrop`), C7e (the in-kernel stress test under lockdep, both arches), then C8.
+
+In parallel, not blocking C7: **M9** (performance; first inputs are the C6 benchmarks and risk P-7), and, when
+the owner wants it, the S1 in-tree port for C1 (OD-20).
+
+## Progress log
+
+Completed work, oldest first; the table above has each milestone's status and report.
 
 **M1 and C1 are complete (2026-10-22).**
 - Nova compiles its M1 subset to C.
@@ -155,4 +177,3 @@ stress test under lockdep. `QuiesceGuard` in modules (blocked on KQ-2), `PerCpu<
 reasons. **C7a is done** (2026-10-24): `sleep`/`alloc` effects inferred over the package and checked in
 `@context(atomic|irq)` functions, under live `@context(atomic)` values, and against `@effects` bounds (type-system §32).
 
-Next: **C7b**, C state embedded by value (type-system §33). **M9** (performance) may start in parallel once its benchmarks exist. In parallel, when the owner wants it: propose the S1 in-tree port for C1 (OD-20).
