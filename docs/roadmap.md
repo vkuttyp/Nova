@@ -26,7 +26,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **M5** ✅ 2026-10-23 Escape/placement analysis ([milestone-5.md](milestone-5.md)) | CFG analysis, classification, `--explain-allocations`, Box→stack demotion | Optimised vs unoptimised outputs equal on the whole run-pass corpus. Drop timing identical (instrumented). Report snapshots. No program accepted only because of placement |
 | **M6** ✅ 2026-10-23 Generics & collections (ADR 0005) | Monomorphisation, interfaces, `Vector`, `String`, `StringView`, `StableVector`, `SlotMap`, iterators. OD-3 design | Invalidation compile-fail tests. Property tests of collections against a model. Ex9, Ex10, Ex12, Ex13 |
 | **C3** ✅ 2026-10-23 Collections & syscalls ([report](cosmoos/c3-report.md)) | Files, sockets, processes in Profile A; a useful utility (candidate: a `wc`/`sha256sum`-class tool or a hexdump) | The utility runs in QEMU on both arches, with output compared to the C/BusyBox equivalent on a test corpus |
-| **M7** Production C backend ([plan](milestone-7.md); 7a source maps, 7b structured C, 7c interpreter, 7d generator ✅ 2026-10-23) | Source maps, structured C, Csmith-style fuzzer, NIR reference interpreter, MSVC best-effort | 24 h fuzz campaign with no miscompile across clang/gcc × O0/O2. Interpreter agrees with native output |
+| **M7** ✅ 2026-10-24 Production C backend ([plan](milestone-7.md)) | Source maps, structured C, Csmith-style fuzzer, NIR reference interpreter, MSVC best-effort | 24 h fuzz campaign with no miscompile across clang/gcc × O0/O2. Interpreter agrees with native output |
 | **M8** Systems/freestanding | core library split, FFI, raw pointers, MMIO types, custom entry points, `freestanding` profile | Freestanding object with no libc: verified by `llvm-nm -u` allowlist |
 | **C4** Freestanding in CosmoOS | Nova kernel-profile object built with kernel flags | Symbols, relocations and sections checked against the module loader allowlist. Frame sizes ≤ 2 KiB. No FP registers (disassembly check) |
 | **C5** Kernel memory adapter | `KernelHeap`, `ObjectCache<T>` bindings; isolated test component | In-kernel selftest: allocation, exhaustion (fault-injected), ownership transfer, cleanup. No allocator modifications |
@@ -87,7 +87,7 @@ per value.
 arguments (type-system §26), and `nwc`, a Nova word counter that matches BusyBox `wc` byte for byte
 inside CosmoOS on both arches (`integrations/cosmoos/c3.py`).
 
-**M7, the production C backend, is in progress** (`milestone-7.md`). 7a, source maps, is done
+**M7, the production C backend, is complete** (2026-10-24; `milestone-7.md`). 7a, source maps, is done
 (2026-10-23): `#line` directives (`--line-directives`, `-g`), host-path-free source paths, and a
 line-table test. 7b, structured C, is done (2026-10-23): `if`/`else`, loops and `switch`
 reconstructed from the NIR graph, with the flat form kept as an oracle (`--flat-c`).
@@ -100,7 +100,14 @@ uses of ended or uninitialised memory.
 C name collision with the runtime, a borrow-checker false positive and four kinds of warnings in
 generated C, all fixed.
 
-Next: **7e** (the 24-hour campaign, MSVC; MSVC done, campaign running). **M5**, escape and placement
-analysis, was done in parallel (2026-10-23; `milestone-5.md`): non-escaping `SystemHeap` boxes on the
-stack with `--placement`, `--explain-allocations`, equal outputs and identical drop traces. In parallel, when the owner wants it: propose the
-S1 in-tree port for C1 (OD-20).
+7e is done (2026-10-24): generated C builds with MSVC in CI (`test-windows`), and a 24-hour campaign
+(423,773 programs through clang and GCC at `-O0`/`-O2`, the flat form and the interpreter) found no
+miscompile; its one finding kind, a clang warning on a constant slice index, is fixed.
+
+**M5**, escape and placement analysis, was done in parallel (2026-10-23; `milestone-5.md`):
+non-escaping `SystemHeap` boxes on the stack with `--placement`, `--explain-allocations`, equal
+outputs and identical drop traces.
+
+Next: **M8** (systems and freestanding: core library split, FFI, raw pointers, MMIO types, custom
+entry points, the `freestanding` profile), which C4 needs. In parallel, when the owner wants it:
+propose the S1 in-tree port for C1 (OD-20).
