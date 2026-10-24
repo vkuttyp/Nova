@@ -353,6 +353,22 @@ public enum BuiltinFunction
     Argument,
     /// <summary><c>Process.run(program, arguments)</c> (§26.5): the program, then a shared reference to a <c>Vector&lt;StringView&gt;</c>.</summary>
     ProcessRun,
+    /// <summary><c>p.read()</c> (§27.3): the pointer.</summary>
+    PtrRead,
+    /// <summary><c>p.write(v)</c>: the pointer, then the value.</summary>
+    PtrWrite,
+    /// <summary><c>p.add(n)</c>: the pointer and a <c>usize</c>.</summary>
+    PtrAdd,
+    /// <summary><c>p.sub(n)</c>: the pointer and a <c>usize</c>.</summary>
+    PtrSub,
+    /// <summary><c>p.offset(n)</c>: the pointer and an <c>isize</c>.</summary>
+    PtrOffset,
+    /// <summary><c>p.isNull()</c>.</summary>
+    PtrIsNull,
+    /// <summary><c>s.ptr</c> (§27.2): the slice or string view.</summary>
+    SlicePtr,
+    /// <summary><c>Slice.fromRaw(p, n)</c> / <c>SliceMut.fromRaw(p, n)</c> (§27.3): the pointer and a <c>usize</c>.</summary>
+    SliceFromRaw,
 }
 
 public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<HirExpr> Arguments, NovaType Type, TextSpan Span) : HirExpr(Type, Span);

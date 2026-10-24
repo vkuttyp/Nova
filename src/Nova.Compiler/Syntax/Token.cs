@@ -149,8 +149,10 @@ public sealed class LexedSource
         IntLiteralValue[] ints,
         FloatLiteralValue[] floats,
         string[] strings,
-        int[] chars)
+        int[] chars,
+        IReadOnlyDictionary<int, string> docs)
     {
+        Docs = docs;
         Source = source;
         Tokens = tokens;
         Ints = ints;
@@ -171,6 +173,12 @@ public sealed class LexedSource
 
     /// <summary>Unicode scalar values of char literals.</summary>
     public IReadOnlyList<int> Chars { get; }
+
+    /// <summary>
+    /// Doc comments (grammar.md §1.2), keyed by the index of the token that directly follows each run of
+    /// <c>///</c> lines: the lines' text, joined by newlines.
+    /// </summary>
+    public IReadOnlyDictionary<int, string> Docs { get; }
 }
 
 public static class Keywords

@@ -248,7 +248,9 @@ following checks.
      an `Err`.
 
   Reads through the box (`b.f`, `b.f = x`, moving a field out) and `discriminant` of the result
-  are not escapes. Rule 1c (unsafe and FFI) has nothing to check before M8. Rule 1a (created and
+  are not escapes. Rule 1c (unsafe and FFI), from M8a: a function that makes a raw pointer from a reference, or a
+  reference or slice from a raw pointer, keeps all its boxes on the heap (reason "address exposed";
+  `type-system.md` §27.5). Rule 1a (created and
   dropped in one function) follows from rules 2 and 4.
 - **Demotion.** A stack-placed site writes `v` into a per-site slot of the function's frame and
   makes `Ok(&slot)` without allocating; that allocation cannot fail.

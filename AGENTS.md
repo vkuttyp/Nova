@@ -29,7 +29,8 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
   `docs/milestone-6.md`, ADR 0005) is complete, and so is M6x (region parameters, OD-3; `docs/milestone-6x.md`, ADR 0006). C3
   (files, sockets, processes and the `nwc` utility; `docs/cosmoos/c3-report.md`) is complete. M7 (production C backend;
   `docs/milestone-7.md`) is complete: source maps, structured C, the NIR interpreter (`novac run --interp`), the random
-  program generator (`tests/Nova.Fuzz`), MSVC, and a 24-hour campaign. M5 (escape and placement
+  program generator (`tests/Nova.Fuzz`), MSVC, and a 24-hour campaign. M8 (systems and freestanding; `docs/milestone-8.md`,
+  ADR 0007) is in progress: 8a (unsafe and raw pointers, `docs/unsafe.md`) is done; 8b (the C FFI) is next. M5 (escape and placement
   analysis; `docs/milestone-5.md`) is complete (`--placement`, `--explain-allocations`).
 - Guest checks: `python3 integrations/cosmoos/c2.py --arch x86_64` (QEMU), and for aarch64 either
   QEMU or a running CosmoOS VM over ssh (`--arch aarch64 --ssh root@<host>`). `c3.py` takes the same

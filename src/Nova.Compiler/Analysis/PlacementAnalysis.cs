@@ -80,6 +80,17 @@ public sealed class PlacementAnalysis
         private readonly ControlFlow _flow = new(function);
         private int _slotBytes;
 
+        /// <summary>
+        /// Rule 1c (memory-model.md §5.1, type-system.md §27.5): does the function turn references or slices into raw
+        /// pointers, or raw pointers into references or slices? Then any box's address may be exposed.
+        /// </summary>
+        private readonly bool _exposesAddresses = function.Blocks.SelectMany(b => b.Statements).Any(s => s is NirAssign
+        {
+            Value: NirCast { Type.IsRawPointer: true, Operand.Type.IsReference: true }
+                or NirCast { Type.IsReference: true, Operand.Type.IsRawPointer: true }
+                or NirBuiltin { Function: BuiltinFunction.SlicePtr or BuiltinFunction.SliceFromRaw }
+        });
+
         private SourceText Source => function.Source.Source;
 
         public void Run()
@@ -153,6 +164,11 @@ public sealed class PlacementAnalysis
             if (_flow.InLoop(block))
             {
                 Heap("created in a loop");
+                return;
+            }
+            if (_exposesAddresses)
+            {
+                Heap("address exposed: the function converts between references and raw pointers");
                 return;
             }
 

@@ -1,0 +1,44 @@
+// Raw-pointer pointees and operations (type-system.md §27.1-§27.3, N0281, N0282, N0208, N0207).
+struct Res { id: i32; drop { } }
+struct Wrapper<T> { value: T; }
+
+fn badPointees(a: *borrow i32) {} // error[N0281]
+fn badSlices(a: *Slice<u8>) {} // error[N0281]
+fn badViews(a: *StringView) {} // error[N0281]
+fn generic<T>(a: *T) {} // error[N0281]
+
+/// Safety: these calls are rejected before they could run.
+fn operations(p: *i32, v: *void, r: *mut Res, m: *mut i32) {
+    unsafe {
+        p.write(1); // error[N0282]
+        let x = v.read(); // error[N0282]
+        let y = r.read(); // error[N0282]
+        let w = Ptr.toBorrowMut(p); // error[N0282]
+        let s = SliceMut.fromRaw(p, 2); // error[N0282]
+        let t = v.add(1); // error[N0282]
+        let u = Slice.fromRaw(v, 2); // error[N0282]
+        r.write(Res { id: 1 }); // error[N0282]
+        let ok = m.read();
+    }
+}
+
+fn casts(x: borrow i32, n: u32, s: Slice<u8>, p: *u8) {
+    let a = x as *mut i32; // error[N0208]
+    let b = n as *u8; // error[N0208]
+    let c = s as *u8; // error[N0208]
+    let d = p as u32; // error[N0208]
+    let e = x as *u8; // error[N0208]
+    let f = p as borrow u8; // error[N0208]
+}
+
+fn comparisons(p: *u8, q: *u8, r: *u16) -> bool {
+    let a = p < q; // error[N0207]
+    let b = p == r; // error[N0207]
+    return a;
+}
+
+fn unknownMethod(p: *u8) {
+    let x = p.deref(); // error[N0234]
+}
+
+fn main() {}

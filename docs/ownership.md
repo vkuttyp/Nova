@@ -4,7 +4,7 @@ Status: Milestone 0 proposal. This document is normative for Milestone 2, unless
 an item is marked *future*. **B1–B5 and E1–E3 are implemented as specified in `lifetimes.md` (M2b),**
 which records the v0 simplifications: immutable, once-initialised reference bindings; and B5
 implemented as "the receiver's loan starts after the arguments". Related: `memory-model.md`, `language-spec.md`,
-`intermediate-representation.md`, `unsafe.md` (to be written in M8).
+`intermediate-representation.md`, `unsafe.md` (M8a).
 
 ## 0. Scope of the guarantee
 
@@ -183,7 +183,7 @@ E1–E4 deliberately trade expressiveness for an implementation of tractable siz
   comment. A lint enforces that the comment exists.
 - **U3 — Raw pointers are inert.** Raw pointers (`*T`, `*mut T`) are Copy,
   carry no loan, and are ignored by the borrow checker. Converting a raw pointer
-  to a reference (`unsafe { borrowFromRaw(p) }`) creates a reference with an
+  to a reference (`unsafe { Ptr.toBorrow(p) }`; `type-system.md` §27.3) creates a reference with an
   *unconstrained* region, which must be immediately bounded by a safe wrapper's
   signature (as with Rust's unbounded lifetimes; this is the main hazard in
   unsafe code).

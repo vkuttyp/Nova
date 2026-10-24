@@ -2,7 +2,7 @@
 
 Date: 2026-10-22. Status: **M0/C0 complete; all decisions accepted ([ADR 0002](decisions/0002-milestone-0-decision-set.md)).**
 **M1 and C1 complete**: Nova compiles to C and runs, including natively inside CosmoOS on x86-64 and AArch64.
-**M2 (ownership and borrowing) and M3 (safe heap) complete** ([milestone-2.md](milestone-2.md), [milestone-3.md](milestone-3.md), [ADR 0003](decisions/0003-m3-built-in-generic-types.md)). **C2 complete** ([cosmoos/c2-report.md](cosmoos/c2-report.md)). **M4 (regions) complete** ([milestone-4.md](milestone-4.md), [ADR 0004](decisions/0004-m4-regions.md)). **M6 (generics and collections) complete** (2026-10-23): generics, interfaces, optionals, `StringView`, `Vector`, `String`, `SlotMap`, `StableVector`, property tests, and the [OD-3 design](od3-design.md) ([milestone-6.md](milestone-6.md), [ADR 0005](decisions/0005-m6-generics-and-built-in-collections.md)); **M6x (region parameters, OD-3) complete** ([milestone-6x.md](milestone-6x.md), [ADR 0006](decisions/0006-od3-region-parameters.md)). **C3 (collections and system calls) complete** ([cosmoos/c3-report.md](cosmoos/c3-report.md)). **M5 (escape and placement analysis) complete** ([milestone-5.md](milestone-5.md)). **M7 (production C backend) complete** (2026-10-24; [milestone-7.md](milestone-7.md)): source maps, structured C, the NIR interpreter, the random program generator, MSVC, and a 24-hour fuzz campaign with no miscompile.
+**M2 (ownership and borrowing) and M3 (safe heap) complete** ([milestone-2.md](milestone-2.md), [milestone-3.md](milestone-3.md), [ADR 0003](decisions/0003-m3-built-in-generic-types.md)). **C2 complete** ([cosmoos/c2-report.md](cosmoos/c2-report.md)). **M4 (regions) complete** ([milestone-4.md](milestone-4.md), [ADR 0004](decisions/0004-m4-regions.md)). **M6 (generics and collections) complete** (2026-10-23): generics, interfaces, optionals, `StringView`, `Vector`, `String`, `SlotMap`, `StableVector`, property tests, and the [OD-3 design](od3-design.md) ([milestone-6.md](milestone-6.md), [ADR 0005](decisions/0005-m6-generics-and-built-in-collections.md)); **M6x (region parameters, OD-3) complete** ([milestone-6x.md](milestone-6x.md), [ADR 0006](decisions/0006-od3-region-parameters.md)). **C3 (collections and system calls) complete** ([cosmoos/c3-report.md](cosmoos/c3-report.md)). **M5 (escape and placement analysis) complete** ([milestone-5.md](milestone-5.md)). **M7 (production C backend) complete** (2026-10-24; [milestone-7.md](milestone-7.md)): source maps, structured C, the NIR interpreter, the random program generator, MSVC, and a 24-hour fuzz campaign with no miscompile. **M8 (systems and freestanding) in progress** ([milestone-8.md](milestone-8.md), [ADR 0007](decisions/0007-m8-systems-and-freestanding.md)): 8a, unsafe and raw pointers ([unsafe.md](unsafe.md)), done.
 Implemented-feature specs: [grammar.md](grammar.md) (M1 grammar), [type-system.md](type-system.md)
 (M1 static semantics), [intermediate-representation.md](intermediate-representation.md) (HIR/NIR as
 implemented) and [diagnostics.md](diagnostics.md) (error codes).
@@ -48,9 +48,11 @@ Primary-source audits: [research/cosmoos-kernel-audit.md](research/cosmoos-kerne
 
 Design records: [od3-design.md](od3-design.md) (lifetime-parameterised aggregates; implemented in M6x).
 
+Unsafe code (M8a): [unsafe.md](unsafe.md), the contract unsafe code must keep and what is checked.
+
 ## Still to be written (scheduled)
 
 `lifetimes.md`
 (M2, split from ownership.md); `allocators.md`, `escape-analysis.md` (M3–M5); `runtime.md`,
-`ffi.md`, `unsafe.md` (M8); `benchmarks.md` (M9). Today their content is covered by the
+`ffi.md` (M8b); `benchmarks.md` (M9). Today their content is covered by the
 documents above.

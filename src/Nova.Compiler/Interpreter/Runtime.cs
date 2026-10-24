@@ -905,6 +905,19 @@ public sealed partial class NirInterpreter
                 return Value.Of(SlotMapValid(arguments[0].Type.Pointee!, Argument(0).Bits(0, 8), Argument(1)) ? 1u : 0u, 1);
             case BuiltinFunction.SlotMapLength:
                 return _memory.Load(Argument(0).Bits(0, 8) + 24, 8);
+            case BuiltinFunction.PtrAdd or BuiltinFunction.PtrSub or BuiltinFunction.PtrOffset:
+            {
+                // Address arithmetic modulo 2^64 (type-system.md §27.3); only a later access is checked.
+                var step = unchecked((ulong)Integer(Argument(1), arguments[1].Type) * (ulong)SizeOf(arguments[0].Type.Pointee!));
+                var address = Argument(0).Bits(0, 8);
+                return Value.Of(builtin.Function == BuiltinFunction.PtrSub ? unchecked(address - step) : unchecked(address + step), 8);
+            }
+            case BuiltinFunction.PtrIsNull:
+                return Value.Of(Argument(0).Bits(0, 8) == 0 ? 1u : 0u, 1);
+            case BuiltinFunction.SlicePtr:
+                return Value.Of(Argument(0).Bits(0, 8), 8);
+            case BuiltinFunction.SliceFromRaw:
+                return View(Argument(0).Bits(0, 8), (ulong)Integer(Argument(1), arguments[1].Type));
             default:
                 return IoBuiltin(frame, builtin);
         }

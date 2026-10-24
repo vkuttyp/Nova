@@ -113,6 +113,12 @@ public static class DiagnosticCodes
     public const string UnknownRegion = "N0273";
     public const string ScopedTypeArgument = "N0274";
 
+    // Unsafe and raw pointers (type-system.md §27, unsafe.md): N0280-N0289
+    public const string UnsafeOutsideUnsafe = "N0280";
+    public const string InvalidPointee = "N0281";
+    public const string InvalidPointerOperation = "N0282";
+    public const string MissingSafetyComment = "N0283";
+
     // Build: N0300-N0399
     public const string MissingMain = "N0300";
 }

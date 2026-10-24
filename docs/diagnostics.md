@@ -149,6 +149,19 @@ references, so the borrow checker reports their conflicts as N0240–N0245.
 
 N0271 is unassigned: destroying a value that holds loans while their referents are gone reports N0243.
 
+### Unsafe and raw pointers (N0280–N0289; `type-system.md` §27, `unsafe.md`, M8a)
+
+| Code | Meaning | Example |
+|---|---|---|
+| N0280 | An unsafe operation outside an unsafe context: a read, write or arithmetic through a raw pointer, `Ptr.toBorrow`/`toBorrowMut`, `Slice.fromRaw`/`SliceMut.fromRaw`, or a call to an `unsafe fn` (U1) | `let v = p.read();` in a safe function |
+| N0281 | An invalid raw-pointer pointee: a reference, slice, `StringView` or other scoped type, `never`, or a type parameter | `*borrow i32`, `*Slice<u8>`, `*T` in a generic function |
+| N0282 | A pointer operation that the pointer or its pointee does not allow: reading or writing a non-Copy type, writing through a `*T`, `toBorrowMut` or `SliceMut.fromRaw` from a `*T`, any access through `*void` | `p.write(1)` with `p: *i32`; `q.read()` with `q: *void` |
+| N0283 | An `unsafe fn`, or a function containing `unsafe`, without a doc comment with a `Safety:` line (U2) | `unsafe fn f() {}` with no `/// Safety: …` above it |
+
+Raw pointers reuse codes: an invalid pointer cast is N0208, ordering comparisons on pointers are
+N0207, a constant of
+pointer type is N0216, an `unsafe main` is N0219, and an `unsafe` interface method is N0216.
+
 ### Results and the heap (N0260–N0269; `type-system.md` §17–§18)
 
 | Code | Meaning | Example |

@@ -1,0 +1,78 @@
+// Raw pointers (type-system.md §27): making them is safe, using them is unsafe.
+
+/// Safety: `p` points to `n` initialised `u32`s that nothing writes while this runs.
+unsafe fn sum(p: *u32, n: usize) -> u64 {
+    var total: u64 = 0;
+    for (i in 0..n) { total += p.add(i).read() as u64; }
+    return total;
+}
+
+struct Pair { a: u16; b: i64; }
+
+/// Safety: `p` is a live, aligned `Pair` that nothing else uses during the call.
+unsafe fn swapHalves(p: *mut Pair) {
+    let pair = Ptr.toBorrowMut(p);
+    pair.a = pair.a + 1;
+    pair.b = -pair.b;
+}
+
+/// Safety: every pointer below is made from a live local or array and stays inside it.
+fn main() -> i32 {
+    var a = [1u32, 2, 3, 4];
+    let p = borrow mut a[0] as *mut u32;
+    unsafe { p.add(3).write(10); }
+    Console.writeLine(unsafe { sum(p, a.length) });
+    Console.writeLine(a[3]);
+
+    // Arithmetic in both directions, and through isize.
+    let last = unsafe { p.add(3) };
+    Console.writeLine(unsafe { last.sub(2).read() });
+    Console.writeLine(unsafe { last.offset(-3).read() });
+    Console.writeLine((last as usize) - (p as usize));
+
+    // Struct pointees and references made from pointers.
+    var pair = Pair { a: 41, b: 7 };
+    let pp = borrow mut pair as *mut Pair;
+    unsafe { swapHalves(pp); }
+    Console.writeLine(pair.a);
+    Console.writeLine(pair.b);
+    let shared = unsafe { Ptr.toBorrow(pp) };
+    Console.writeLine(shared.b);
+
+    // Pointer casts and equality; `*mut T` compares with `*T`.
+    let bytes = p as *mut u8;
+    Console.writeLine(unsafe { bytes.read() });
+    Console.writeLine(p == (borrow a[0] as *u32));
+    Console.writeLine(p != last);
+    let untyped = p as *void;
+    Console.writeLine(untyped as *u32 == p);
+
+    // Null.
+    let none = 0 as *mut u32;
+    Console.writeLine(none.isNull());
+    Console.writeLine(p.isNull());
+
+    // Pointers in a struct and an array; a pointer to a pointer.
+    var cells = [p, last];
+    Console.writeLine(unsafe { cells[1].read() });
+    let pointerToPointer = borrow mut cells[0] as *mut *mut u32;
+    unsafe { pointerToPointer.write(last); }
+    Console.writeLine(unsafe { cells[0].read() });
+    return 0;
+}
+// expect-stdout: 16
+// expect-stdout: 10
+// expect-stdout: 2
+// expect-stdout: 1
+// expect-stdout: 12
+// expect-stdout: 42
+// expect-stdout: -7
+// expect-stdout: -7
+// expect-stdout: 1
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: false
+// expect-stdout: 10
+// expect-stdout: 10

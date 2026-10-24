@@ -330,6 +330,18 @@ public sealed class NirBuilder
             case HirExprStmt { Expression: HirTry or HirUnwrap } resultStmt when resultStmt.Expression.Type.Kind == TypeKind.Void:
                 WithStatementTemps(() => LowerResultAccess(resultStmt.Expression));
                 break;
+            case HirExprStmt { Expression: HirBuiltinCall { Function: BuiltinFunction.PtrWrite } write }:
+                WithStatementTemps(() =>
+                {
+                    // An assignment to the place `(*p)`; nothing is read or destroyed there (type-system.md §27.5).
+                    var operands = LowerOperands(write.Arguments);
+                    if (!operands.IsDefault && operands[0] is NirPlaceOperand pointer)
+                    {
+                        _span = stmt.Span;
+                        Emit(new NirAssign(pointer.Place.Deref(), new NirUse(operands[1])));
+                    }
+                });
+                break;
             case HirExprStmt exprStmt when TypeTable.NeedsDrop(exprStmt.Expression.Type):
                 // A discarded value that needs drop is a temporary: destroyed at the end of the statement (§17.5).
                 WithStatementTemps(() => AssignRvalue(new NirPlace(NewTemp(exprStmt.Expression.Type)), exprStmt.Expression));
@@ -1003,6 +1015,15 @@ public sealed class NirBuilder
                     Terminate(new NirExit(code));
                 }
                 return null;
+            }
+            case HirBuiltinCall { Function: BuiltinFunction.PtrRead } read:
+            {
+                // A copy from the place `(*p)` (type-system.md §27.5).
+                if (LowerOperand(read.Arguments[0]) is not NirPlaceOperand pointer)
+                {
+                    return null;
+                }
+                return new NirUse(Read(pointer.Place.Deref()));
             }
             case HirBuiltinCall { Function: BuiltinFunction.VectorPush or BuiltinFunction.StringAppend or BuiltinFunction.SlotMapInsert } mutation:
             {

@@ -18,7 +18,11 @@ Notation: EBNF. `'x'` is a literal token, `X?` optional, `X*` zero or more, `X+`
 - Whitespace: space, tab, line terminators, form feed.
 - `// ...` to end of line. `/* ... */` block comments do **not** nest. An unterminated block
   comment is error N0003.
-- Comments and whitespace are discarded (no trivia retained in M1).
+- Comments and whitespace are discarded (no trivia retained in M1), except doc comments (M8a).
+- **Doc comments** (M8a): a line comment that starts with exactly `///` (not `////`). A run of doc
+  comment lines, with only whitespace between them, is attached to the declaration whose first token
+  follows the run directly. Its text is each line after `///` with leading spaces removed. Doc
+  comments elsewhere are ordinary comments. Used by the `Safety:` rule (type-system.md §27.4).
 
 ### 1.3 Identifiers and keywords
 ```
@@ -99,7 +103,7 @@ EnumDecl   = 'enum' Identifier TypeParams? '{' (Variant (',' Variant)* ','?)? '}
 Variant    = Identifier ('(' Type (',' Type)* ','? ')')?
 Visibility = 'public' | 'internal' | 'private'
 
-FunctionDecl = 'fn' Identifier TypeParams? '(' ParamList? ')' ('->' Type)? FunctionBody
+FunctionDecl = 'unsafe'? 'fn' Identifier TypeParams? '(' ParamList? ')' ('->' Type)? FunctionBody   (* 'unsafe': M8a *)
 ParamList    = (Receiver | Param) (',' Param)* ','?
 Receiver     = ('borrow' 'mut'?)? 'this'   (* M2a: by value; M2b: reference receivers *)
 Param        = Identifier ':' Type
@@ -119,6 +123,7 @@ Type = QualifiedName
      | 'Result' '<' Type ',' Type '>'          (* M3a; type-system.md §17 *)
      | Type '?'                                (* M6c: optional; `borrow T?` is an optional reference *)
      | Identifier '<' Type (',' Type)* '>'     (* M6a: an instantiation of a generic struct or enum; also Box, Pool, … *)
+     | '*' 'mut'? Type                         (* M8a: raw pointer; type-system.md §27 *)
 Sources = '(' Identifier (',' Identifier)* ')'
 
 Block = '{' Statement* '}'
@@ -134,6 +139,7 @@ Statement = Block
           | 'defer' Statement                               (* M2c *)
           | MatchStmt                                       (* M2d; type-system.md §15.2 *)
           | 'for' '(' Identifier 'in' Expr ('..' Expr)? ')' Block   (* M2d; type-system.md §16.4 *)
+          | 'unsafe' Block                                  (* M8a; type-system.md §27.4 *)
           | Expr AssignOp Expr ';'        (* assignment: a statement, not an expression *)
           | Expr ';'
 LocalDecl = ('let' | 'var') Identifier (':' Type)? ('=' Expr)? ';'
@@ -175,6 +181,7 @@ The ordering puts bitwise operators **above** comparisons (as in Rust and Swift)
 ```
 Primary = IntLiteral | FloatLiteral | StringLiteral | CharLiteral | 'true' | 'false'
         | Identifier GenericArgs? | '(' Expr ')' | 'this'
+        | 'unsafe' '{' Expr '}'                              (* M8a: an unsafe expression *)
         | Identifier GenericArgs? '{' FieldInits? '}'       (* struct literal, M2a; GenericArgs M6a *)
         | '[' Expr (',' Expr)* ','? ']' | '[' Expr ';' IntLiteral ']'   (* array literals, M2d *)
 FieldInits = FieldInit (',' FieldInit)* ','?
@@ -189,7 +196,7 @@ Arg     = 'mut' Expr | Expr                (* `mut x` for a `borrow mut` paramet
 
 **Generic arguments in expressions** (`truncate<i64>(x)`, and since M6a `id<i32>(x)`,
 `Pair<u8>.make()` and `Pair<u8> { … }`): after an identifier, `<` starts generic arguments if the
-tokens up to the matching `>` can only form types (identifiers, `.`, `,`, `;`, integer literals,
+tokens up to the matching `>` can only form types (identifiers, `.`, `,`, `;`, `*` (M8a), integer literals,
 `borrow`, `mut`, and balanced `<…>` and `[…]`) and the `>` is followed by `(`, `.` or `{`.
 Otherwise `<` is the less-than operator. Write `(f < T) > (x)` to mean the comparison.
 

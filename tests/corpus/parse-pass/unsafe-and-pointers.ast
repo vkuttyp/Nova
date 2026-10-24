@@ -1,0 +1,27 @@
+(unit
+  (struct default Node
+    (field default next (ptr-mut Node))
+    (field default data (ptr (ptr u8)))
+    (unsafe-fn default follow (params (borrow this)) (returns (ptr-mut Node))
+      (=> (. this next))
+    )
+  )
+  (unsafe-fn public first (params (p (ptr u32))) (returns u32)
+    (=> (call (. p read)))
+  )
+  (fn default main (params) (returns i32)
+    (block
+      (var x = 5u32)
+      (let p = (as (borrow-mut x) (ptr-mut u32)))
+      (unsafe
+        (block
+          (expr (call (. p write) 6))
+        )
+      )
+      (let y = (unsafe (call first p)))
+      (let q : (ptr void) = (as p (ptr void)))
+      (let n = (as 0 (ptr-mut u8)))
+      (return (as y i32))
+    )
+  )
+)

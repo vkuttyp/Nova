@@ -62,6 +62,11 @@ public enum TypeKind
     Resource,
     /// <summary>A type parameter inside a generic declaration (type-system.md §20.3): opaque.</summary>
     TypeParameter,
+    /// <summary>
+    /// <c>*T</c> or <c>*mut T</c> (type-system.md §27): a Copy address of <see cref="NovaType.Pointee"/> (or <c>void</c>),
+    /// with no loans. Never dereferenced implicitly.
+    /// </summary>
+    RawPointer,
 }
 
 /// <summary>
@@ -290,6 +295,19 @@ public sealed class NovaType
         Pointee = pointee;
         IsMutableReference = isMutable;
     }
+
+    /// <summary>A raw pointer (§27.1); the third parameter only selects this constructor.</summary>
+    internal NovaType(NovaType pointee, bool isMutable, TypeKind kind)
+        : this(kind, (isMutable ? "*mut " : "*") + pointee.Name)
+    {
+        Pointee = pointee;
+        IsMutablePointer = isMutable;
+    }
+
+    /// <summary>True for <c>*mut T</c>.</summary>
+    public bool IsMutablePointer { get; }
+
+    public bool IsRawPointer => Kind == TypeKind.RawPointer;
 
     /// <summary>A type parameter (§20.3).</summary>
     internal NovaType(string name)
@@ -561,6 +579,20 @@ public sealed class TypeTable
         return array;
     }
 
+    private readonly Dictionary<(NovaType, bool), NovaType> _pointers = [];
+
+    /// <summary>The unique <c>*T</c> or <c>*mut T</c> (§27.1).</summary>
+    public NovaType PointerTo(NovaType pointee, bool isMutable)
+    {
+        ArgumentNullException.ThrowIfNull(pointee);
+        if (!_pointers.TryGetValue((pointee, isMutable), out var pointer))
+        {
+            pointer = new NovaType(pointee, isMutable, TypeKind.RawPointer);
+            _pointers.Add((pointee, isMutable), pointer);
+        }
+        return pointer;
+    }
+
     /// <summary><c>Slice&lt;T&gt;</c> or <c>SliceMut&lt;T&gt;</c>.</summary>
     public NovaType SliceOf(NovaType element, bool isMutable) => ReferenceTo(ArrayOf(element, -1), isMutable);
 
@@ -729,6 +761,8 @@ public sealed class TypeTable
             case TypeKind.Reference:
                 // LP64 targets only in M2 (TargetInfo.PointerBits is asserted in the generated C).
                 return type.IsSlice ? (16, 8) : (8, 8); // a slice is (pointer, u64 length)
+            case TypeKind.RawPointer:
+                return (8, 8); // one address (§27.1)
             case TypeKind.Box:
                 return type.IsPoolBox ? (16, 8) : (8, 8); // a pool box also points to its pool
             case TypeKind.Vector:

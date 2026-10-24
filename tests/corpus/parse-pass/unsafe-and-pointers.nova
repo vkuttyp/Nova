@@ -1,0 +1,25 @@
+// Raw pointers and unsafe (grammar.md §2, type-system.md §27).
+struct Node {
+    next: *mut Node;
+    data: **u8;
+
+    /// Safety: `next` is live or null.
+    unsafe fn follow(borrow this) -> *mut Node => this.next;
+}
+
+/// Safety: callers pass a live pointer.
+/// A second doc line.
+public unsafe fn first(p: *u32) -> u32 => p.read();
+
+//// Four slashes: an ordinary comment, so no doc.
+fn main() -> i32 {
+    var x = 5u32;
+    let p = borrow mut x as *mut u32;
+    unsafe {
+        p.write(6);
+    }
+    let y = unsafe { first(p) };
+    let q: *void = p as *void;
+    let n = 0 as *mut u8;
+    return y as i32;
+}

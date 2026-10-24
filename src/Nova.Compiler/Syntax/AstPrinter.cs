@@ -137,7 +137,7 @@ public sealed class AstPrinter
         }
         var parameters = string.Join(" ", parts);
         var returns = fn.ReturnType is null ? "" : $" (returns {Type(fn.ReturnType)})";
-        Line($"(fn {visibility} {Name(fn.Name)}{TypeParams([.. fn.RegionParameters, .. fn.TypeParameters])} (params{(parameters.Length > 0 ? " " + parameters : "")}){returns}");
+        Line($"({(fn.IsUnsafe ? "unsafe-fn" : "fn")} {visibility} {Name(fn.Name)}{TypeParams([.. fn.RegionParameters, .. fn.TypeParameters])} (params{(parameters.Length > 0 ? " " + parameters : "")}){returns}");
         _indent++;
         if (fn.Body is not null)
         {
@@ -249,6 +249,13 @@ public sealed class AstPrinter
                 _indent--;
                 Line(")");
                 break;
+            case UnsafeStmt u:
+                Line("(unsafe");
+                _indent++;
+                PrintStmt(u.Body);
+                _indent--;
+                Line(")");
+                break;
             case DeferStmt defer:
                 Line("(defer");
                 _indent++;
@@ -272,6 +279,7 @@ public sealed class AstPrinter
         NameExpr n when n.TypeArguments.IsEmpty => _symbols.GetName(n.Name.Name),
         NameExpr n => $"(generic {_symbols.GetName(n.Name.Name)} {string.Join(" ", n.TypeArguments.Select(Type))})",
         ParenExpr p => $"(paren {Expr(p.Inner)})",
+        UnsafeExpr u => $"(unsafe {Expr(u.Inner)})",
         UnaryExpr u => $"({(u.Op == UnaryOp.Negate ? "neg" : "not")} {Expr(u.Operand)})",
         BinaryExpr b => $"({BinaryOpText(b.Op)} {Expr(b.Left)} {Expr(b.Right)})",
         CastExpr c => $"(as {Expr(c.Operand)} {Type(c.Type)})",
@@ -313,6 +321,7 @@ public sealed class AstPrinter
         OptionalType o => $"(optional {Type(o.Inner)})",
         ArrayType a => $"[{Type(a.Element)}; {Expr(a.Length)}]",
         GenericType g => $"({Name(g.Name)} {string.Join(" ", g.Arguments.Select(Type))})",
+        PointerType p => $"({(p.IsMutable ? "ptr-mut" : "ptr")} {Type(p.Pointee)})",
         ReferenceType r => $"({(r.IsMutable ? "borrow-mut" : "borrow")}{(r.HasSources ? "(" + string.Join(" ", r.Sources.Select(Name)) + ")" : "")} {Type(r.Pointee)})",
         _ => throw new InvalidOperationException($"unknown type syntax {type.GetType().Name}"),
     };

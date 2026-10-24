@@ -236,6 +236,8 @@ stays dead.
 `nova interp: fault: <what> at <file>:<line>:<column>` on standard error and exit status 70:
 - an access to an ended allocation, or outside an allocation's bounds;
 - a dereference of null;
+- a misaligned access through a raw pointer (M8a): the address is not a multiple of the pointee's
+  alignment;
 - a write to static memory;
 - `nova_free` of anything but the base of a live heap allocation;
 - a *use* of uninitialised bytes. Heap memory starts uninitialised. Each byte carries an
@@ -244,7 +246,7 @@ stays dead.
   is a use.
 
 No correct program can fault. A fault means the compiler, its runtime, or its checks let an
-unsafe program through. This makes the interpreter a dynamic safety oracle: liveness, bounds and
+unsafe program through, or (since M8a) that unsafe code broke its contract (`unsafe.md` §2). This makes the interpreter a dynamic safety oracle: liveness, bounds and
 initialisation. It does not track borrows (no Stacked Borrows), so it does not catch aliasing
 violations that stay in bounds.
 

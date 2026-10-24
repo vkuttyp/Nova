@@ -53,6 +53,12 @@ public sealed record FunctionDecl(
 
     /// <summary>The <c>region</c> parameters, declared before the type parameters (type-system.md §25.1).</summary>
     public ImmutableArray<TypeParameter> RegionParameters { get; init; } = [];
+
+    /// <summary><c>unsafe fn</c> (type-system.md §27.4).</summary>
+    public bool IsUnsafe { get; init; }
+
+    /// <summary>The doc comment before the declaration (grammar.md §1.2), or null.</summary>
+    public string? Doc { get; init; }
 }
 
 /// <summary>A type parameter <c>T</c>, with the interface bounds of <c>T: I + J</c> (§21; empty without).</summary>
@@ -146,6 +152,9 @@ public abstract record TypeSyntax(TextSpan Span) : SyntaxNode(Span);
 public sealed record NamedType(QualifiedName Name, TextSpan Span) : TypeSyntax(Span);
 
 public sealed record MissingType(TextSpan Span) : TypeSyntax(Span);
+
+/// <summary><c>*T</c> or <c>*mut T</c>: a raw pointer (type-system.md §27.1).</summary>
+public sealed record PointerType(bool IsMutable, TypeSyntax Pointee, TextSpan Span) : TypeSyntax(Span);
 
 /// <summary><c>T?</c> (type-system.md §22.1).</summary>
 public sealed record OptionalType(TypeSyntax Inner, TextSpan Span) : TypeSyntax(Span);
@@ -244,6 +253,9 @@ public sealed record AssignStmt(Expr Target, AssignOp Op, Expr Value, TextSpan S
 
 public sealed record ExprStmt(Expr Expression, TextSpan Span) : Stmt(Span);
 
+/// <summary><c>unsafe { … }</c> as a statement (type-system.md §27.4).</summary>
+public sealed record UnsafeStmt(BlockStmt Body, TextSpan Span) : Stmt(Span);
+
 // ---- Expressions ----
 
 public abstract record Expr(TextSpan Span) : SyntaxNode(Span);
@@ -307,6 +319,9 @@ public sealed record MemberExpr(Expr Target, Identifier Member, TextSpan Span) :
 public sealed record ErrorExpr(TextSpan Span) : Expr(Span);
 
 public sealed record ThisExpr(TextSpan Span) : Expr(Span);
+
+/// <summary><c>unsafe { e }</c>: an unsafe expression (type-system.md §27.4).</summary>
+public sealed record UnsafeExpr(Expr Inner, TextSpan Span) : Expr(Span);
 
 /// <summary><c>borrow e</c> or <c>borrow mut e</c>.</summary>
 public sealed record BorrowExpr(bool IsMutable, Expr Operand, TextSpan Span) : Expr(Span);

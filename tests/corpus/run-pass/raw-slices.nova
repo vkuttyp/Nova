@@ -1,0 +1,39 @@
+// Slices from raw parts and safe wrappers around them (type-system.md §27.2-§27.3, unsafe.md §2).
+
+struct Buffer {
+    data: *mut u8;
+    length: usize;
+
+    /// Safety: `data` points to `length` live bytes (the caller of `over` promised it).
+    public fn bytes(borrow this) -> Slice<u8> => unsafe { Slice.fromRaw(this.data, this.length) };
+
+    /// Safety: as `bytes`, and nothing else reads or writes the bytes while the slice is used.
+    public fn bytesMut(borrow mut this) -> SliceMut<u8> => unsafe { SliceMut.fromRaw(this.data, this.length) };
+}
+
+/// Safety: `storage` outlives the buffer, which is used only inside `main`.
+fn main() -> i32 {
+    var storage = [104u8, 101, 108, 108, 111];
+    let whole = borrow mut storage[..];
+    var buffer = Buffer { data: whole.ptr, length: whole.length };
+    let view = buffer.bytes();
+    Console.writeLine(view.length);
+    Console.writeLine(view[4]);
+    let writable = buffer.bytesMut();
+    writable[0] = 72;
+    Console.writeBytes(buffer.bytes());
+    Console.writeLine();
+
+    // The address of element 0, for a slice and a string view.
+    let text = "abc";
+    let first = text.ptr;
+    Console.writeLine(unsafe { first.add(2).read() });
+    let empty = storage[5..];
+    Console.writeLine(empty.ptr as usize - (storage[..].ptr as usize));
+    return 0;
+}
+// expect-stdout: 5
+// expect-stdout: 111
+// expect-stdout: Hello
+// expect-stdout: 99
+// expect-stdout: 5

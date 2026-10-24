@@ -90,6 +90,9 @@ internal sealed class TypeChecker
         File,
         TcpListener,
         TcpStream,
+        Ptr,
+        Slice,
+        SliceMut,
     }
 
     private readonly IReadOnlyList<CompilationUnit> _units;
@@ -132,6 +135,10 @@ internal sealed class TypeChecker
     private bool _copyKnown;
     /// <summary>Nesting depth of deferred statements being checked: `?` may not appear in them (N0254).</summary>
     private int _deferDepth;
+    /// <summary>Nesting of `unsafe` blocks and expressions (type-system.md §27.4).</summary>
+    private int _unsafeDepth;
+    /// <summary>Did the current function's body use `unsafe`? (The Safety rule, §27.4.)</summary>
+    private bool _usedUnsafe;
     private EnumEntry _allocError = null!;
     private EnumEntry _ioError = null!;
     private StructEntry _systemHeap = null!;
@@ -139,7 +146,7 @@ internal sealed class TypeChecker
     /// <summary>Built-in items (AllocError, the allocators): emitted only if the program uses them.</summary>
     private readonly HashSet<object> _builtinItems = [];
     private readonly HashSet<object> _usedBuiltins = [];
-    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch", "Pool", "PoolBox", "Vector", "String", "SlotMap", "StableVector", "Handle", "File", "TcpListener", "TcpStream"];
+    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch", "Pool", "PoolBox", "Vector", "String", "SlotMap", "StableVector", "Handle", "File", "TcpListener", "TcpStream", "Ptr", "Slice", "SliceMut"];
 
     public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics)
     {
@@ -164,6 +171,9 @@ internal sealed class TypeChecker
             [symbols.Intern("File")] = Builtin.File,
             [symbols.Intern("TcpListener")] = Builtin.TcpListener,
             [symbols.Intern("TcpStream")] = Builtin.TcpStream,
+            [symbols.Intern("Ptr")] = Builtin.Ptr,
+            [symbols.Intern("Slice")] = Builtin.Slice,
+            [symbols.Intern("SliceMut")] = Builtin.SliceMut,
         };
         _thisSymbol = symbols.Intern("this");
         _frameMemory = new StructField(symbols.Intern("memory"), types.ScratchFrame, 0, default) { IsRegionPart = true };
@@ -791,6 +801,10 @@ internal sealed class TypeChecker
         {
             Error(DiagnosticCodes.ImplMismatch, method.Name.Span, $"interface method '{Name(method.Name.Name)}' needs a receiver: this, borrow this or borrow mut this");
         }
+        foreach (var method in decl.Methods.Where(m => m.IsUnsafe))
+        {
+            Error(DiagnosticCodes.Unsupported, method.Name.Span, "interface methods cannot be 'unsafe' yet (type-system.md §27.4)");
+        }
     }
 
     /// <summary>An interface reference <c>I</c> or <c>I&lt;Args&gt;</c> in a bound or an `impl` (§21); null after an error.</summary>
@@ -900,6 +914,10 @@ internal sealed class TypeChecker
     /// <summary>Null if <paramref name="actual"/> has the interface's signature <paramref name="expected"/>; else what differs.</summary>
     private static string? SignatureMismatch(HirFunction expected, HirFunction actual)
     {
+        if (expected.Syntax.IsUnsafe != actual.Syntax.IsUnsafe)
+        {
+            return actual.Syntax.IsUnsafe ? "it must not be 'unsafe'" : "it must be 'unsafe'";
+        }
         if (expected.ReceiverKind != actual.ReceiverKind)
         {
             return $"the receiver must be {ReceiverText(expected.ReceiverKind)}, not {ReceiverText(actual.ReceiverKind)}";
@@ -1464,6 +1482,22 @@ internal sealed class TypeChecker
                 return _types.Error;
             }
             return pointee.IsBottom ? _types.Error : _types.ReferenceTo(pointee, reference.IsMutable);
+        }
+        if (syntax is PointerType pointer)
+        {
+            var pointee = ResolveType(pointer.Pointee, allowVoid: true);
+            if (pointee.IsBottom)
+            {
+                return _types.Error;
+            }
+            if (TypeTable.IsScoped(pointee) || pointee.IsGeneric || pointee.IsUnsized)
+            {
+                Error(DiagnosticCodes.InvalidPointee, pointer.Pointee.Span, pointee.IsGeneric
+                    ? $"a raw pointer cannot point to '{pointee}': pointers to type parameters are not supported in v0 (type-system.md §27.1)"
+                    : $"a raw pointer cannot point to '{pointee}', which holds loans; point to the referenced type instead (type-system.md §27.1)");
+                return _types.Error;
+            }
+            return _types.PointerTo(pointee, pointer.IsMutable);
         }
         if (syntax is ArrayType arrayType)
         {
@@ -2502,6 +2536,11 @@ internal sealed class TypeChecker
             Error(DiagnosticCodes.InvalidMain, main.Syntax.Name.Span,
                 "'main' must take no parameters and return 'i32' or 'void'");
         }
+        else if (main.Syntax.IsUnsafe)
+        {
+            _source = main.Source;
+            Error(DiagnosticCodes.InvalidMain, main.Syntax.Name.Span, "'main' cannot be unsafe; put the unsafe code in an 'unsafe { ... }' block");
+        }
     }
 
     // ---- Constants ----
@@ -2634,6 +2673,8 @@ internal sealed class TypeChecker
         _typeEnvironment = function.Environment;
         _regions = RegionScope(function.Syntax, function.Owner);
         _loopDepth = 0;
+        _unsafeDepth = function.Syntax.IsUnsafe ? 1 : 0;
+        _usedUnsafe = false;
         _scopes = [[]];
         foreach (var parameter in function.Parameters)
         {
@@ -2660,10 +2701,33 @@ internal sealed class TypeChecker
             function.Body = new HirBlock([statement], expr.Span);
         }
 
+        if ((syntax.IsUnsafe || _usedUnsafe) && !HasSafetyComment(syntax.Doc))
+        {
+            Error(DiagnosticCodes.MissingSafetyComment, syntax.Name.Span, syntax.IsUnsafe
+                ? $"unsafe function '{Name(syntax.Name.Name)}' needs a '/// Safety:' doc comment stating what callers must guarantee (type-system.md §27.4)"
+                : $"function '{Name(syntax.Name.Name)}' uses 'unsafe' and needs a '/// Safety:' doc comment saying why it is sound (type-system.md §27.4)");
+        }
+        _unsafeDepth = 0;
+
         FlowAnalysis.Analyze(function, _symbols, _types, _diagnostics);
         _function = null;
         _typeEnvironment = new Dictionary<Symbol, NovaType>();
         _regions = [];
+    }
+
+    /// <summary>Does a doc comment have a line starting with <c>Safety:</c>? (§27.4)</summary>
+    private static bool HasSafetyComment(string? doc) =>
+        doc is not null && doc.Split('\n').Any(line => line.StartsWith("Safety:", StringComparison.Ordinal));
+
+    /// <summary>Reports N0280 unless the code being checked is in an unsafe context (U1, type-system.md §27.4).</summary>
+    private bool RequireUnsafe(TextSpan span, string what)
+    {
+        if (_unsafeDepth > 0)
+        {
+            return true;
+        }
+        Error(DiagnosticCodes.UnsafeOutsideUnsafe, span, $"{what} is unsafe: use it inside 'unsafe {{ ... }}' or an 'unsafe fn' (type-system.md §27.3)");
+        return false;
     }
 
     private HirBlock CheckBlock(BlockStmt block)
@@ -2719,6 +2783,14 @@ internal sealed class TypeChecker
                 return new HirExprStmt(CheckExpressionStatement(exprStmt.Expression), stmt.Span);
             case MatchStmt match:
                 return CheckMatch(match);
+            case UnsafeStmt unsafeStmt:
+            {
+                _usedUnsafe = true;
+                _unsafeDepth++;
+                var body = CheckBlock(unsafeStmt.Body);
+                _unsafeDepth--;
+                return body;
+            }
             case DeferStmt defer:
             {
                 _deferDepth++;
@@ -3297,6 +3369,10 @@ internal sealed class TypeChecker
         {
             return new HirReborrow(false, hir, expected, span);
         }
+        if (expected.IsRawPointer && hir.Type.IsMutablePointer && !expected.IsMutablePointer && ReferenceEquals(hir.Type.Pointee, expected.Pointee))
+        {
+            return new HirCast(hir, expected, span); // `*mut T` to `*T` (§27.1)
+        }
         // `borrow Box<T>` to `borrow T` (and mut to mut or shared): a reborrow of the box's contents (§18.2).
         if (expected.IsReference && hir.Type.Pointee is { IsBox: true } box && ReferenceEquals(box.Pointee, expected.Pointee)
             && (hir.Type.IsMutableReference || !expected.IsMutableReference))
@@ -3518,6 +3594,14 @@ internal sealed class TypeChecker
                 return new HirStringConst(text.Value, _types.StringView, text.Span); // static bytes: no loans (§22.2)
             case ParenExpr paren:
                 return Synth(paren.Inner, expected) with { Span = paren.Span };
+            case UnsafeExpr unsafeExpr:
+            {
+                _usedUnsafe = true;
+                _unsafeDepth++;
+                var inner = Synth(unsafeExpr.Inner, expected);
+                _unsafeDepth--;
+                return inner with { Span = unsafeExpr.Span };
+            }
             case ThisExpr:
                 if (LookupLocal(_thisSymbol) is { } receiver)
                 {
@@ -3756,6 +3840,12 @@ internal sealed class TypeChecker
             return borrowed.Type.IsBottom ? borrowed : new HirBuiltinCall(BuiltinFunction.VectorCapacity, [borrowed], _types.USize, member.Span);
         }
         var value = AutoDeref(synthesized);
+        if (value is HirDeref { Type.IsUnsized: true, Reference.Type: { IsReference: true } view } && Name(member.Member.Name) == "ptr")
+        {
+            // The address of element 0 (§27.2).
+            var slice = Coerce(((HirDeref)value).Reference, view, member.Target.Span); // a SliceMut is reborrowed, not moved
+            return new HirBuiltinCall(BuiltinFunction.SlicePtr, [slice], _types.PointerTo(value.Type.Element!, view.IsMutableReference), member.Span);
+        }
         if (value.Type.Kind == TypeKind.Array)
         {
             if (Name(member.Member.Name) != "length")
@@ -4022,6 +4112,13 @@ internal sealed class TypeChecker
             }
             return new HirBinary(op, leftHir, rightHir, _types.Bool, binary.Span); // compares the bytes (§22.2)
         }
+        if (leftHir.Type.IsRawPointer && rightHir.Type.IsRawPointer && ReferenceEquals(leftHir.Type.Pointee, rightHir.Type.Pointee))
+        {
+            // `*mut T` coerces to `*T` (§27.1).
+            var shared = _types.PointerTo(leftHir.Type.Pointee!, isMutable: false);
+            leftHir = leftHir.Type.IsMutablePointer ? new HirCast(leftHir, shared, leftHir.Span) : leftHir;
+            rightHir = rightHir.Type.IsMutablePointer ? new HirCast(rightHir, shared, rightHir.Span) : rightHir;
+        }
         if (!ReferenceEquals(leftHir.Type, rightHir.Type))
         {
             Error(DiagnosticCodes.InvalidOperandTypes, binary.Span,
@@ -4059,7 +4156,7 @@ internal sealed class TypeChecker
         {
             _ when IsArithmetic(op) => type.IsInteger,
             _ when IsBitwise(op) || IsShift(op) => type.IsUnsignedInteger,
-            BinaryOp.Equal or BinaryOp.NotEqual => type.IsInteger || type.Kind is TypeKind.Bool or TypeKind.Handle,
+            BinaryOp.Equal or BinaryOp.NotEqual => type.IsInteger || type.Kind is TypeKind.Bool or TypeKind.Handle or TypeKind.RawPointer,
             _ when IsComparison(op) => type.IsInteger,
             _ => type.Kind == TypeKind.Bool,
         };
@@ -4081,13 +4178,24 @@ internal sealed class TypeChecker
             Synth(cast.Operand, null);
             return ErrorResult(cast.Span);
         }
+        // `0 as *mut T`: a literal address (§27.2).
+        if (target.IsRawPointer && IsFlexible(cast.Operand))
+        {
+            var address = CheckExpr(cast.Operand, _types.USize);
+            return address.Type.IsBottom ? address : new HirCast(address, target, cast.Span);
+        }
         // `5 as u64`: a flexible literal simply takes the target type.
         if (IsFlexible(cast.Operand))
         {
             return CheckExpr(cast.Operand, target) with { Span = cast.Span };
         }
 
-        var operand = AutoDeref(Synth(cast.Operand, null));
+        var synthesized = Synth(cast.Operand, null);
+        if (target.IsRawPointer || synthesized.Type.IsRawPointer)
+        {
+            return CheckPointerCast(synthesized, target, cast.Span);
+        }
+        var operand = AutoDeref(synthesized);
         if (operand.Type.IsBottom)
         {
             return operand;
@@ -4100,6 +4208,156 @@ internal sealed class TypeChecker
             return ErrorResult(cast.Span);
         }
         return ReferenceEquals(operand.Type, target) ? operand with { Span = cast.Span } : new HirCast(operand, target, cast.Span);
+    }
+
+    /// <summary>The pointer conversions of type-system.md §27.2; all of them are safe.</summary>
+    private HirExpr CheckPointerCast(HirExpr operand, NovaType target, TextSpan span)
+    {
+        if (operand.Type.IsBottom)
+        {
+            return operand;
+        }
+        var from = operand.Type;
+        var ok = target.IsRawPointer
+            ? from.IsRawPointer
+              || ReferenceEquals(from, _types.USize)
+              || (from.IsReference && !from.IsSlice && !from.IsStringView && ReferenceEquals(from.Pointee, target.Pointee)
+                  && (from.IsMutableReference || !target.IsMutablePointer))
+            : from.IsRawPointer && ReferenceEquals(target, _types.USize);
+        if (!ok)
+        {
+            var hint = from.IsReference && target.IsMutablePointer && !from.IsMutableReference
+                ? "; a '*mut' pointer needs a 'borrow mut' reference"
+                : from.IsSlice || from.IsStringView ? "; use '.ptr' for a slice's address" : "";
+            Error(DiagnosticCodes.InvalidCast, span, $"cannot convert '{from}' to '{target}' with 'as'{hint} (type-system.md §27.2)");
+            return ErrorResult(span);
+        }
+        return ReferenceEquals(from, target) ? operand with { Span = span } : new HirCast(operand, target, span);
+    }
+
+    /// <summary>A method on a raw pointer (type-system.md §27.2–§27.3).</summary>
+    private HirExpr CheckPointerMethod(CallExpr call, MemberExpr member, HirExpr pointer)
+    {
+        var name = Name(member.Member.Name);
+        var type = pointer.Type;
+        var pointee = type.Pointee!;
+        (BuiltinFunction Function, NovaType? Argument)? signature = name switch
+        {
+            "read" => (BuiltinFunction.PtrRead, null),
+            "write" => (BuiltinFunction.PtrWrite, pointee),
+            "add" => (BuiltinFunction.PtrAdd, _types.USize),
+            "sub" => (BuiltinFunction.PtrSub, _types.USize),
+            "offset" => (BuiltinFunction.PtrOffset, _types.ISize),
+            "isNull" => (BuiltinFunction.PtrIsNull, null),
+            _ => null,
+        };
+        if (signature is not var (function, argumentType))
+        {
+            Error(DiagnosticCodes.NotAStruct, member.Member.Span,
+                $"'{type}' has no method '{name}'; raw pointers have read, write, add, sub, offset and isNull (type-system.md §27)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var expectedCount = argumentType is null ? 0 : 1;
+        if (call.Arguments.Length != expectedCount)
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, $"'{name}' takes {expectedCount} argument(s) but {call.Arguments.Length} were supplied");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (function == BuiltinFunction.PtrIsNull)
+        {
+            return new HirBuiltinCall(function, [pointer], _types.Bool, call.Span);
+        }
+        var unsafeOk = RequireUnsafe(call.Span, $"'{name}' through a raw pointer");
+        if (pointee.Kind == TypeKind.Void)
+        {
+            Error(DiagnosticCodes.InvalidPointerOperation, call.Span, $"'{name}' needs a typed pointer, but '{type}' points to 'void'; cast it first (type-system.md §27.3)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (function is BuiltinFunction.PtrRead or BuiltinFunction.PtrWrite && !TypeTable.IsCopy(pointee))
+        {
+            Error(DiagnosticCodes.InvalidPointerOperation, call.Span, $"'{name}' through a raw pointer needs a Copy type, but '{pointee}' is not (type-system.md §27.3)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (function == BuiltinFunction.PtrWrite && !type.IsMutablePointer)
+        {
+            Error(DiagnosticCodes.InvalidPointerOperation, call.Span, $"cannot write through '{type}'; writing needs a '*mut {pointee}' (type-system.md §27.3)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var arguments = argumentType is null ? [pointer] : ImmutableArray.Create(pointer, CheckArgument(call.Arguments[0], argumentType));
+        if (!unsafeOk || arguments.Any(a => a.Type.IsBottom))
+        {
+            return ErrorResult(call.Span);
+        }
+        var result = function switch
+        {
+            BuiltinFunction.PtrRead => pointee,
+            BuiltinFunction.PtrWrite => _types.Void,
+            _ => type,
+        };
+        return new HirBuiltinCall(function, arguments, result, call.Span);
+    }
+
+    /// <summary><c>Ptr.toBorrow(p)</c>, <c>Ptr.toBorrowMut(p)</c>, <c>Slice.fromRaw(p, n)</c>, <c>SliceMut.fromRaw(p, n)</c> (§27.3).</summary>
+    private HirExpr CheckRawConstructor(CallExpr call, Builtin owner, MemberExpr member)
+    {
+        var name = Name(member.Member.Name);
+        var known = (owner, name) is (Builtin.Ptr, "toBorrow" or "toBorrowMut") or (Builtin.Slice or Builtin.SliceMut, "fromRaw");
+        if (!known)
+        {
+            Error(DiagnosticCodes.UndefinedName, member.Member.Span, owner == Builtin.Ptr
+                ? $"'Ptr' has no function '{name}'; it has 'toBorrow' and 'toBorrowMut' (type-system.md §27.3)"
+                : $"'{owner}' has no function '{name}'; it has 'fromRaw' (type-system.md §27.3)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var isSlice = owner != Builtin.Ptr;
+        var expectedCount = isSlice ? 2 : 1;
+        if (call.Arguments.Length != expectedCount)
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, $"'{owner}.{name}' takes {expectedCount} argument(s) but {call.Arguments.Length} were supplied");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var unsafeOk = RequireUnsafe(call.Span, $"'{owner}.{name}'");
+        var pointer = Synth(call.Arguments[0], null);
+        var length = isSlice ? CheckExpr(call.Arguments[1], _types.USize) : null;
+        if (pointer.Type.IsBottom || (length?.Type.IsBottom ?? false))
+        {
+            return ErrorResult(call.Span);
+        }
+        if (!pointer.Type.IsRawPointer)
+        {
+            Error(DiagnosticCodes.TypeMismatch, call.Arguments[0].Span, $"expected a raw pointer, found '{pointer.Type}'");
+            return ErrorResult(call.Span);
+        }
+        var pointee = pointer.Type.Pointee!;
+        var isMutable = name == "toBorrowMut" || owner == Builtin.SliceMut;
+        if (pointee.Kind == TypeKind.Void)
+        {
+            Error(DiagnosticCodes.InvalidPointerOperation, call.Arguments[0].Span, $"'{owner}.{name}' needs a typed pointer, but '{pointer.Type}' points to 'void'; cast it first");
+            return ErrorResult(call.Span);
+        }
+        if (isMutable && !pointer.Type.IsMutablePointer)
+        {
+            Error(DiagnosticCodes.InvalidPointerOperation, call.Arguments[0].Span, $"'{owner}.{name}' gives mutable access, so it needs a '*mut {pointee}', not '{pointer.Type}'");
+            return ErrorResult(call.Span);
+        }
+        if (isSlice && !CheckElement(pointee, -1, call.Arguments[0].Span))
+        {
+            return ErrorResult(call.Span);
+        }
+        if (!unsafeOk)
+        {
+            return ErrorResult(call.Span);
+        }
+        return isSlice
+            ? new HirBuiltinCall(BuiltinFunction.SliceFromRaw, [pointer, length!], _types.SliceOf(pointee, isMutable), call.Span)
+            : new HirCast(pointer, _types.ReferenceTo(pointee, isMutable), call.Span);
     }
 
     // ---- Calls ----
@@ -4129,6 +4387,9 @@ internal sealed class TypeChecker
             case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
                 when Lookup(target.Name.Name) is Builtin builtin and (Builtin.Console or Builtin.Process):
                 return CheckBuiltinMemberCall(call, builtin, target, member);
+            case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
+                when Lookup(target.Name.Name) is Builtin builtin and (Builtin.Ptr or Builtin.Slice or Builtin.SliceMut):
+                return CheckRawConstructor(call, builtin, member);
             case MemberExpr { Target: NameExpr target } member
                 when Lookup(target.Name.Name) is StructEntry entry:
             {
@@ -4167,6 +4428,10 @@ internal sealed class TypeChecker
     {
         var parameters = receiver is null ? function.Parameters : function.Parameters[1..];
         var displayName = function.Owner is null ? Name(function.Name) : $"{function.Owner}.{Name(function.Name)}";
+        if (function.Syntax.IsUnsafe)
+        {
+            RequireUnsafe(call.Span, $"calling unsafe function '{displayName}'");
+        }
         if (call.Arguments.Length != parameters.Length)
         {
             Error(DiagnosticCodes.ArgumentCount, call.Span,
@@ -4613,6 +4878,10 @@ internal sealed class TypeChecker
         {
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
+        }
+        if (AutoDeref(receiver) is { Type.IsRawPointer: true } pointer)
+        {
+            return CheckPointerMethod(call, member, pointer);
         }
         var vector = receiver;
         while (vector.Type.IsReference)

@@ -285,6 +285,17 @@ public sealed partial class NirInterpreter
                     break;
                 case ProjectionKind.Deref when type.IsStableVector || type.IsSlice || type.IsVector:
                     break;
+                case ProjectionKind.Deref when type.IsRawPointer:
+                {
+                    // Unsafe code's accesses are checked like any other, and for alignment too (unsafe.md §5).
+                    address = Pointer(address);
+                    var align = (ulong)AlignOf(type.Pointee!);
+                    if (address != 0 && address % align != 0)
+                    {
+                        throw new InterpreterFault($"misaligned access: a '{type.Pointee}' at 0x{address:x} needs alignment {align}");
+                    }
+                    break;
+                }
                 case ProjectionKind.Deref:
                     address = Pointer(address); // a reference, a box, or a pool box's first field
                     break;

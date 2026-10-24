@@ -19,6 +19,8 @@ public sealed class Lexer
     private readonly List<FloatLiteralValue> _floats = [];
     private readonly List<string> _strings = [];
     private readonly List<int> _chars = [];
+    private readonly Dictionary<int, string> _docs = [];
+    private readonly List<string> _pendingDoc = [];
 
     private int _pos;
 
@@ -44,7 +46,8 @@ public sealed class Lexer
             [.. lexer._ints],
             [.. lexer._floats],
             [.. lexer._strings],
-            [.. lexer._chars]);
+            [.. lexer._chars],
+            lexer._docs);
     }
 
     private int Ch(int offset = 0)
@@ -56,8 +59,15 @@ public sealed class Lexer
     private void Error(string code, int start, int end, string message) =>
         _diagnostics.Error(code, _source, TextSpan.FromBounds(start, end), message);
 
-    private void Add(TokenKind kind, int start, int data = 0) =>
+    private void Add(TokenKind kind, int start, int data = 0)
+    {
+        if (_pendingDoc.Count > 0)
+        {
+            _docs[_tokens.Count] = string.Join('\n', _pendingDoc);
+            _pendingDoc.Clear();
+        }
         _tokens.Add(new Token(kind, TextSpan.FromBounds(start, _pos), data));
+    }
 
     private void Run()
     {
@@ -108,13 +118,25 @@ public sealed class Lexer
             }
             else if (c == '/' && Ch(1) == '/')
             {
+                var start = _pos;
                 while (_pos < _text.Length && _text[_pos] is not ('\n' or '\r'))
                 {
                     _pos++;
                 }
+                // A doc comment is exactly "///" (grammar.md §1.2); any other comment ends a run of them.
+                var length = _pos - start;
+                if (length >= 3 && _text[start + 2] == '/' && (length == 3 || _text[start + 3] != '/'))
+                {
+                    _pendingDoc.Add(_text[(start + 3).._pos].TrimStart(' ', '\t'));
+                }
+                else
+                {
+                    _pendingDoc.Clear();
+                }
             }
             else if (c == '/' && Ch(1) == '*')
             {
+                _pendingDoc.Clear();
                 var start = _pos;
                 var close = _text.IndexOf("*/", _pos + 2, StringComparison.Ordinal);
                 if (close < 0)

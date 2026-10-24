@@ -1,0 +1,69 @@
+// U1: every unsafe operation needs an unsafe context (type-system.md §27.3-§27.4, N0280).
+struct Cell { value: u32; }
+
+/// Safety: `p` points to a live `u32`.
+unsafe fn peek(p: *u32) -> u32 => p.read();
+
+/// Safety: the methods below state their own contracts.
+struct Holder {
+    p: *mut u32;
+
+    /// Safety: `p` is live.
+    unsafe fn get(borrow this) -> u32 => this.p.read();
+}
+
+fn reads(p: *u32) -> u32 {
+    return p.read(); // error[N0280]
+}
+
+fn writes(p: *mut u32) {
+    p.write(1); // error[N0280]
+}
+
+fn steps(p: *u32) -> *u32 {
+    let q = p.add(1); // error[N0280]
+    let r = p.sub(1); // error[N0280]
+    return p.offset(-1); // error[N0280]
+}
+
+fn references(p: *mut Cell) -> u32 {
+    let shared = Ptr.toBorrow(p); // error[N0280]
+    let exclusive = Ptr.toBorrowMut(p); // error[N0280]
+    return 0;
+}
+
+fn slices(p: *mut u8) -> usize {
+    let a = Slice.fromRaw(p, 4); // error[N0280]
+    let b = SliceMut.fromRaw(p, 4); // error[N0280]
+    return 0;
+}
+
+fn calls(p: *u32, h: Holder) -> u32 {
+    let a = peek(p); // error[N0280]
+    return h.get(); // error[N0280]
+}
+
+/// Safety: the block ends before the second read.
+fn blockEnds(p: *u32) -> u32 {
+    unsafe { let ok = p.read(); }
+    return p.read(); // error[N0280]
+}
+
+/// Safety: an unsafe expression covers only its own expression.
+fn expressionEnds(p: *u32) -> u32 {
+    let ok = unsafe { p.read() };
+    return ok + p.read(); // error[N0280]
+}
+
+// Making, converting and comparing pointers is safe: none of these is an error.
+fn safeOperations(x: borrow mut u32, s: Slice<u8>) -> bool {
+    let p = x as *mut u32;
+    let q = p as *u8;
+    let a = p as usize;
+    let back = a as *u32;
+    let n = 0 as *mut u8;
+    let first = s.ptr;
+    return p.isNull() || back == p || first == q;
+}
+
+fn main() {}

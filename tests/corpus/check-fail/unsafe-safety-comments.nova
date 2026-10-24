@@ -1,0 +1,55 @@
+// U2: the Safety rule (type-system.md §27.4, N0283) and unsafe declarations (N0219, N0216, N0267).
+
+unsafe fn noComment(p: *u8) -> u8 => p.read(); // error[N0283]
+
+/// Reads the byte.
+unsafe fn commentWithoutSafety(p: *u8) -> u8 => p.read(); // error[N0283]
+
+fn usesUnsafe(p: *u8) -> u8 { // error[N0283]
+    return unsafe { p.read() };
+}
+
+fn usesUnsafeBlock(p: *mut u8) { // error[N0283]
+    unsafe { p.write(1); }
+}
+
+/// Safety: callers pass a live byte.
+unsafe fn documented(p: *u8) -> u8 => p.read();
+
+/// Some text first.
+/// Safety: the line does not have to be the first one.
+fn documentedLater(p: *u8) -> u8 => unsafe { p.read() };
+
+/// Safety: an ordinary comment between the doc comment and the function ends the doc comment.
+// An ordinary comment.
+fn interrupted(p: *u8) -> u8 => unsafe { p.read() }; // error[N0283]
+
+//// Safety: four slashes make an ordinary comment.
+fn fourSlashes(p: *u8) -> u8 => unsafe { p.read() }; // error[N0283]
+
+struct Device {
+    base: *mut u32;
+
+    unsafe fn reset(borrow mut this) { this.base.write(0); } // error[N0283]
+
+    /// Safety: `base` is a live register (the constructor's contract).
+    public fn status(borrow this) -> u32 => unsafe { this.base.read() };
+}
+
+interface Reader {
+    unsafe fn readOne(borrow this) -> u8; // error[N0216]
+}
+
+interface Plain {
+    fn value(borrow this) -> u8;
+}
+
+struct Thing { b: u8; }
+
+impl Plain for Thing {
+    /// Safety: nothing to promise.
+    unsafe fn value(borrow this) -> u8 => this.b; // error[N0267]
+}
+
+/// Safety: main may not be unsafe at all.
+unsafe fn main() {} // error[N0219]

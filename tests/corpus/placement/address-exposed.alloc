@@ -1,0 +1,2 @@
+placement/address-exposed.nova:6:13: Box<i32> stays on heap: address exposed: the function converts between references and raw pointers
+placement/address-exposed.nova:13:13: Box<i32> placed on stack (does not escape; SystemHeap is placement-transparent)

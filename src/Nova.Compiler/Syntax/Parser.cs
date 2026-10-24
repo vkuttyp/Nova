@@ -159,7 +159,7 @@ public sealed class Parser
         return new NamespaceDecl(name, SpanFrom(start));
     }
 
-    private static bool IsItemStart(TokenKind kind) => kind is TokenKind.FnKeyword or TokenKind.ConstKeyword
+    private static bool IsItemStart(TokenKind kind) => kind is TokenKind.FnKeyword or TokenKind.UnsafeKeyword or TokenKind.ConstKeyword
         or TokenKind.StructKeyword or TokenKind.EnumKeyword or TokenKind.InterfaceKeyword or TokenKind.ImplKeyword
         or TokenKind.PublicKeyword or TokenKind.InternalKeyword or TokenKind.PrivateKeyword;
 
@@ -212,7 +212,7 @@ public sealed class Parser
             Advance();
         }
 
-        if (At(TokenKind.FnKeyword))
+        if (AtFunction)
         {
             return ParseFunction(visibility, start);
         }
@@ -244,8 +244,15 @@ public sealed class Parser
         return null;
     }
 
+    /// <summary>At <c>fn</c> or <c>unsafe fn</c> (type-system.md §27.4).</summary>
+    private bool AtFunction => At(TokenKind.FnKeyword) || (At(TokenKind.UnsafeKeyword) && Peek(1).Kind == TokenKind.FnKeyword);
+
     private FunctionDecl ParseFunction(Visibility visibility, int start)
     {
+        // The doc comment belongs to the declaration's first token: the visibility, if any (grammar.md §1.2).
+        var firstToken = _pos > 0 && Previous.Span.Start == start && Current.Span.Start != start ? _pos - 1 : _pos;
+        var doc = _stream.Docs.GetValueOrDefault(firstToken);
+        var isUnsafe = Eat(TokenKind.UnsafeKeyword);
         Expect(TokenKind.FnKeyword);
         var name = ParseIdentifier();
         var typeParameters = ParseTypeParameters();
@@ -308,6 +315,8 @@ public sealed class Parser
 
         return new FunctionDecl(visibility, name, receiver, parameters.ToImmutable(), returnType, body, expressionBody, SpanFrom(start))
         {
+            IsUnsafe = isUnsafe,
+            Doc = doc,
             TypeParameters = [.. typeParameters.Where(p => !p.IsRegion)],
             RegionParameters = [.. typeParameters.Where(p => p.IsRegion)],
         };
@@ -362,7 +371,7 @@ public sealed class Parser
                     drop = new DropBlock(body, SpanFrom(dropStart));
                 }
             }
-            else if (At(TokenKind.FnKeyword))
+            else if (AtFunction)
             {
                 functions.Add(ParseFunction(memberVisibility, memberStart));
             }
@@ -404,7 +413,7 @@ public sealed class Parser
         var methods = ImmutableArray.CreateBuilder<FunctionDecl>();
         Expect(TokenKind.OpenBrace);
         _parsingSignatures = true;
-        while (At(TokenKind.FnKeyword))
+        while (AtFunction)
         {
             methods.Add(ParseFunction(Visibility.Default, Current.Span.Start));
         }
@@ -426,7 +435,7 @@ public sealed class Parser
         var forType = ParseType();
         var functions = ImmutableArray.CreateBuilder<FunctionDecl>();
         Expect(TokenKind.OpenBrace);
-        while (At(TokenKind.FnKeyword) || At(TokenKind.PublicKeyword))
+        while (AtFunction || At(TokenKind.PublicKeyword))
         {
             var functionStart = Current.Span.Start;
             var functionVisibility = ParseVisibility();
@@ -567,6 +576,14 @@ public sealed class Parser
 
     private TypeSyntax ParseTypeCore()
     {
+        if (At(TokenKind.Star))
+        {
+            // A raw pointer `*T` / `*mut T` (type-system.md §27.1).
+            var start = Advance().Span.Start;
+            var isMutable = Eat(TokenKind.MutKeyword);
+            var pointee = ParseTypeCore();
+            return new PointerType(isMutable, pointee, SpanFrom(start));
+        }
         if (At(TokenKind.BorrowKeyword))
         {
             var start = Advance().Span.Start;
@@ -626,7 +643,8 @@ public sealed class Parser
     private static bool IsStatementKeyword(TokenKind kind) => kind is TokenKind.LetKeyword or TokenKind.VarKeyword
         or TokenKind.UsingKeyword or TokenKind.DeferKeyword
         or TokenKind.IfKeyword or TokenKind.WhileKeyword or TokenKind.LoopKeyword or TokenKind.ReturnKeyword
-        or TokenKind.BreakKeyword or TokenKind.ContinueKeyword or TokenKind.MatchKeyword or TokenKind.ForKeyword;
+        or TokenKind.BreakKeyword or TokenKind.ContinueKeyword or TokenKind.MatchKeyword or TokenKind.ForKeyword
+        or TokenKind.UnsafeKeyword;
 
     /// <summary>Tokens that cannot start a statement but do start an item: a block ends before them.</summary>
     private static bool EndsBlock(TokenKind kind) => kind is TokenKind.CloseBrace or TokenKind.EndOfFile
@@ -725,6 +743,13 @@ public sealed class Parser
             }
             case TokenKind.MatchKeyword:
                 return ParseMatch();
+            case TokenKind.UnsafeKeyword when Peek(1).Kind == TokenKind.OpenBrace:
+            {
+                // In statement position `unsafe {` is always the block form (type-system.md §27.4).
+                Advance();
+                var body = ParseBlock();
+                return new UnsafeStmt(body, SpanFrom(start));
+            }
             case TokenKind.IfKeyword:
                 return ParseIf();
             case TokenKind.WhileKeyword:
@@ -1125,6 +1150,15 @@ public sealed class Parser
             case TokenKind.CharLiteral:
                 Advance();
                 return new CharLiteralExpr(_stream.Chars[token.Data], token.Span);
+            case TokenKind.UnsafeKeyword when Peek(1).Kind == TokenKind.OpenBrace:
+            {
+                // `unsafe { e }`: an unsafe expression (type-system.md §27.4).
+                Advance();
+                Advance();
+                var inner = ParseExpr();
+                Expect(TokenKind.CloseBrace);
+                return new UnsafeExpr(inner, SpanFrom(token.Span.Start));
+            }
             case TokenKind.TrueKeyword:
             case TokenKind.FalseKeyword:
                 Advance();
@@ -1254,7 +1288,7 @@ public sealed class Parser
                     }
                     break;
                 case TokenKind.Identifier or TokenKind.Dot or TokenKind.Comma or TokenKind.Semicolon or TokenKind.IntLiteral
-                    or TokenKind.BorrowKeyword or TokenKind.MutKeyword:
+                    or TokenKind.BorrowKeyword or TokenKind.MutKeyword or TokenKind.Star:
                     break;
                 default:
                     return false;

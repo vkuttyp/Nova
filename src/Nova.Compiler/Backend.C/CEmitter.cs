@@ -1342,7 +1342,8 @@ public sealed class CEmitter
                 or BuiltinFunction.ResourceRead or BuiltinFunction.ResourceWrite or BuiltinFunction.ConsoleRead
                 or BuiltinFunction.TcpListen or BuiltinFunction.TcpConnect or BuiltinFunction.TcpPort or BuiltinFunction.TcpAccept
                 or BuiltinFunction.TcpShutdownWrite or BuiltinFunction.Argument or BuiltinFunction.ArgumentCount or BuiltinFunction.ProcessRun
-                or BuiltinFunction.IoErrorMessage:
+                or BuiltinFunction.IoErrorMessage or BuiltinFunction.PtrAdd or BuiltinFunction.PtrSub or BuiltinFunction.PtrOffset
+                or BuiltinFunction.PtrIsNull or BuiltinFunction.SlicePtr or BuiltinFunction.SliceFromRaw:
                 Line(builtin.Type.Kind == TypeKind.Void ? $"    {Rvalue(builtin)};" : $"    (void){Rvalue(builtin)};");
                 return;
             case BuiltinFunction.FailAfter:
@@ -1429,6 +1430,14 @@ public sealed class CEmitter
         }
     }
 
+    /// <summary><c>p.add(n)</c>, <c>sub</c>, <c>offset</c>: address arithmetic modulo 2^64, never C pointer arithmetic (unsafe.md §4).</summary>
+    private string PointerStep(NirBuiltin step)
+    {
+        var pointer = step.Arguments[0];
+        var op = step.Function == BuiltinFunction.PtrSub ? "-" : "+";
+        return $"(({CType(step.Type)})((uintptr_t){Operand(pointer)} {op} (uintptr_t){Operand(step.Arguments[1])} * sizeof({CType(pointer.Type.Pointee!)})))";
+    }
+
     private string Rvalue(NirRvalue rvalue) => rvalue switch
     {
         NirUse use => Operand(use.Operand),
@@ -1438,6 +1447,9 @@ public sealed class CEmitter
         // `s.bytes()`: the same pointer and length as a `Slice<u8>` (§22.2).
         NirCast { Operand.Type.IsStringView: true } bytes =>
             $"(({CType(bytes.Type)}){{ .ptr = {Operand(bytes.Operand)}.ptr, .len = {Operand(bytes.Operand)}.len }})",
+        // Pointers convert through uintptr_t: no pointer-to-pointer cast, so no -Wcast-qual or -Wcast-align (unsafe.md §4).
+        NirCast { Type.IsRawPointer: true } cast => $"(({CType(cast.Type)})(uintptr_t){Operand(cast.Operand)})",
+        NirCast { Operand.Type.IsRawPointer: true, Type.IsInteger: true } cast => $"((uint64_t)(uintptr_t){Operand(cast.Operand)})",
         NirCast cast => $"({CType(cast.Type)}){Operand(cast.Operand)}",
         NirTruncate truncate => Truncate(truncate),
         NirCall call => $"{FunctionName(call.Callee)}({string.Join(", ", call.Arguments.Select(Operand))})",
@@ -1477,6 +1489,11 @@ public sealed class CEmitter
             $"{IoHelper(shutdown.Type)}(nova_tcp_shutdown_write(*{Operand(shutdown.Arguments[0])}))",
         NirBuiltin { Function: BuiltinFunction.IoErrorMessage } message => $"nova_io_message((uint32_t){Operand(message.Arguments[0])}.tag)",
         NirBuiltin { Function: BuiltinFunction.ArgumentCount } => "nova_arg_count()",
+        NirBuiltin { Function: BuiltinFunction.PtrAdd or BuiltinFunction.PtrSub or BuiltinFunction.PtrOffset } step => PointerStep(step),
+        NirBuiltin { Function: BuiltinFunction.PtrIsNull } test => $"({Operand(test.Arguments[0])} == NULL)",
+        NirBuiltin { Function: BuiltinFunction.SlicePtr } address => $"(({CType(address.Type)})(uintptr_t){Operand(address.Arguments[0])}.ptr)",
+        NirBuiltin { Function: BuiltinFunction.SliceFromRaw } raw =>
+            $"(({CTypeName(raw.Type)}){{ .ptr = {Operand(raw.Arguments[0])}, .len = {Operand(raw.Arguments[1])} }})",
         NirBuiltin { Function: BuiltinFunction.ProcessRun } run =>
             $"{IoHelper(run.Type)}(nova_process_run({Operand(run.Arguments[0])}, {Operand(run.Arguments[1])}->ptr, {Operand(run.Arguments[1])}->len))",
         NirBuiltin { Function: BuiltinFunction.Argument } argument => $"nvARG({Operand(argument.Arguments[0])})",
@@ -1733,6 +1750,7 @@ public sealed class CEmitter
         TypeKind.Array => $"nvA{type.ArrayLength}_{Mangle(type.Element!)}",
         TypeKind.Box when type.IsPoolBox => $"nvPB_{Mangle(type.Pointee!)}",
         TypeKind.Box => $"{CTypeName(type.Pointee!)} *",
+        TypeKind.RawPointer => $"{CTypeName(type.Pointee!)} *", // no const (unsafe.md §4); `*void` is `void *`
         TypeKind.Vector => $"nvV_{Mangle(type)[1..]}",
         TypeKind.StableVector => $"nvSV_{Mangle(type)[1..]}",
         TypeKind.SlotMap => $"nvK_{Mangle(type)[1..]}",
@@ -1773,6 +1791,7 @@ public sealed class CEmitter
         TypeKind.Handle => $"H{Mangle(type.Element!)}",
         TypeKind.Resource => type.Resource switch { ResourceKind.File => "IF", ResourceKind.TcpListener => "IL", _ => "IS" },
         TypeKind.Reference => $"{(type.IsMutableReference ? "Q" : "P")}{Mangle(type.Pointee!)}",
+        TypeKind.RawPointer => $"{(type.IsMutablePointer ? "M" : "N")}{Mangle(type.Pointee!)}",
         TypeKind.Region when type.Region == RegionKind.Pool => $"G4Pool{Mangle(type.Element!)}",
         TypeKind.Region => $"G{type.Name.Length}{type.Name}",
         TypeKind.Void => "v",

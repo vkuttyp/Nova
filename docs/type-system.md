@@ -1395,3 +1395,100 @@ status encoding differ from POSIX; the runtime selects them at compile time.
 Generated code only calls functions declared in `nova/rt.h`, so it still compiles freestanding.
 
 Diagnostics: none new.
+
+## 27. Raw pointers and `unsafe` (M8a)
+
+The contract that unsafe code must keep, and what the compiler and the interpreter check, is in
+`unsafe.md`. This section gives the typing rules.
+
+```nova
+/// Safety: `p` points to `n` initialised `u32`s that nothing else writes while this runs.
+unsafe fn sum(p: *u32, n: usize) -> u64 {
+    var total: u64 = 0;
+    for (i in 0..n) { total += p.add(i).read() as u64; }
+    return total;
+}
+
+/// Safety: the pointer comes from a live array and stays inside it.
+fn main() -> i32 {
+    var a = [1u32, 2, 3, 4];
+    let p = borrow mut a[0] as *mut u32;
+    unsafe { p.add(3).write(10); }
+    Console.writeLine(unsafe { sum(p, a.length) });   // 16
+    return 0;
+}
+```
+
+### 27.1 Types
+- `*T` (read-only) and `*mut T` (writable) are **raw pointers** to `T`. `T` is any value type, or
+  `void` for an untyped pointer (`*void`, C's `void *`). It may not be a reference, slice,
+  `StringView` or other scoped type (§19.1, §25.3), `never`, or a type parameter (N0281).
+- A raw pointer is one machine address: 8 bytes, aligned to 8 on LP64. It is **Copy**, needs no
+  drop, holds no loans and is not scoped (U3). So it may appear anywhere a Copy value may: locals,
+  parameters, results, fields, payloads and array elements. Constants of pointer type are not
+  supported (N0216).
+- `*mut T` coerces to `*T` wherever a `*T` is expected (like `SliceMut<T>` to `Slice<T>`).
+- `==` and `!=` compare two pointers of the same type (after that coercion) by address. Ordering
+  comparisons are not defined on pointers (N0207); compare `p as usize` instead.
+
+### 27.2 Making pointers (safe)
+Making and converting a pointer is safe; only using one is not (§27.3).
+- `r as *T` for a reference `r: borrow T` or `borrow mut T`, and `r as *mut T` for `r: borrow mut T`.
+  `borrow x as *T` parses as `(borrow x) as *T` (grammar §2.1). The borrow ends at once: the pointer
+  holds no loan, so later uses of `x` are not checked against it.
+- `s.ptr` for a slice `s`: `*T` for `Slice<T>`, `*mut T` for `SliceMut<T>`; for a `StringView`, `*u8`.
+  It is the address of element 0 (of where it would be, for an empty slice).
+- `p as *U` and `p as *mut U` for any raw pointer `p`, whatever its pointee and mutability.
+- `p as usize` for any raw pointer, and `n as *T` / `n as *mut T` for `n: usize` (also `*void`).
+  An integer literal converts too: `0 as *mut T` is the **null pointer** (there is no `null`
+  pointer literal: `null` is the empty optional, §22.1).
+- `p.isNull()`: `bool`.
+
+### 27.3 Using pointers (unsafe)
+These are allowed only in an unsafe context (§27.4; N0280 otherwise). `p` is a raw pointer
+expression, evaluated once.
+- `p.read()`: the `T` at `p`, copied out. `T` must be Copy (N0282).
+- `p.write(v)`: stores `v` at `p` without reading or destroying what was there. `p` must be a
+  `*mut T` and `T` Copy (N0282). It returns `void`.
+- `p.add(n)` and `p.sub(n)` (`n: usize`) and `p.offset(n)` (`n: isize`): the pointer `n` elements
+  (`n × size(T)` bytes) after (`sub`: before) `p`, with the type of `p`. The arithmetic wraps modulo
+  2^64; it never panics.
+- `Ptr.toBorrow(p)`: a `borrow T` to the `T` at `p`; `Ptr.toBorrowMut(p)`: a `borrow mut T`, for
+  `p: *mut T` (N0282 for `*T`). The reference holds **no loans** (U3): the borrow checker cannot
+  protect it, so the unsafe code that makes it must bound its use, typically by returning it from a
+  function whose signature ties it to a parameter (§13.5).
+- `Slice.fromRaw(p, n)`: a `Slice<T>` of the `n` elements from `p`; `SliceMut.fromRaw(p, n)`: a
+  `SliceMut<T>`, for `p: *mut T`. Like `Ptr.toBorrow`, the slice holds no loans.
+- Calling an `unsafe fn` (§27.4).
+- None of these is defined for `*void`: cast it to a typed pointer first (N0282).
+
+### 27.4 Unsafe contexts
+- `unsafe { statements }` is a statement; `unsafe { e }` is an expression whose value is `e`'s
+  (grammar §2). In statement position, `unsafe {` always starts the statement form.
+- `unsafe fn` (a modifier after the visibility): calling the function is an unsafe operation, and its
+  body is an unsafe context. `main` may not be `unsafe` (N0219). Methods may be `unsafe`; interface
+  methods may not yet be (N0216).
+- Everything lexically inside an unsafe block, an unsafe expression or the body of an `unsafe fn`
+  is in an unsafe context, including deferred statements. A nested `unsafe` is allowed.
+- **The Safety rule** (U2): an `unsafe fn`, and every function whose body contains an `unsafe`
+  block or expression, must carry a doc comment (grammar §1.2) with a line that starts with
+  `Safety:`. It states the contract: what callers must guarantee (for an `unsafe fn`) or why the
+  unsafe operations inside are sound (for a safe function). Without one, N0283.
+- Safe code is checked exactly as before. An unsafe context only *permits* the operations of §27.3;
+  it never relaxes the type, move, borrow or region rules for anything else.
+
+### 27.5 Lowering
+- **NIR**: `p.read()` and `p.write(v)` are a copy from, and an assignment to, the place `(*t)` of a
+  temporary `t` holding `p`: the same `Deref` projection as references, through a pointer.
+  `Ptr.toBorrow`, `Ptr.toBorrowMut` and the pointer casts are `Cast`s; the arithmetic, `isNull`,
+  `.ptr` and `fromRaw` are built-ins. The move and borrow checkers ignore places through raw
+  pointers (no loans, no moves, no mutability check beyond §27.3).
+- **C** (c-backend §2): see `unsafe.md` §4. Pointer arithmetic is done on `uintptr_t`, so generated
+  C never computes an out-of-object pointer.
+- **Placement** (M5, `memory-model.md` §5.1 rule 1c): a function that makes a raw pointer from a
+  reference or calls `Ptr.toBorrow`/`toBorrowMut` or `fromRaw` keeps all its boxes on the heap
+  ("address exposed").
+
+Diagnostics: N0280 (an unsafe operation outside an unsafe context), N0281 (an invalid pointee
+type), N0282 (a pointer operation the pointer or its pointee does not allow), N0283 (no `Safety:`
+doc comment). Invalid pointer casts are N0208.

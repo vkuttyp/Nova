@@ -1,0 +1,21 @@
+// Rule 1c (memory-model.md §5.1, type-system.md §27.5): a function that converts between references and raw
+// pointers keeps every box on the heap; a function without such conversions still places its boxes.
+
+/// Safety: the pointer is made from the box's contents and used while the box is live.
+fn exposed() -> i32 {
+    let b = Box.create(5)!;                      // heap: address exposed
+    let p = borrow b as *Box<i32>;
+    let contents = unsafe { Ptr.toBorrow(p) };
+    return contents;
+}
+
+fn unexposed() -> i32 {
+    let b = Box.create(6)!;                      // stack
+    return b;
+}
+
+fn main() -> i32 {
+    Console.writeLine(exposed() + unexposed());
+    return 0;
+}
+// expect-stdout: 11
