@@ -1,0 +1,57 @@
+// profile: freestanding
+// C7d: quiescence (kernel/include/kernel/quiesce.h). A read side is any preemption-disabled region, so holding a
+// spin guard (c7/sync.nova) is one; a grace period ends when every CPU has passed a quiescent state. Readers that
+// found an object under a read section may use it until they leave the section, so an object unlinked from what
+// readers walk is freed only after a grace period: synchronously (Quiesce.synchronize, which sleeps) or deferred
+// (deferDrop, through call_quiesce and an embedded quiesce_head).
+//
+// Not here: explicit read sections (quiesce_read_lock/unlock) in modules. They are inline and call preempt_enable,
+// which CosmoOS does not export (KQ-2); a spin guard is a read section a module can take.
+
+@header("kernel/quiesce.h")
+extern "C" {
+    struct quiesce_head;
+    @effects(sleep)
+    fn synchronize_quiesce();
+    @effects()
+    fn call_quiesce(head: *mut quiesce_head, f: extern "C" fn(*mut quiesce_head));
+}
+
+public struct Quiesce {
+    /// Waits for a grace period over the CPUs online now. Sleeps, so it is not allowed under a spin guard.
+    /// Safety: synchronize_quiesce asks for nothing but a context that may sleep, which its effect enforces.
+    public fn synchronize() {
+        unsafe { synchronize_quiesce(); }
+    }
+}
+
+/// A value that can be freed after a grace period: its quiesce_head first (type-system.md §34.3), then the value.
+/// Made in a KernelHeap box and never moved.
+public struct Deferred<T> {
+    private head: quiesce_head;
+    private data: T;
+
+    /// The head is zero-filled, as call_quiesce requires of a head that never ran.
+    public fn create(data: T) -> Result<Box<Deferred<T>, KernelHeap>, AllocError> => Box.createIn(KernelHeap {}, Deferred { data: data });
+
+    public fn get(borrow this) -> borrow T => borrow this.data;
+
+    public fn getMut(borrow mut this) -> borrow mut T => borrow mut this.data;
+}
+
+/// The deferred free of a Deferred<T>: drops the value and frees it, in thread context, after the grace period.
+/// Safety: call_quiesce passes the head that deferDrop gave it, the first field of a Box<Deferred<T>, KernelHeap>
+/// that deferDrop gave up, once.
+@callback
+unsafe fn reclaim<T>(head: *mut quiesce_head) {
+    let value: Box<Deferred<T>, KernelHeap> = Box.fromRaw(head as *mut Deferred<T>);
+}
+
+/// Drops `value` after a grace period that begins now; returns at once, in any context. The box is moved in, so
+/// nothing can use it, or submit it again, while the free is pending.
+/// Safety: no new reader can find the value any more (it was unlinked from everything readers walk), and the code of
+/// reclaim<T> stays loaded until the callback has run: module unload does not wait for pending callbacks
+/// (kernel/module/module.c:627-631; KQ-3).
+public unsafe fn deferDrop<T>(value: Box<Deferred<T>, KernelHeap>) {
+    call_quiesce(Box.intoRaw(value) as *mut quiesce_head, reclaim<T>);
+}

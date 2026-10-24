@@ -37,7 +37,8 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
   validator in Nova, held to CosmoOS's own tests; imported C struct types, type-system §31; `docs/cosmoos/c6-report.md`,
   `integrations/cosmoos/c6.py`, `benchmarks/lz4/`, `benchmarks/fbvalid/`) is complete. C7 (kernel concurrency; `docs/cosmoos/c7-report.md`, ADR 0009) is in progress: C7a
   (context effects, type-system §32), C7b (C state embedded by value, §33) and C7c (lock guards,
-  `integrations/cosmoos/c7/sync.nova`, `c7.py`) are done; C7d (kernel objects and quiescence) is next. `lib/core/*.nova` is part of every
+  `integrations/cosmoos/c7/sync.nova`, `c7.py`) and C7d (`KRef<T>`, grace periods; type-system §34) are done; C7e (the in-kernel
+  stress test under lockdep) is next. `lib/core/*.nova` is part of every
   package. M5 (escape and placement
   analysis; `docs/milestone-5.md`) is complete (`--placement`, `--explain-allocations`).
 - Guest checks: `python3 integrations/cosmoos/c2.py --arch x86_64` (QEMU), and for aarch64 either

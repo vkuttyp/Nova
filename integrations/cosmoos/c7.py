@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-c7.py -- Nova milestone C7: kernel concurrency (docs/cosmoos/c7-report.md). This script covers C7c, the lock
-bindings (c7/sync.nova: SpinLock<T>, IrqSpinLock<T>, Mutex<T> over CosmoOS's own spinlock_t and struct mutex).
+c7.py -- Nova milestone C7: kernel concurrency (docs/cosmoos/c7-report.md). This script covers C7c and C7d, the
+bindings: c7/sync.nova (SpinLock<T>, IrqSpinLock<T>, Mutex<T> over CosmoOS's own spinlock_t and struct mutex),
+c7/kobject.nova (KRef<T> over its struct kobject) and c7/quiesce.nova (grace periods, deferred frees).
 CosmoOS is only read.
 
 Steps (no QEMU):
@@ -30,7 +31,8 @@ import c1  # noqa: E402
 import c4  # noqa: E402
 
 C7_DIR = Path(__file__).resolve().parent / "c7"
-PACKAGE = ["integrations/cosmoos/c5/kernel.nova", "integrations/cosmoos/c7/sync.nova"]
+PACKAGE = ["integrations/cosmoos/c5/kernel.nova", "integrations/cosmoos/c7/sync.nova", "integrations/cosmoos/c7/kobject.nova",
+           "integrations/cosmoos/c7/quiesce.nova"]
 ANNOTATION = re.compile(r"// error\[(N\d{4})\]")
 DIAGNOSTIC = re.compile(r"^(?P<file>[^:\n]+):(?P<line>\d+):\d+: error\[(?P<code>N\d{4})\]", re.MULTILINE)
 
@@ -78,7 +80,8 @@ def main():
     host_cflags, host_ldflags = shlex.split(cosmo.var("HOST_CFLAGS")), shlex.split(cosmo.var("HOST_LDFLAGS"))
     # HOST_COMMON_SRCS: the harness, the spinlock shim, and what the harness needs (tests/host/host.mk).
     host_srcs = [gen / "main.c", gen / "nova_rt_core.c", c4.C4_DIR / "nova_rt_kernel.c", C7_DIR / "host_kernel.c",
-                 C7_DIR / "host_test.c", *[root / s for s in shlex.split(cosmo.var("HOST_COMMON_SRCS"))]]
+                 C7_DIR / "host_test.c", root / "kernel" / "object" / "object.c",  # CosmoOS's own kobjects
+                 *[root / s for s in shlex.split(cosmo.var("HOST_COMMON_SRCS"))]]
     exe = work / "host_test"
     built = run([cc, *host_cflags, *nova_flags, "-I", root / "tests" / "host", *host_srcs, *host_ldflags, "-o", exe])
     if built.returncode != 0:
@@ -103,6 +106,7 @@ def main():
         joined = work / "nova_c7.o"
         subprocess.run([ld, *shlex.split(cosmo.var("MODULE_LDFLAGS")), "-o", joined, *objects], check=True)
         problems, kinds, undefined = c4.all_problems(joined, args.arch, c4.kernel_exports(), objdump)
+        problems = [p for p in problems if "mutable global state" not in p]  # kernel_glue.c's counter is the test's (as in C5)
         frames, largest = c4.frame_problems(usage, limit)
         errors = problems + frames
         checks[f"{args.arch} object under MODULE_CFLAGS meets C4's checks (relocations {', '.join(kinds)}; undefined "

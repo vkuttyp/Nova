@@ -8,6 +8,22 @@ extern "C" {
     /// How many spinlocks the calling CPU holds now.
     @effects()
     fn c7_locks_held() -> u32;
+    /// Counts a Tracked value's drop, by tag.
+    @effects()
+    fn c7_note_drop(tag: u32);
+    /// How many Tracked values have been dropped so far.
+    @effects()
+    fn c7_drops() -> u32;
+}
+
+/// A value whose drop C can see.
+struct Tracked {
+    tag: u32;
+
+    /// Safety: c7_note_drop only counts.
+    drop {
+        unsafe { c7_note_drop(this.tag); }
+    }
 }
 
 struct Stats {
@@ -96,6 +112,48 @@ fn mutexTable(n: u64) -> u64 {
                     return t.entries * 1000 + inner.data();
                 }
             }
+        }
+    }
+}
+
+/// A kernel object shared by four references, three of them dropped again. Returns the data's tag * 100, the count
+/// with four live * 10, the count after (1), and whether the data was dropped meanwhile (+ 1000): 741 if all is well,
+/// 0 if the object cannot be made. The last reference is dropped on return, which releases the object.
+/// Safety: c7_drops only reads a counter.
+@export("c7_kref")
+fn kref() -> u32 {
+    let start = unsafe { c7_drops() };
+    match (KRef<Tracked>.create("nova.c7.tracked\0".ptr as *CChar, Tracked { tag: 7 })) {
+        Err(e) => { return 0; }
+        Ok(first) => {
+            var four: u32 = 0;
+            {
+                let a = first.clone();
+                let b = a.clone();
+                let c = first.clone();
+                four = c.count();
+            }
+            var early: u32 = 0;
+            if (unsafe { c7_drops() } != start) { early = 1000; }
+            return first.get().tag * 100 + four * 10 + first.count() + early;
+        }
+    }
+}
+
+/// A value freed after a grace period: still there after deferDrop returns, gone after Quiesce.synchronize.
+/// Returns the tag * 100 + drops right after deferDrop * 10 + drops after the grace period: 901, or 0.
+/// Safety: the module stays loaded until the callback has run (the grace period ends inside this function).
+@export("c7_defer")
+fn deferred() -> u32 {
+    let start = unsafe { c7_drops() };
+    match (Deferred<Tracked>.create(Tracked { tag: 9 })) {
+        Err(e) => { return 0; }
+        Ok(value) => {
+            let tag = value.get().tag;
+            unsafe { deferDrop(value); }
+            let before = unsafe { c7_drops() } - start;
+            Quiesce.synchronize();
+            return tag * 100 + before * 10 + (unsafe { c7_drops() } - start);
         }
     }
 }

@@ -39,6 +39,44 @@ KQ-2), Nova lock-order checking.
 
 ## Results
 
+### C7d — kernel objects and quiescence (2026-10-25)
+
+Language (`type-system.md` §34):
+
+- `@callback` gives a top-level function, generic ones included, a C address without a symbol. Each instance used as
+  a value (`release<T>`) gets a static C function with the C types. The grammar now reads `name<T>` before `)`, `,`, `;`
+  or `]` as generic arguments too (grammar §2; a comparison cannot end there).
+- `Box.intoRaw(b)` gives ownership to a raw pointer, and `Box.fromRaw(p)` (unsafe; the box type comes from the
+  expected type) takes it back. Both are allowed in freestanding code.
+- Imported struct fields may be C function pointers, as `kobject_type.release` is.
+- `Ptr.containerOf` was not needed. Kernel callbacks receive a pointer to the object's first field, which converts
+  to the object (§34.3, C11 6.7.2.1p15).
+
+Bindings:
+
+- `c7/kobject.nova`: `KObject<T>` embeds `struct kobject` first, then its `struct kobject_type` (the kernel keeps the
+  type pointer, and with no statics in Nova the type lives in the object), then the data. Its `@placed` method fills the
+  type with `release<T>` and calls `kobject_init`. `KRef<T>` is an owned counted reference, with `create`, `clone`
+  (`kobject_get`), `get` (shared), `count`, and a drop that runs `kobject_put` with the `sleep` effect. `release<T>`
+  rebuilds the box and drops it.
+- `c7/quiesce.nova`: `Quiesce.synchronize()` (`sleep`); `Deferred<T>`, a `quiesce_head` first and then the value; and
+  `unsafe fn deferDrop<T>`, which gives the box to `call_quiesce`, so the box cannot be used or submitted again (it
+  moved). The `unsafe` carries KQ-3: module unload does not wait for pending callbacks.
+
+`c7.py` (run 2026-10-25, CosmoOS `5cfd1ffe`, macOS host):
+
+| Check | Result |
+|---|---|
+| 5 new negative cases: dropping a `KRef` under a spin guard (the chain reaches `kobject_put`), `Quiesce.synchronize` under a spin guard, `deferDrop` outside `unsafe`, using a value after `deferDrop`, writing through `KRef.get` | each gives exactly its annotated error (N0295 ×2, N0280, N0250, N0211); the 6 of C7c still pass |
+| Host test against **CosmoOS's own `kernel/object/object.c`** (and its spinlock shim and harness), with `c7/host_kernel.c` providing module hooks and a one-CPU grace period: a `KRef` with four references, three dropped, then the last; a `Deferred` value freed by a grace period | PASS: counts 4 then 1, the data dropped exactly once and only at the last put; the deferred value still there after `deferDrop`, freed at `synchronize`; no kernel-heap block live after the tests |
+| AArch64 and x86-64 objects under `MODULE_CFLAGS` with C4's checks | PASS; undefined only kernel exports (now also `kobject_init`, `kobject_get`, `kobject_put`, `kobject_refcount`, `call_quiesce`, `synchronize_quiesce`) |
+
+Also `ffi/raw-boxes.nova` in every C configuration (three instances of one generic callback, each giving its box back
+once), and `check-fail/callbacks.nova` (8 misuses).
+
+Not done: `@nonblockingRelease`, so every final put counts as sleeping, which is conservative. `kobject_tryget` for
+table lookups. Module ownership is tested only as far as the host can go; C7e and C8 load the code as a module.
+
 ### C7c — lock guards (2026-10-24)
 
 `integrations/cosmoos/c7/sync.nova`, over CosmoOS's own `kernel/spinlock.h` and `kernel/mutex.h` (imported, §31):

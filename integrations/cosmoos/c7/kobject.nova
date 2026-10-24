@@ -1,0 +1,95 @@
+// profile: freestanding
+// C7d: kernel objects. A Nova-defined kernel object embeds CosmoOS's own struct kobject (kernel/include/kernel/object.h)
+// and its struct kobject_type; KRef<T> is an owned, counted reference to one (kobject_get / kobject_put). The last
+// put runs the type's release, a generated C callback (type-system.md §34.1) that drops the Nova data and frees the
+// object. Nova never frees a kernel object any other way.
+//
+// CosmoOS's rules these follow (kernel/object/object.c; audit in docs/cosmoos/c7-report.md):
+// - kobject_init(obj, type) needs a type with a release; the count starts at 1; the kernel keeps `type`, so it lives
+//   inside the object here, and nothing reads it after release returns (kobject_release_final, object.c:61-72);
+// - the object's owner is the module whose text holds `release` (module_owner_of): module unload waits for it;
+// - the final put runs release, which may block, and nothing checks that it is not done under a spinlock: here
+//   kobject_put has the `sleep` effect, so a final put under a spin guard does not compile (type-system.md §32).
+
+@header("kernel/object.h")
+extern "C" {
+    struct kobject;
+    struct kobject_type {
+        name: *CChar;
+        release: extern "C" fn(*mut kobject);
+        flags: u32;
+    }
+    @effects()
+    fn kobject_init(obj: *mut kobject, kind: *kobject_type);
+    @effects()
+    fn kobject_get(obj: *mut kobject);
+    @effects(sleep)
+    fn kobject_put(obj: *mut kobject);
+    @effects()
+    fn kobject_refcount(obj: *kobject) -> u32;
+}
+
+/// A kernel object: CosmoOS's kobject first (so the kernel's `struct kobject *` is the object's address, type-system.md
+/// §34.3), then its type, then the Nova data. Made only by KRef<T>.create, and never moved.
+public struct KObject<T> {
+    private obj: kobject;
+    private kind: kobject_type;
+    private name: *CChar;
+    private data: T;
+
+    /// Safety: runs once, at the object's final address, before anything else can see it (type-system.md §33.3); the
+    /// type it registers lives in the object, so it outlives every use the kernel makes of it.
+    @placed
+    fn init(borrow mut this) {
+        this.kind.name = this.name;
+        this.kind.release = release<T>;
+        unsafe { kobject_init(borrow mut this.obj as *mut kobject, borrow this.kind as *kobject_type); }
+    }
+}
+
+/// An owned reference to a kernel object. Cloning takes a count; dropping gives one back, and the last one releases
+/// the object. The data is shared, as the object is: state that changes goes behind a lock inside it.
+public struct KRef<T> {
+    private object: *mut KObject<T>;
+
+    /// Makes an object with one reference. `name` is its type's name: a static string ending in a zero byte.
+    public fn create(name: *CChar, data: T) -> Result<KRef<T>, AllocError> {
+        match (Box.createIn(KernelHeap {}, KObject { name: name, data: data })) {
+            Ok(object) => { return Ok(KRef { object: Box.intoRaw(object) }); }
+            Err(e) => { return Err(e); }
+        }
+    }
+
+    /// Another reference to the same object.
+    /// Safety: this reference holds a count, so the object is live, as kobject_get needs.
+    public fn clone(borrow this) -> KRef<T> {
+        unsafe { kobject_get(this.header()); }
+        return KRef { object: this.object };
+    }
+
+    /// The data, while this reference is borrowed.
+    /// Safety: the object lives as long as a reference to it does, and the data is only read through it.
+    public fn get(borrow this) -> borrow T {
+        let object = unsafe { Ptr.toBorrow(this.object as *KObject<T>) };
+        return borrow object.data;
+    }
+
+    /// The object's reference count (kobject_refcount), for tests and diagnostics.
+    /// Safety: as get.
+    public fn count(borrow this) -> u32 => unsafe { kobject_refcount(this.header() as *kobject) };
+
+    fn header(borrow this) -> *mut kobject => this.object as *mut kobject;
+
+    /// Safety: this reference held one count, which goes back here; the last put runs release<T>.
+    drop {
+        unsafe { kobject_put(this.header()); }
+    }
+}
+
+/// The release of every KObject<T>: the last reference is gone, so the data is dropped and the object freed.
+/// Safety: the kernel calls this once per object, after its count reached zero (kobject_release_final), with the
+/// kobject that KRef<T>.create made as the first field of a Box<KObject<T>, KernelHeap>.
+@callback
+unsafe fn release<T>(obj: *mut kobject) {
+    let object: Box<KObject<T>, KernelHeap> = Box.fromRaw(obj as *mut KObject<T>);
+}

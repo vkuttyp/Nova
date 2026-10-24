@@ -1,0 +1,5 @@
+// profile: freestanding
+// A deferred free is unsafe in a module: unload does not wait for pending callbacks (KQ-3).
+fn later(value: Box<Deferred<u64>, KernelHeap>) {
+    deferDrop(value); // error[N0280]
+}

@@ -78,6 +78,10 @@ public struct MmioRegion { base: VirtAddr; len: usize; }   // bounded, from pci_
 
 ## 4. Kernel objects (`kobject`)
 
+**Implemented in C7d** (`integrations/cosmoos/c7/kobject.nova`, `quiesce.nova`; type-system §34): `KRef<T>` and the release
+callback as proposed, with the type embedded in each object (no statics) and no `@nonblockingRelease` yet; `Quiesce.synchronize`
+and `deferDrop` (unsafe in modules, KQ-3) from §5; `QuiesceGuard` stays blocked on KQ-2.
+
 Facts [KA §3.1, impl 9–10]: kobjects are embedded by value with a mandatory
 `kobject_type.release`. Lookups return *counted* references. The final put may run a
 release that **may block** and must not run under a spinlock, which nothing checks.

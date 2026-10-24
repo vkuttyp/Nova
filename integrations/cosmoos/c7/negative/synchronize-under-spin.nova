@@ -1,0 +1,6 @@
+// profile: freestanding
+// A grace period sleeps; a spin guard is a read section itself, so waiting for one under it would never end.
+fn waitUnderLock(lock: borrow SpinLock<u64>) {
+    var guard = lock.lock();
+    Quiesce.synchronize(); // error[N0295]
+}

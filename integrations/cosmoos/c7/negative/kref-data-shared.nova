@@ -1,0 +1,6 @@
+// profile: freestanding
+// A kernel object's data is shared by every reference: changing it needs a lock inside it.
+fn change(object: borrow KRef<u64>) {
+    let data = object.get();
+    data = 5; // error[N0211]
+}

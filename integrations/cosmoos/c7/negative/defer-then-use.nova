@@ -1,0 +1,7 @@
+// profile: freestanding
+// The value moves into deferDrop, so nothing can use it, or submit it again, while its free is pending.
+/// Safety: test: the module stays loaded.
+fn twice(value: Box<Deferred<u64>, KernelHeap>) -> u64 {
+    unsafe { deferDrop(value); }
+    return value.get(); // error[N0250]
+}

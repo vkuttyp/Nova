@@ -1,0 +1,7 @@
+// profile: freestanding
+// The final put of a kernel object runs its release, which may block: dropping a KRef under a spin guard is
+// rejected, the hole that nothing in CosmoOS checks (c7-report.md, audit).
+fn dropUnderLock(lock: borrow SpinLock<u64>, object: KRef<u64>) {
+    var guard = lock.lock();
+    let gone = object;
+} // error[N0295]
