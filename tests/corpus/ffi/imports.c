@@ -16,8 +16,11 @@ int32_t c_main(void) {
     struct imp_device d1 = { 9, 0x1000, 5, true, "disk", 2, &d2, &reg_a };
     const char *why = NULL;
     printf("%u\n", (unsigned)imp_sum_irqs(&d1));
-    printf("%d %s\n", imp_claim(&d1, "fs", &why), why);
-    printf("%d [%s] %s %zu %d\n", imp_claim(&d2, "clock", &why), why, d2.name, d2.users, d2.enabled);
+    /* Each call before the printf that shows its results: C leaves the order of arguments unspecified. */
+    bool claimed = imp_claim(&d1, "fs", &why);
+    printf("%d %s\n", claimed, why);
+    claimed = imp_claim(&d2, "clock", &why);
+    printf("%d [%s] %s %zu %d\n", claimed, why, d2.name, d2.users, d2.enabled);
     printf("%u\n", (unsigned)imp_sum_irqs(&d1));
     imp_link(&d1, &d3);
     printf("%d %llu\n", d1.next == &d3, (unsigned long long)d1.base);
