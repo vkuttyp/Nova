@@ -144,6 +144,9 @@ public sealed class StructField
     /// <summary>A field of a <c>@repr(C)</c> struct: named as in Nova in C, too (type-system.md §28.5).</summary>
     public bool HasNovaCName { get; internal set; }
 
+    /// <summary><c>private</c>: accessible only in its own struct's functions (type-system.md §12).</summary>
+    public bool IsPrivate { get; internal set; }
+
     /// <summary>
     /// A part of a scratch frame that only the borrow checker sees (its memory or its allocation
     /// right, type-system.md §19.5). Its place is the frame itself.

@@ -168,6 +168,7 @@ N0271 is unassigned: destroying a value that holds loans while their referents a
 | N0293 | A hosted-only name (`Console`, `Process`, `File`, the heap allocators and every collection or box that needs them, …) or a `main` function in a package built with `--profile freestanding` (`cosmoos/profiles.md` §4.1) | `Console.writeLine(1);`, `let b = Box.create(5)!;` |
 | N0294 | An imported C type (type-system.md §31), or a C-laid-out type (§33), used where Nova would need its size or would move it: as a local, parameter, result, field, element, optional or type argument, in a struct literal, or with `read`, `write`, `add`, `sub`, `offset` or `fromRaw` through a pointer; or a borrow of a pointer, `usize` or `isize` field of one | `fn f(i: cosmoboot_info) {}`, `p.add(1)` with `p: *cosmoboot_info` |
 | N0295 | An operation whose effect (`sleep`, `alloc`) the context forbids: in an `@context(atomic)` or `@context(irq)` function, while an `@context(atomic)` value (a spin-lock guard) is live, or beyond a Nova function's `@effects` bound (type-system.md §32) | `mutex_lock(m)` while a `SpinGuard` is live |
+| N0296 | A `private` field named outside the source file that declares its struct: read, assigned, borrowed or given in a literal (type-system.md §12) | `lock.data` outside `sync.nova` |
 
 Calling an extern function outside an unsafe context is N0280; two extern declarations or exports
 with one C name are N0201; `CChar` as a value type is N0281.

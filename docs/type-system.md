@@ -26,7 +26,8 @@ return type). A *never* expression is accepted wherever any type is expected.
 
 - **Package scope.** M1 compiles one package: all files of a compilation share one item
   scope. Items are referenced by simple name. `namespace` declarations are recorded but do
-  not qualify names yet, and visibility modifiers have no effect within one package. Two items with the
+  not qualify names yet, and visibility modifiers have no effect within one package, except `private` on
+  struct fields (§12, C7c). Two items with the
   same name are an error (N0201), even in different files or namespaces.
 - **Built-in scope** (outside the package scope, so a user item hides a built-in):
   `Console.write`, `Console.writeLine`, `Process.exit`, `truncate`, and the primitive
@@ -186,6 +187,14 @@ struct Point {
   where `e` is evaluated first and passed as `this`. A static function (no `this`) is called as
   `S.f(args)`. Calling a method as `S.m()`, or a static function as `e.f()`, is N0233. `this`
   anywhere other than a method's receiver position or body is N0232.
+- **Private fields (C7c).** A field declared `private` (`private data: T;`) is accessible only in the
+  source file that declares its struct (`language-spec.md` §5: "visible within the declaring type or
+  file"), and in any instance of a generic one there: read, assigned, borrowed and given in a literal.
+  Anywhere else, naming it is N0296. A struct with private fields can therefore only be made by code in
+  its own file, so types that cooperate, like a lock and its guard, can share their fields. This is the one place where a visibility
+  modifier takes effect within a package (§2). It lets a type keep an invariant that safe code cannot break,
+  such as "the data is reached only through a guard" (`integrations/cosmoos/c7/sync.nova`).
+  `public` and `internal` fields, and the default, stay visible throughout the package.
 - **Operators.** No operator applies to struct values in M2a (`==` included: N0207).
   `Console.write` cannot print structs (N0207).
 - **Layout.** Fields are laid out in declaration order with C's rules (`@repr(C)` by default,

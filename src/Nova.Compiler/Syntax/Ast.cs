@@ -119,7 +119,11 @@ public sealed record StructDecl(
     public ImmutableArray<TypeParameter> RegionParameters { get; init; } = [];
 }
 
-public sealed record DropBlock(BlockStmt Body, TextSpan Span) : SyntaxNode(Span);
+public sealed record DropBlock(BlockStmt Body, TextSpan Span) : SyntaxNode(Span)
+{
+    /// <summary>The doc comment before <c>drop</c>, or null; its <c>Safety:</c> line covers unsafe code in the block (§27.4).</summary>
+    public string? Doc { get; init; }
+}
 
 public sealed record EnumDecl(
     Visibility Visibility,

@@ -1438,13 +1438,13 @@ internal sealed class TypeChecker
                     $"'{entry.Type}' already has a member named '{Name(field.Name.Name)}'");
                 continue;
             }
-            definition.AddField(field.Name.Name, type, field.Name.Span);
+            definition.AddField(field.Name.Name, type, field.Name.Span).IsPrivate = field.Visibility == Visibility.Private;
         }
         if (entry.Decl.Drop is { } drop)
         {
             // The drop block is checked as a `borrow mut this` method that user code cannot call.
             var syntax = new FunctionDecl(Visibility.Private, new Identifier(_symbols.Intern("drop"), drop.Span),
-                new Receiver(ReceiverKind.BorrowMut, drop.Span), [], null, drop.Body, null, drop.Span);
+                new Receiver(ReceiverKind.BorrowMut, drop.Span), [], null, drop.Body, null, drop.Span) { Doc = drop.Doc };
             definition.DropFunction = DeclareFunction(syntax, entry.Type, entry.Environment);
         }
         foreach (var function in entry.Decl.Functions)
@@ -4250,6 +4250,16 @@ internal sealed class TypeChecker
             : new HirBorrowTemp(false, value, parameterType, argument.Span);
     }
 
+    /// <summary>A `private` field is named only in the file that declares its struct (§12).</summary>
+    private void CheckPrivate(StructDefinition definition, StructField field, TextSpan span)
+    {
+        if (field.IsPrivate && _source != definition.Source)
+        {
+            Error(DiagnosticCodes.PrivateField, span,
+                $"field '{Name(field.Name)}' of '{Name(definition.Syntax.Name.Name)}' is private to {definition.Source.Path}: only code there can reach it (type-system.md §12)");
+        }
+    }
+
     /// <summary>The field <paramref name="name"/> of a value of <paramref name="type"/>, or null after reporting N0230/N0234.</summary>
     private StructField? ResolveField(NovaType type, Identifier name)
     {
@@ -4264,6 +4274,7 @@ internal sealed class TypeChecker
         }
         if (definition.FindField(name.Name) is { } field)
         {
+            CheckPrivate(definition, field, name.Span);
             return field;
         }
         Error(DiagnosticCodes.UnknownField, name.Span, definition.Functions.ContainsKey(name.Name)
@@ -4715,6 +4726,10 @@ internal sealed class TypeChecker
         foreach (var init in literal.Fields)
         {
             var field = definition.FindField(init.Name.Name);
+            if (field is not null)
+            {
+                CheckPrivate(definition, field, init.Name.Span);
+            }
             if (field is null)
             {
                 Error(DiagnosticCodes.UnknownField, init.Name.Span, $"'{typeName}' has no field named '{Name(init.Name.Name)}'");
@@ -5735,6 +5750,7 @@ internal sealed class TypeChecker
             return new HirBuiltinCall(BuiltinFunction.PtrIsNull, [code], _types.Bool, call.Span);
         }
         if (AutoDeref(receiver) is { Type.Struct: { } holder } owner && holder.FindField(member.Member.Name) is { Type.IsFunctionPointer: true } callback
+            && !(callback.IsPrivate && _source != holder.Source)
             && FindMethod(owner.Type, member.Member.Name, member.Member.Span) is null)
         {
             return CheckPointerCall(call, new HirFieldAccess(owner, callback, member.Span)); // a callback stored in a field

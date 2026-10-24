@@ -481,7 +481,7 @@ public sealed class Parser
                 }
                 else
                 {
-                    drop = new DropBlock(body, SpanFrom(dropStart));
+                    drop = new DropBlock(body, SpanFrom(dropStart)) { Doc = memberDoc ?? _stream.Docs.GetValueOrDefault(startPos) };
                 }
             }
             else if (AtFunction)
