@@ -105,7 +105,7 @@ internal static class Program
                     if (programs % 100 == 0)
                     {
                         Console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                            $"[{clock.Elapsed:hh\\:mm\\:ss}] {programs} programs, {findings} findings, {panicking} panicked, {exiting} other exit statuses"));
+                            $"[{(int)clock.Elapsed.TotalHours:00}:{clock.Elapsed:mm\\:ss}] {programs} programs, {findings} findings, {panicking} panicked, {exiting} other exit statuses"));
                     }
                 }
             }
@@ -115,7 +115,7 @@ internal static class Program
         threads.ForEach(t => t.Start());
         threads.ForEach(t => t.Join());
         var summary = string.Create(CultureInfo.InvariantCulture,
-            $"nova-fuzz: {programs} programs (seeds {firstSeed}..{next}) in {clock.Elapsed:hh\\:mm\\:ss}, {findings} findings, {panicking} panicked, {exiting} other exit statuses");
+            $"nova-fuzz: {programs} programs (seeds {firstSeed}..{next}) in {(int)clock.Elapsed.TotalHours:00}:{clock.Elapsed:mm\\:ss}, {findings} findings, {panicking} panicked, {exiting} other exit statuses");
         Console.Out.WriteLine(summary);
         File.WriteAllText(Path.Combine(output, "summary.txt"), summary + "\n");
         return findings == 0 ? 0 : 1;
