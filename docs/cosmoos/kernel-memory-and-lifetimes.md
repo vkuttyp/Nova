@@ -158,6 +158,9 @@ static devices: SpinLock<DeviceTable> = SpinLock.new("nova.net.devices", ...);  
 }
 ```
 
+**Implemented in C7c** (`integrations/cosmoos/c7/sync.nova`, `cosmoos/c7-report.md`) for `SpinLock`, `IrqSpinLock` and `Mutex`, each
+made by `create(name, data)` in a `KernelHeap` box (no statics yet), with private fields (type-system §12). `PerCpu` is not.
+
 | Nova | C | Effects / rules |
 |---|---|---|
 | `SpinLock<T>` → `SpinGuard<T>` | `spin_lock/unlock` | guard scope = atomic: forbids `sleep`. Not Send |

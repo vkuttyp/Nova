@@ -1,0 +1,5 @@
+// profile: freestanding
+// The data is reached only through a guard, and a guard is made only by locking (type-system.md §12).
+fn peek(a: borrow SpinLock<u64>) -> u64 => a.data; // error[N0296]
+
+fn forge(a: borrow SpinLock<u64>) -> SpinGuard<u64> => SpinGuard { lock: a }; // error[N0296]

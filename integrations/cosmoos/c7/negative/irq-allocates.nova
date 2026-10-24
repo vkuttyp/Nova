@@ -1,0 +1,9 @@
+// profile: freestanding
+// Making a lock allocates (kmalloc), which an interrupt handler may not do (KQ-1).
+@context(irq)
+fn handler() -> bool {
+    match (SpinLock<u64>.create("nova.c7.irq\0".ptr as *CChar, 0)) { // error[N0295]
+        Ok(lock) => { return true; }
+        Err(e) => { return false; }
+    }
+}

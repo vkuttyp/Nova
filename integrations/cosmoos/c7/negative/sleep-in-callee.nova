@@ -1,0 +1,12 @@
+// profile: freestanding
+// A call that sleeps somewhere down its chain is rejected too: the message names the chain.
+fn record(m: borrow Mutex<u64>) {
+    var held = m.lock();
+    let value = held.data();
+    value += 1;
+}
+
+fn update(a: borrow SpinLock<u64>, m: borrow Mutex<u64>) {
+    var spin = a.lock();
+    record(m); // error[N0295]
+}

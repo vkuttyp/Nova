@@ -1,0 +1,101 @@
+// profile: freestanding
+// C7c: the lock bindings (c7/sync.nova) used as kernel code uses them, behind exports that the host test
+// (c7/host_test.c) and the kernel checks (c7.py) call. Each export makes its locks in KernelHeap boxes, works under
+// their guards, and reports what it saw through c7_locks_held(), which the C side answers from the spinlock
+// implementation it is linked with (CosmoOS's host shim, or the kernel's own lock state).
+
+extern "C" {
+    /// How many spinlocks the calling CPU holds now.
+    @effects()
+    fn c7_locks_held() -> u32;
+}
+
+struct Stats {
+    hits: u64;
+    seen: u64;
+}
+
+/// A table under a mutex, with a spin-locked counter inside it: a spinlock may be taken under a mutex.
+struct Table {
+    entries: u64;
+    counter: Box<SpinLock<u64>, KernelHeap>;
+}
+
+fn statsLock() -> Result<Box<SpinLock<Stats>, KernelHeap>, AllocError> =>
+    SpinLock<Stats>.create("nova.c7.stats\0".ptr as *CChar, Stats { hits: 0, seen: 0 });
+
+/// Takes a spinlock `n` times; under the guard, counts a hit and how many locks are held (1 each time). Returns
+/// hits * 1000 + locks seen held, then + 1,000,000 if no lock is held afterwards; 0 if the lock cannot be made.
+/// Safety: c7_locks_held only reads the lock state.
+@export("c7_spin")
+fn spin(n: u64) -> u64 {
+    match (statsLock()) {
+        Err(e) => { return 0; }
+        Ok(lock) => {
+            for (i in 0..n) {
+                var guard = lock.lock();
+                let stats = guard.data();
+                stats.hits += 1;
+                stats.seen += unsafe { c7_locks_held() } as u64;
+            }
+            var released: u64 = 0;
+            if (unsafe { c7_locks_held() } == 0) { released = 1000000; }
+            var guard = lock.lock();
+            let stats = guard.data();
+            return stats.hits * 1000 + stats.seen + released;
+        }
+    }
+}
+
+/// The same with interrupts disabled, nested two deep (released in reverse order): returns the depth seen inside.
+/// Safety: as spin.
+@export("c7_irq_nested")
+fn irqNested() -> u32 {
+    let outer = IrqSpinLock<u32>.create("nova.c7.irq.outer\0".ptr as *CChar, 1);
+    let inner = IrqSpinLock<u32>.create("nova.c7.irq.inner\0".ptr as *CChar, 2);
+    match (outer) {
+        Err(e) => { return 0; }
+        Ok(a) => {
+            match (inner) {
+                Err(e) => { return 0; }
+                Ok(b) => {
+                    var ga = a.lock();
+                    var gb = b.lock();
+                    let depth = unsafe { c7_locks_held() };
+                    let sum = ga.data() + gb.data();
+                    return depth * 10 + sum;
+                }
+            }
+        }
+    }
+}
+
+/// A mutex around a table whose counter is a spinlock: takes the mutex, then the spinlock under it, `n` times.
+/// Returns entries * 1000 + the counter, or 0 if a lock cannot be made.
+/// Safety: as spin.
+@export("c7_mutex")
+fn mutexTable(n: u64) -> u64 {
+    let counter = SpinLock<u64>.create("nova.c7.counter\0".ptr as *CChar, 0);
+    match (counter) {
+        Err(e) => { return 0; }
+        Ok(c) => {
+            match (Mutex<Table>.create("nova.c7.table\0".ptr as *CChar, Table { entries: 0, counter: c })) {
+                Err(e) => { return 0; }
+                Ok(table) => {
+                    for (i in 0..n) {
+                        var held = table.lock();
+                        let t = held.data();
+                        t.entries += 1;
+                        var inner = t.counter.lock();
+                        let count = inner.data();
+                        count += 2;
+                    }
+                    var held = table.lock();
+                    let t = held.data();
+                    var inner = t.counter.lock();
+                    return t.entries * 1000 + inner.data();
+                }
+            }
+        }
+    }
+}

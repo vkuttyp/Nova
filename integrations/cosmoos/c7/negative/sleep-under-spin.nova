@@ -1,0 +1,6 @@
+// profile: freestanding
+// A mutex sleeps; taking one while a spin guard is live is rejected (type-system.md §32.3; c7/sync.nova).
+fn both(a: borrow SpinLock<u64>, m: borrow Mutex<u64>) {
+    var spin = a.lock();
+    var sleeping = m.lock(); // error[N0295]
+}

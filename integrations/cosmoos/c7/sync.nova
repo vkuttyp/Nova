@@ -1,0 +1,167 @@
+// profile: freestanding
+// C7c: CosmoOS's spinlocks and mutexes as Nova types that hold the data they protect (docs/cosmoos/c7-report.md;
+// ADR 0009; type-system.md §32-§33). The lock is CosmoOS's own C state, imported from its headers and embedded by
+// value, so the C compiler lays it out and it never moves; the data is reachable only through a guard; holding a
+// spin guard is an atomic context, so Nova code that could sleep there does not compile.
+//
+// CosmoOS's rules these follow (kernel/include/kernel/spinlock.h, mutex.h; audit in c7-report.md):
+// - spinlock_init(lock, name) before first use; `name` is the lockdep class name and is kept, so it is static;
+// - spin_lock disables preemption until spin_unlock; re-acquiring a held lock on the same CPU panics;
+// - spin_lock_irqsave also disables interrupts and returns the state that spin_unlock_irqrestore puts back;
+//   nested irqsave locks are released in the reverse order (guards in locals are dropped in that order);
+// - mutex_lock sleeps (it calls might_sleep), so it is forbidden with a spinlock held or in an interrupt;
+// - an initialised struct mutex points into itself (its wait queue's list heads), so it must never move.
+
+@header("kernel/spinlock.h", "kernel/mutex.h")
+extern "C" {
+    @ctype("spinlock_t")
+    struct spinlock_t;
+    struct mutex;
+    @effects()
+    fn spinlock_init(lock: *mut spinlock_t, name: *CChar);
+    @effects()
+    fn spin_lock(lock: *mut spinlock_t);
+    @effects()
+    fn spin_unlock(lock: *mut spinlock_t);
+    // arch_irq_state_t is `unsigned long`, which is `size_t` on every CosmoOS target (and on the hosts).
+    @effects()
+    fn spin_lock_irqsave(lock: *mut spinlock_t) -> usize;
+    @effects()
+    fn spin_unlock_irqrestore(lock: *mut spinlock_t, state: usize);
+    @effects()
+    fn mutex_init(m: *mut mutex, name: *CChar);
+    @effects(sleep)
+    fn mutex_lock(m: *mut mutex);
+    @effects()
+    fn mutex_unlock(m: *mut mutex);
+}
+
+/// A spinlock and the data it protects. Make one with `SpinLock<T>.create(name, data)`: it holds C state, so it lives
+/// in its box and never moves (type-system.md §33). Its fields are private (type-system.md §12), so the data is
+/// reached only through a guard, and a guard exists only while the lock is held.
+public struct SpinLock<T> {
+    private raw: spinlock_t;
+    /// The lockdep class name: a static string ending in a zero byte (spinlock_init keeps the pointer).
+    private name: *CChar;
+    private data: T;
+
+    /// Makes one in a KernelHeap box, initialised in place before this returns (type-system.md §33.3). `name` is its
+    /// lockdep class name: a static string ending in a zero byte.
+    public fn create(name: *CChar, data: T) -> Result<Box<SpinLock<T>, KernelHeap>, AllocError> =>
+        Box.createIn(KernelHeap {}, SpinLock { name: name, data: data });
+
+    /// Safety: runs once, at the lock's final address, before anything else can see it (type-system.md §33.3).
+    @placed
+    fn init(borrow mut this) {
+        unsafe { spinlock_init(borrow mut this.raw as *mut spinlock_t, this.name); }
+    }
+
+    /// Takes the lock, spinning; preemption is off until the guard is dropped.
+    /// Safety: `raw` was initialised by `init`, and spin_lock needs nothing else.
+    public fn lock(borrow this) -> SpinGuard<T> {
+        unsafe { spin_lock(this.cLock()); }
+        return SpinGuard { lock: this };
+    }
+
+    /// The C lock. Locking mutates it through a shared reference: the C code synchronises that itself.
+    fn cLock(borrow this) -> *mut spinlock_t => borrow this.raw as *spinlock_t as *mut spinlock_t;
+}
+
+/// Holding the lock. An atomic context while it is live (type-system.md §32.3); unlocks when dropped.
+@context(atomic)
+public struct SpinGuard<region r, T> {
+    private lock: borrow(r) SpinLock<T>;
+
+    /// The protected data, for as long as the guard is borrowed.
+    /// Safety: the lock is held, so this guard is the only way to the data until it is dropped: every access goes
+    /// through a guard, and a second guard cannot exist meanwhile (spin_lock does not return, and panics on the
+    /// same CPU).
+    public fn data(borrow mut this) -> borrow mut T => unsafe { Ptr.toBorrowMut(borrow this.lock.data as *T as *mut T) };
+
+    /// Safety: the guard holds the lock, which it took in `lock`.
+    drop {
+        unsafe { spin_unlock(this.lock.cLock()); }
+    }
+}
+
+/// A spinlock that also disables interrupts while held, for data an interrupt handler shares.
+public struct IrqSpinLock<T> {
+    private raw: spinlock_t;
+    private name: *CChar;
+    private data: T;
+
+    /// Makes one in a KernelHeap box, initialised in place before this returns (type-system.md §33.3). `name` is its
+    /// lockdep class name: a static string ending in a zero byte.
+    public fn create(name: *CChar, data: T) -> Result<Box<IrqSpinLock<T>, KernelHeap>, AllocError> =>
+        Box.createIn(KernelHeap {}, IrqSpinLock { name: name, data: data });
+
+    /// Safety: as SpinLock.init.
+    @placed
+    fn init(borrow mut this) {
+        unsafe { spinlock_init(borrow mut this.raw as *mut spinlock_t, this.name); }
+    }
+
+    /// Takes the lock with interrupts disabled; the guard restores them.
+    /// Safety: as SpinLock.lock.
+    public fn lock(borrow this) -> IrqSpinGuard<T> {
+        let state = unsafe { spin_lock_irqsave(this.cLock()) };
+        return IrqSpinGuard { lock: this, state: state };
+    }
+
+    fn cLock(borrow this) -> *mut spinlock_t => borrow this.raw as *spinlock_t as *mut spinlock_t;
+}
+
+@context(atomic)
+public struct IrqSpinGuard<region r, T> {
+    private lock: borrow(r) IrqSpinLock<T>;
+    private state: usize;
+
+    /// Safety: as SpinGuard.data.
+    public fn data(borrow mut this) -> borrow mut T => unsafe { Ptr.toBorrowMut(borrow this.lock.data as *T as *mut T) };
+
+    /// Safety: the guard holds the lock and the interrupt state spin_lock_irqsave returned.
+    drop {
+        unsafe { spin_unlock_irqrestore(this.lock.cLock(), this.state); }
+    }
+}
+
+/// A sleeping lock and the data it protects. Its C state points into itself once initialised, which is why it is
+/// made in place and never moved.
+public struct Mutex<T> {
+    private raw: mutex;
+    private name: *CChar;
+    private data: T;
+
+    /// Makes one in a KernelHeap box, initialised in place before this returns (type-system.md §33.3). `name` is its
+    /// lockdep class name: a static string ending in a zero byte.
+    public fn create(name: *CChar, data: T) -> Result<Box<Mutex<T>, KernelHeap>, AllocError> =>
+        Box.createIn(KernelHeap {}, Mutex { name: name, data: data });
+
+    /// Safety: as SpinLock.init.
+    @placed
+    fn init(borrow mut this) {
+        unsafe { mutex_init(borrow mut this.raw as *mut mutex, this.name); }
+    }
+
+    /// Takes the mutex, sleeping until it is free: forbidden in atomic contexts (its effect is `sleep`).
+    /// Safety: `raw` was initialised by `init`.
+    public fn lock(borrow this) -> MutexGuard<T> {
+        unsafe { mutex_lock(this.cLock()); }
+        return MutexGuard { lock: this };
+    }
+
+    fn cLock(borrow this) -> *mut mutex => borrow this.raw as *mutex as *mut mutex;
+}
+
+/// Holding the mutex. Not an atomic context: code under a mutex may sleep.
+public struct MutexGuard<region r, T> {
+    private lock: borrow(r) Mutex<T>;
+
+    /// Safety: as SpinGuard.data, for the mutex.
+    public fn data(borrow mut this) -> borrow mut T => unsafe { Ptr.toBorrowMut(borrow this.lock.data as *T as *mut T) };
+
+    /// Safety: the guard holds the mutex, which it took in `lock`.
+    drop {
+        unsafe { mutex_unlock(this.lock.cLock()); }
+    }
+}

@@ -31,7 +31,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **C4** ✅ 2026-10-24 Freestanding in CosmoOS ([report](cosmoos/c4-report.md)) | Nova kernel-profile object built with kernel flags | Symbols, relocations and sections checked against the module loader allowlist. Frame sizes ≤ 2 KiB. No FP registers (disassembly check) |
 | **C5** ✅ 2026-10-24 Kernel memory adapter ([report](cosmoos/c5-report.md)) | `KernelHeap`, `ObjectCache<T>` bindings; isolated test component | In-kernel selftest: allocation, exhaustion (fault-injected), ownership transfer, cleanup. No allocator modifications |
 | **C6** ✅ 2026-10-24 Controlled kernel component ([report](cosmoos/c6-report.md): LZ4, fbvalid) | One small, non-critical component reimplemented beside its C original (candidate chosen with the owner) | Same test suite passes for both. Performance compared (measured, reproducible) |
-| **C7** Kernel concurrency (in progress: C7a, C7b ✅; [report](cosmoos/c7-report.md)) | Effects, `SpinLock<T>`/`Mutex<T>` guards, `KRef`, `QuiesceGuard`, `PerCpu`, deferred reclamation | Negative effect tests. Lockdep clean under QEMU stress. Real concurrency rules exercised |
+| **C7** Kernel concurrency (in progress: C7a–C7c ✅; [report](cosmoos/c7-report.md)) | Effects, `SpinLock<T>`/`Mutex<T>` guards, `KRef`, `QuiesceGuard`, `PerCpu`, deferred reclamation | Negative effect tests. Lockdep clean under QEMU stress. Real concurrency rules exercised |
 | **C8** Experimental module | Nova `.ko` with generated `shutdown()` | Load/unload loops (≥ 1000) with no zombie modules, leaks or lockdep reports, on both arches. Signing via `modsign.py` |
 | **M9** Performance | Optimisations with preconditions; benchmark suite vs C/C++/Rust/Zig/Goose | Each optimisation: equivalence tests + measured gain. Published methodology. **No claims without data** |
 | **M10** Tooling | Formatter, LSP, package manager, docs generator | — |
@@ -39,18 +39,19 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 
 ## Next highest-priority task
 
-**C7c — lock guards over CosmoOS's locks** (`cosmoos/c7-report.md`, ADR 0009 §3). C7a (context effects) and C7b (C
-state embedded by value, type-system §33) are done; C7c is the first binding built on both.
+**C7d — kernel objects and quiescence** (`cosmoos/c7-report.md`, ADR 0009 §3). C7a–C7c are done: effects, C state
+embedded by value, and the lock guards (`integrations/cosmoos/c7/sync.nova`).
 
-- Scope: `integrations/cosmoos/c7/sync.nova` with `SpinLock<T>`, `IrqSpinLock<T>` and `Mutex<T>`, each holding
-  CosmoOS's own `spinlock_t`/`struct mutex` (imported from its headers) and its data. `@placed` methods run
-  `spinlock_init`/`mutex_init` with the lock's lockdep name. `lock()` returns a guard that gives `borrow mut T`
-  and unlocks when dropped. Spin guards are `@context(atomic)`, and `Mutex.lock` has the `sleep` effect.
-- Done when: the bindings compile under CosmoOS's `MODULE_CFLAGS` and pass C4's checks on both arches; the effect
-  checker rejects sleeping under a spin guard in programs written against them (negative tests); a host build over
-  CosmoOS's host-test lock shims, or the C5 module pipeline, shows the locks work; the report and docs are updated.
-- Then: C7d (`KRef<T>`, `Quiesce.synchronize`, `Quiesce.deferDrop`, `Ptr.containerOf`), C7e (the in-kernel stress test
-  under lockdep, both arches), then C8.
+- Scope: `KRef<T>`, a counted reference to a Nova-defined kernel object that embeds CosmoOS's `struct kobject`. Its
+  `kobject_type` and `release` callback are generated, and the callback finds the object with `Ptr.containerOf`.
+  Dropping a `KRef` is `kobject_put`, with the `sleep` effect unless the type is `@nonblockingRelease`.
+  `Quiesce.synchronize()` (`sleep`), and `Quiesce.deferDrop(box)` over an embedded `quiesce_head` and
+  `call_quiesce`, `unsafe` in modules (KQ-3).
+- Done when: the spec is written (type-system §34); negative tests reject a final put under a spin guard and
+  deferred frees outside their contract; host tests (CosmoOS's object code where it builds on the host, else
+  shims) show release running exactly once; the objects compile under `MODULE_CFLAGS` and pass C4's checks on
+  both arches.
+- Then: C7e (the in-kernel stress test under lockdep, both arches), then C8.
 
 In parallel, not blocking C7: **M9** (performance; first inputs are the C6 benchmarks and risk P-7), and, when
 the owner wants it, the S1 in-tree port for C1 (OD-20).
@@ -177,3 +178,7 @@ reasons. **C7a is done** (2026-10-24): `sleep`/`alloc` effects inferred over the
 
 **C7b is done** (2026-10-24): C state embedded by value (type-system §33): imported C types as fields, C-laid-out types made
 in place in boxes and never moved, zero-filled C fields, and `@placed` initialisers at the final address.
+
+**C7c is done** (2026-10-24): `SpinLock<T>`, `IrqSpinLock<T>` and `Mutex<T>` over CosmoOS's own locks, with private fields
+(type-system §12) so the data is reached only through a guard; sleeping under a spin guard does not compile; a host test
+over CosmoOS's spinlock shim passes, and the objects meet the module loader's rules on both arches (`c7.py`).

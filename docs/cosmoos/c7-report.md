@@ -39,6 +39,40 @@ KQ-2), Nova lock-order checking.
 
 ## Results
 
+### C7c — lock guards (2026-10-24)
+
+`integrations/cosmoos/c7/sync.nova`, over CosmoOS's own `kernel/spinlock.h` and `kernel/mutex.h` (imported, §31):
+
+| Type | Holds | `lock()` | Guard |
+|---|---|---|---|
+| `SpinLock<T>` | `spinlock_t` by value, the lockdep name, `T` | `spin_lock` | `SpinGuard<T>`: `@context(atomic)`; drop `spin_unlock` |
+| `IrqSpinLock<T>` | the same | `spin_lock_irqsave` | `IrqSpinGuard<T>`: `@context(atomic)`, keeps the IRQ state; drop `spin_unlock_irqrestore` |
+| `Mutex<T>` | `struct mutex` by value (self-pointing once initialised), the name, `T` | `mutex_lock` (`@effects(sleep)`) | `MutexGuard<T>`: drop `mutex_unlock` |
+
+- Each lock is made by `create(name, data)` in a `KernelHeap` box. Its `@placed` method runs `spinlock_init` or
+  `mutex_init` at the final address (§33).
+- `guard.data()` is the only way to the data, and its `borrow mut T` borrows the guard. Every field is `private`, a
+  rule new in C7c (type-system §12: file-private, as `language-spec.md` §5 defines `private`; N0296), so no other file
+  can reach the data, forge a guard, or skip the lock.
+- C5's binding now declares `kmalloc` `@effects(alloc)` (it never sleeps; KQ-4) and `kfree` `@effects()`, so kernel
+  allocation is allowed under a spin guard and forbidden in `@context(irq)`.
+- Doc comments now attach to `drop` blocks, so a `drop` that uses `unsafe` can carry its `Safety:` line.
+
+`integrations/cosmoos/c7.py` (run 2026-10-24, CosmoOS `5cfd1ffe`, macOS host):
+
+| Check | Result |
+|---|---|
+| 6 negative cases (`c7/negative/`): a mutex under a spin guard and under an irq guard, a sleeping callee under a spin guard (the message names the chain down to `mutex_lock`), making a lock in `@context(irq)` (allocation), reaching `data` or building a guard from another file, moving a guard while its data is borrowed | each gives exactly its annotated error (N0295 ×4, N0296 ×2, N0240) |
+| Host test (`c7/host_test.c`) with CosmoOS's `HOST_CFLAGS` (ASan, UBSan, `-Werror`), its headers, `HOST_COMMON_SRCS` (harness, spinlock shim) and `c7/host_kernel.c` (a mutex shim that panics on sleeping with a spinlock held, as `might_sleep` does, and on a mutex that moved): 100 spin-locked updates with one lock seen held under each guard and none after; two nested irqsave locks; a spinlock under a mutex 50 times | PASS |
+| Negative control: a `SpinGuard` drop that does not unlock | caught: `host spinlock 'nova.c7.stats' re-acquired (deadlock)` |
+| AArch64 object under `MODULE_CFLAGS`, with `c4/nova_rt_kernel.c` and `c7/kernel_glue.c` (`c7_locks_held` from `preempt_count`): C4's checks | PASS; undefined only kernel exports (`spin_lock`, `spin_lock_irqsave`, `spin_unlock`, `spin_unlock_irqrestore`, `spinlock_init`, `mutex_init`, `mutex_lock`, `mutex_unlock`, `kmalloc`, `kfree`, `arch_percpu_get`, `panic`); largest frame 64 B |
+| x86-64 object, the same | PASS; largest frame 56 B |
+| CosmoOS working tree unchanged | PASS |
+
+Not shown here, and left to C7e: the locks under real concurrency (several CPUs and threads) and lockdep, in the
+kernel. Moving a guard is allowed (it is an ordinary value); nested irqsave guards rely on locals being dropped in
+reverse order, which a moved guard could break (the C0 design's note); C7e exercises the ordinary use.
+
 ### C7b — C state embedded by value (2026-10-24)
 
 `type-system.md` §33 (ADR 0009 §2). Imported types are now allowed by value as struct fields, as embedded members of

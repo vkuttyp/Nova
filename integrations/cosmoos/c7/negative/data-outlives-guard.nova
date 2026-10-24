@@ -1,0 +1,8 @@
+// profile: freestanding
+// The data's reference borrows the guard: the guard cannot move away (or be dropped) while the data is in use.
+fn stale(a: borrow SpinLock<u64>) -> u64 {
+    var guard = a.lock();
+    let value = guard.data();
+    let moved = guard; // error[N0240]
+    return value;
+}

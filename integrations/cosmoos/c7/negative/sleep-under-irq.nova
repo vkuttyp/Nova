@@ -1,0 +1,6 @@
+// profile: freestanding
+// The same under an interrupt-disabling spinlock.
+fn both(a: borrow IrqSpinLock<u64>, m: borrow Mutex<u64>) {
+    var spin = a.lock();
+    var sleeping = m.lock(); // error[N0295]
+}

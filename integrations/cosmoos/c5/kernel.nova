@@ -3,7 +3,11 @@
 // allocator is used as it is: kmalloc and kfree, both exported (kernel/memory/kmalloc.c:182-185).
 
 extern "C" {
+    // Effects (type-system.md §32): kmalloc never sleeps (kmalloc.h: "non-blocking and interrupt-safe"), so it is
+    // allowed in atomic contexts; whether an IRQ handler may allocate is KQ-1, and Nova's @context(irq) says no.
+    @effects(alloc)
     fn kmalloc(size: usize, flags: u32) -> *mut void;
+    @effects()
     fn kfree(p: *mut void);
 }
 
