@@ -29,9 +29,10 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
   `docs/milestone-6.md`, ADR 0005) is complete, and so is M6x (region parameters, OD-3; `docs/milestone-6x.md`, ADR 0006). C3
   (files, sockets, processes and the `nwc` utility; `docs/cosmoos/c3-report.md`) is complete. M7 (production C backend;
   `docs/milestone-7.md`) is complete: source maps, structured C, the NIR interpreter (`novac run --interp`), the random
-  program generator (`tests/Nova.Fuzz`), MSVC, and a 24-hour campaign. M8 (systems and freestanding; `docs/milestone-8.md`,
-  ADR 0007) is in progress: 8a (unsafe and raw pointers, `docs/unsafe.md`) 8b (the C FFI, type-system §28) and 8c (`--profile freestanding`, `--emit obj`; `docs/cosmoos/profiles.md` §4) and 8d (`lib/core`, MMIO, C function
-  pointers; type-system §29) are done; 8e (acceptance) is next. `lib/core/*.nova` is part of every package. M5 (escape and placement
+  program generator (`tests/Nova.Fuzz`), MSVC, and a 24-hour campaign. M8 (systems and freestanding;
+  `docs/milestone-8.md`, ADR 0007) is complete: `unsafe` and raw pointers (`docs/unsafe.md`), the C FFI, the freestanding profile
+  (`docs/cosmoos/profiles.md` §4), and `lib/core` with MMIO and C function pointers; C4 is next. `lib/core/*.nova` is part of every
+  package. M5 (escape and placement
   analysis; `docs/milestone-5.md`) is complete (`--placement`, `--explain-allocations`).
 - Guest checks: `python3 integrations/cosmoos/c2.py --arch x86_64` (QEMU), and for aarch64 either
   QEMU or a running CosmoOS VM over ssh (`--arch aarch64 --ssh root@<host>`). `c3.py` takes the same

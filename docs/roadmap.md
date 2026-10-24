@@ -27,7 +27,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **M6** ✅ 2026-10-23 Generics & collections (ADR 0005) | Monomorphisation, interfaces, `Vector`, `String`, `StringView`, `StableVector`, `SlotMap`, iterators. OD-3 design | Invalidation compile-fail tests. Property tests of collections against a model. Ex9, Ex10, Ex12, Ex13 |
 | **C3** ✅ 2026-10-23 Collections & syscalls ([report](cosmoos/c3-report.md)) | Files, sockets, processes in Profile A; a useful utility (candidate: a `wc`/`sha256sum`-class tool or a hexdump) | The utility runs in QEMU on both arches, with output compared to the C/BusyBox equivalent on a test corpus |
 | **M7** ✅ 2026-10-24 Production C backend ([plan](milestone-7.md)) | Source maps, structured C, Csmith-style fuzzer, NIR reference interpreter, MSVC best-effort | 24 h fuzz campaign with no miscompile across clang/gcc × O0/O2. Interpreter agrees with native output |
-| **M8** Systems/freestanding ([plan](milestone-8.md); 8a unsafe and raw pointers, 8b C FFI, 8c profiles, 8d systems capabilities ✅ 2026-10-24) | core library split, FFI, raw pointers, MMIO types, custom entry points, `freestanding` profile | Freestanding object with no libc: verified by `llvm-nm -u` allowlist |
+| **M8** ✅ 2026-10-24 Systems/freestanding ([plan](milestone-8.md)) | core library split, FFI, raw pointers, MMIO types, custom entry points, `freestanding` profile | Freestanding object with no libc: verified by `llvm-nm -u` allowlist |
 | **C4** Freestanding in CosmoOS | Nova kernel-profile object built with kernel flags | Symbols, relocations and sections checked against the module loader allowlist. Frame sizes ≤ 2 KiB. No FP registers (disassembly check) |
 | **C5** Kernel memory adapter | `KernelHeap`, `ObjectCache<T>` bindings; isolated test component | In-kernel selftest: allocation, exhaustion (fault-injected), ownership transfer, cleanup. No allocator modifications |
 | **C6** Controlled kernel component | One small, non-critical component reimplemented beside its C original (candidate chosen with the owner) | Same test suite passes for both. Performance compared (measured, reproducible) |
@@ -108,8 +108,8 @@ miscompile; its one finding kind, a clang warning on a constant slice index, is 
 non-escaping `SystemHeap` boxes on the stack with `--placement`, `--explain-allocations`, equal
 outputs and identical drop traces.
 
-**M8, systems and freestanding support, is in progress** (`milestone-8.md`, ADR 0007: a hybrid core
-library). 8a is done (2026-10-24): `unsafe` blocks, expressions and functions, raw pointers `*T` and
+**M8, systems and freestanding support, is complete** (2026-10-24; `milestone-8.md`, ADR 0007: a
+hybrid core library). 8a is done (2026-10-24): `unsafe` blocks, expressions and functions, raw pointers `*T` and
 `*mut T`, the `Safety:` rule, and interpreter faults for invalid accesses through pointers. 8b is
 done (2026-10-24): `extern "C"` declarations, `@export`, `@repr(C)` structs and `@repr` enums, a
 generated `nova_exports.h`, and C files in a build.
@@ -122,5 +122,10 @@ the memory functions and the package's own C functions, on the host and both Cos
 types), volatile accesses, C function pointers, `@align`, `@noncopy`, `Cpu.spinHint()` and target
 queries; Ex18 runs, and builds as a freestanding object.
 
-Next: **8e**, M8's acceptance (the freestanding demo on both CosmoOS triples with section checks).
-Then C4. In parallel, when the owner wants it: propose the S1 in-tree port for C1 (OD-20).
+8e, the acceptance, is done (2026-10-24): freestanding objects for both CosmoOS triples have only
+allowlisted undefined symbols and no constructor, TLS or unwind sections, mutable globals or COMMON
+symbols.
+
+Next: **C4**, freestanding compilation in CosmoOS: a Nova object built with CosmoOS's own kernel
+flags, its symbols and relocations checked against the module loader's rules. **M9** (performance)
+may start in parallel once its benchmarks exist. In parallel, when the owner wants it: propose the S1 in-tree port for C1 (OD-20).

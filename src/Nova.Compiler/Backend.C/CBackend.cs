@@ -15,8 +15,13 @@ public sealed record CProgram(ImmutableArray<KeyValuePair<string, string>> Files
     /// <summary>The profile it was generated for; freestanding programs get the flags of cosmoos/profiles.md §4.3.</summary>
     public Profile Profile { get; init; }
 
-    /// <summary>Flags the profile itself needs: freestanding code may not depend on the C library's stack protector.</summary>
-    public IEnumerable<string> ProfileFlags => Profile == Profile.Freestanding ? ["-ffreestanding", "-fno-stack-protector"] : [];
+    /// <summary>
+    /// Flags the profile itself needs (cosmoos/profiles.md §4.3): freestanding code may not depend on the C library's stack
+    /// protector, and gets no unwind tables (panics abort; a kernel has no unwinder).
+    /// </summary>
+    public IEnumerable<string> ProfileFlags => Profile == Profile.Freestanding
+        ? ["-ffreestanding", "-fno-stack-protector", "-fno-asynchronous-unwind-tables", "-fno-unwind-tables"]
+        : [];
 
     public const string MainFileName = "main.c";
 

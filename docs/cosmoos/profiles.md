@@ -172,8 +172,16 @@ is given (`ld.lld` for the ELF cross builds, as CosmoOS links), otherwise with t
 (passing it the `--target=…` flag). It works in
 both profiles; with `--profile freestanding` it is the normal output.
 
+Freestanding builds always add `-ffreestanding -fno-stack-protector -fno-asynchronous-unwind-tables
+-fno-unwind-tables` (c-backend §1).
+
 ### 4.4 The symbol allowlist (acceptance, M8 criterion 1)
 The undefined symbols of a freestanding object (`llvm-nm -u`) are only:
 `nova_panic`, `memcpy`, `memmove`, `memset`, `memcmp`, and the functions the package declares in
 `extern "C"` blocks. Checked by `FreestandingTests` for the host and for both CosmoOS triples
 (`x86_64-unknown-none-elf`, `aarch64-unknown-none-elf`).
+
+On the CosmoOS triples the objects also have (`FreestandingTests`, M8e): no constructor or destructor
+sections (`.init_array`, `.fini_array`, `.ctors`, `.dtors`), which CosmoOS never runs; no TLS
+(`.tdata`, `.tbss`), which the kernel lacks; no unwind tables (`.eh_frame`); no COMMON symbols; and no
+mutable global state (`.data` and `.bss` empty), so nothing needs per-CPU or locking decisions.

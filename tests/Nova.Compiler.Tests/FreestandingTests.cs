@@ -37,6 +37,31 @@ public class FreestandingTests
     private static readonly Lazy<string> s_nm = new(() =>
         new[] { "llvm-nm", "llvm-nm-20", "llvm-nm-19", "llvm-nm-18", "llvm-nm-17" }.FirstOrDefault(Works) ?? "nm");
 
+    /// <summary>llvm-objdump (or the system's objdump, which reads ELF on Linux) for section headers.</summary>
+    private static readonly Lazy<string> s_objdump = new(() =>
+        new[] { "llvm-objdump", "llvm-objdump-20", "llvm-objdump-19", "llvm-objdump-18", "llvm-objdump-17" }.FirstOrDefault(Works) ?? "objdump");
+
+    /// <summary>Sections a CosmoOS object must not have (cosmoos/profiles.md §4.4): constructors, TLS, unwind tables.</summary>
+    private static readonly string[] s_forbiddenSections = [".init_array", ".fini_array", ".ctors", ".dtors", ".tdata", ".tbss", ".eh_frame"];
+
+    /// <summary>(name, size) of each section in an object (<c>objdump -h</c>).</summary>
+    private static List<(string Name, long Size)> Sections(string obj)
+    {
+        var listing = Toolchain.Run(s_objdump.Value, ["-h", obj]);
+        Assert.True(listing.ExitCode == 0, listing.StandardError);
+        var sections = new List<(string, long)>();
+        foreach (var line in listing.StandardOutput.Split('\n'))
+        {
+            // "  3 .text         000001c4 0000000000000000 TEXT": index, name, size (hex), …
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 3 && int.TryParse(parts[0], out _) && parts[1].StartsWith('.'))
+            {
+                sections.Add((parts[1], Convert.ToInt64(parts[2], 16)));
+            }
+        }
+        return sections;
+    }
+
     private static readonly Lazy<string?> s_lld = new(() => new[] { "ld.lld", "ld.lld-20", "ld.lld-19", "ld.lld-18" }.FirstOrDefault(Works));
 
     private static bool Works(string tool)
@@ -135,6 +160,19 @@ public class FreestandingTests
                 objects.Add(obj);
             }
             AssertAllowed(relativePath, compilation, Undefined(objects), triple);
+            foreach (var obj in objects)
+            {
+                // §4.4: no constructors, TLS or unwind tables; no mutable global state; no COMMON symbols.
+                var sections = Sections(obj);
+                Assert.Contains(sections, s => s.Name == ".text" || s.Name.StartsWith(".text.", StringComparison.Ordinal));
+                var forbidden = sections.Where(s => s_forbiddenSections.Any(f => s.Name == f || s.Name.StartsWith(f + ".", StringComparison.Ordinal))).ToList();
+                Assert.True(forbidden.Count == 0, $"{relativePath} ({triple}) {Path.GetFileName(obj)} has {string.Join(", ", forbidden.Select(s => s.Name))}");
+                var state = sections.Where(s => s.Size > 0 && (s.Name is ".data" or ".bss" || s.Name.StartsWith(".data.", StringComparison.Ordinal)
+                    || s.Name.StartsWith(".bss.", StringComparison.Ordinal))).ToList();
+                Assert.True(state.Count == 0, $"{relativePath} ({triple}) {Path.GetFileName(obj)} has mutable global state in {string.Join(", ", state.Select(s => s.Name))}");
+                var symbols = Toolchain.Run(s_nm.Value, [obj]).StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                Assert.DoesNotContain(symbols, line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries) is [.., "C", _]);
+            }
 
             // With ld.lld, the one object that --emit obj --ld ld.lld makes (as CosmoOS links), and its sections.
             if (s_lld.Value is { } lld)
