@@ -1,6 +1,6 @@
 # Nova Compilation Profiles for CosmoOS (+ Freestanding Runtime Design)
 
-Status: C0 proposal (deliverables 3 and 7). Facts are cited from
+Status: C0 proposal (deliverables 3 and 7); §4, the freestanding profile, is normative from M8c. Facts are cited from
 `docs/research/cosmoos-platform-audit.md` **[PA §n]** and
 `docs/research/cosmoos-kernel-audit.md` **[KA §n]**.
 
@@ -12,7 +12,7 @@ allowed or not, and the list below is normative.
 
 ## 1. Profile matrix
 
-| Feature | `hosted` (Linux/macOS dev) | **A: `cosmoos-user`** | **B: `cosmoos-kernel`** | `freestanding` (generic, post-M8) |
+| Feature | `hosted` (Linux/macOS dev) | **A: `cosmoos-user`** | **B: `cosmoos-kernel`** | `freestanding` (generic; M8c, §4) |
 |---|---|---|---|---|
 | Libraries | core + std | core + std(cosmoos) | core + kernel | core |
 | Default allocator type param | `SystemHeap` (malloc) | `SystemHeap` (CosmoOS libc malloc) | **none**: must be explicit | none |
@@ -121,3 +121,59 @@ from the profile's allowlist (`memcpy`, `memset`, `memmove`, `memcmp`,
 `panic`, plus bound kernel APIs); `llvm-readelf -r` shows only relocation types
 accepted by the module loader [KA §6.4]; there are no `.init_array`, `.tdata`/`.tbss`,
 `.eh_frame` or COMMON symbols.
+
+## 4. The `freestanding` profile (M8c; normative)
+
+`novac build --profile freestanding` compiles a package for an environment with no C library and
+no operating system: a kernel, firmware, or a module that another runtime links. `--profile hosted`
+is the default and is what every earlier milestone built. (`cosmoos-user` is hosted with CosmoOS's
+flags, C1–C3; `cosmoos-kernel` is C4–C8 and builds on this profile.)
+
+### 4.1 What freestanding code may use
+Everything in the language that needs no runtime service: integers, `bool`, structs, enums,
+arrays, slices, `StringView`, optionals, `Result` and `AllocError`, references, generics and
+interfaces, `unsafe` and raw pointers (type-system §27), the C FFI (§28), `FixedBufferAllocator`
+over caller-provided storage, `Ptr`, `Slice.fromRaw`, and `truncate`.
+
+These need a hosted runtime and are rejected in freestanding code (N0293), wherever they are
+named (a type, a call, a struct literal):
+
+| Name | Why |
+|---|---|
+| `Console`, `Process` | standard streams, exit, arguments and processes are operating-system services |
+| `File`, `TcpListener`, `TcpStream`, `IoError` | files and sockets |
+| `SystemHeap`, `FailingAllocator` | there is no system heap; `FailingAllocator` wraps it |
+| `Box`, `PoolBox`, `Pool`, `Arena`, `Scratch`, `Vector`, `String`, `SlotMap`, `StableVector` | each allocates from one of the two allocators above (`Scratch` from the runtime's heap-backed stack) |
+
+A `main` function is N0293 too: there is no C `main` to call it. A freestanding package is entered
+through its `@export` functions (§28.4; custom entry points are M8d). Allocators that a freestanding
+environment provides (CosmoOS's `KernelHeap`, C5) will come with user-defined allocators.
+
+### 4.2 Runtime and the panic hook
+- The program is the generated `main.c`, `nova/rt.h`, and the core runtime `nova_rt_core.c` compiled
+  with `NV_FREESTANDING` defined, which leaves out everything that needs a platform service (output,
+  exit, heap accounting, arenas, scratch frames, pools and collections). What remains has no
+  mutable global state and no constructors: the fixed-buffer allocator, UTF-8 validation, and the
+  checked arithmetic in `rt.h`.
+- **`nova_panic` is the environment's.** Generated code calls
+  `void nova_panic(nv_panic_kind kind, nv_loc loc)` (declared in `nova/rt.h`) for every panic:
+  overflow, bounds, unwrap, and the rest. The freestanding runtime does not define it; the code that
+  links the object must, and it must not return (panic = abort, OD-5). `kind` is an
+  `nv_panic_kind`; `loc.file` is the Nova source path (a zero-terminated string), `loc.line` and
+  `loc.column` 1-based.
+- The C compiler may itself emit calls to `memcpy`, `memmove`, `memset` and `memcmp` (struct copies,
+  zeroing), as it may in any freestanding C (C11 §4 and the compilers' documentation); the
+  environment provides them.
+
+### 4.3 `--emit obj`
+`novac build --emit obj -o out.o` compiles each C file with `-c` (and the flags given with
+`--cflag`) and joins the objects into one relocatable object: with `<linker> -r` when `--ld <linker>`
+is given (`ld.lld` for the ELF cross builds, as CosmoOS links), otherwise with the C compiler's `-r`
+(passing it the `--target=…` flag). It works in
+both profiles; with `--profile freestanding` it is the normal output.
+
+### 4.4 The symbol allowlist (acceptance, M8 criterion 1)
+The undefined symbols of a freestanding object (`llvm-nm -u`) are only:
+`nova_panic`, `memcpy`, `memmove`, `memset`, `memcmp`, and the functions the package declares in
+`extern "C"` blocks. Checked by `FreestandingTests` for the host and for both CosmoOS triples
+(`x86_64-unknown-none-elf`, `aarch64-unknown-none-elf`).

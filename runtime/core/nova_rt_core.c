@@ -1,8 +1,73 @@
 /*
- * Nova runtime core (freestanding): integer formatting, output and panic reporting, built
+ * Nova runtime core: integer formatting, output and panic reporting, heap accounting and regions, built
  * only on the platform services declared in nova/rt.h. No libc.
+ *
+ * With NV_FREESTANDING defined (the freestanding profile, cosmoos/profiles.md §4.2) only the first part
+ * is compiled: code that needs no platform service and has no mutable global state. The environment
+ * then defines nova_panic.
  */
 #include "nova/rt.h"
+
+nv_str nova_io_message(uint32_t kind) {
+    static const char *const messages[] = {
+        "No such file or directory", "Permission denied", "File exists", "Is a directory",
+        "Not a directory", "Invalid argument", "Broken pipe", "Connection refused",
+        "Address already in use", "Out of memory", "Input/output error",
+    };
+    const char *text = messages[kind <= NV_IO_OTHER ? kind : NV_IO_OTHER];
+    uint64_t length = 0;
+    while (text[length] != 0) length++;
+    return (nv_str){ .ptr = (const uint8_t *)text, .len = length };
+}
+
+bool nova_utf8_valid(const uint8_t *bytes, uint64_t length) {
+    uint64_t i = 0;
+    while (i < length) {
+        uint8_t b = bytes[i];
+        uint64_t extra;
+        uint32_t min;
+        uint32_t code;
+        if (b < 0x80u) { i++; continue; }
+        if ((b & 0xE0u) == 0xC0u) { extra = 1; min = 0x80u; code = b & 0x1Fu; }
+        else if ((b & 0xF0u) == 0xE0u) { extra = 2; min = 0x800u; code = b & 0x0Fu; }
+        else if ((b & 0xF8u) == 0xF0u) { extra = 3; min = 0x10000u; code = b & 0x07u; }
+        else return false;
+        if (extra > length - i - 1) return false;
+        for (uint64_t k = 1; k <= extra; k++) {
+            uint8_t c = bytes[i + k];
+            if ((c & 0xC0u) != 0x80u) return false;
+            code = (code << 6) | (c & 0x3Fu);
+        }
+        if (code < min || code > 0x10FFFFu || (code >= 0xD800u && code <= 0xDFFFu)) return false;
+        i += extra + 1;
+    }
+    return true;
+}
+
+/* ---- Fixed-buffer allocator (type-system.md §19.4) ----------------------------------------- */
+
+nv_fba nova_fba_over(uint8_t *base, uint64_t capacity) {
+    nv_fba f = {base, capacity, 0u};
+    return f;
+}
+
+static void *fba_alloc(nv_fba *f, uint64_t size, uint64_t align) {
+    uintptr_t start = (uintptr_t)f->base + (uintptr_t)f->used;
+    uintptr_t aligned = (start + (uintptr_t)(align - 1u)) & ~(uintptr_t)(align - 1u);
+    uint64_t offset = (uint64_t)(aligned - (uintptr_t)f->base);
+    if (aligned < start || offset > f->capacity || size > f->capacity - offset) {
+        return NULL;
+    }
+    f->used = offset + size;
+    return (void *)aligned;
+}
+
+#ifdef NV_FREESTANDING
+/* Only fixed buffers exist without a heap (cosmoos/profiles.md §4.1). */
+void *nova_region_alloc(void *region, uint32_t kind, uint64_t size, uint64_t align) {
+    return kind == NV_REGION_FBA ? fba_alloc((nv_fba *)region, size, align) : NULL;
+}
+#else
 
 static size_t format_u64(uint64_t value, uint8_t buffer[20]) {
     size_t start = 20;
@@ -89,42 +154,6 @@ void nova_write_bytes(const uint8_t *bytes, uint64_t length) {
 
 void nova_write_error(nv_str text) {
     nova_platform_write_stderr(text.ptr, (size_t)text.len);
-}
-
-nv_str nova_io_message(uint32_t kind) {
-    static const char *const messages[] = {
-        "No such file or directory", "Permission denied", "File exists", "Is a directory",
-        "Not a directory", "Invalid argument", "Broken pipe", "Connection refused",
-        "Address already in use", "Out of memory", "Input/output error",
-    };
-    const char *text = messages[kind <= NV_IO_OTHER ? kind : NV_IO_OTHER];
-    uint64_t length = 0;
-    while (text[length] != 0) length++;
-    return (nv_str){ .ptr = (const uint8_t *)text, .len = length };
-}
-
-bool nova_utf8_valid(const uint8_t *bytes, uint64_t length) {
-    uint64_t i = 0;
-    while (i < length) {
-        uint8_t b = bytes[i];
-        uint64_t extra;
-        uint32_t min;
-        uint32_t code;
-        if (b < 0x80u) { i++; continue; }
-        if ((b & 0xE0u) == 0xC0u) { extra = 1; min = 0x80u; code = b & 0x1Fu; }
-        else if ((b & 0xF0u) == 0xE0u) { extra = 2; min = 0x800u; code = b & 0x0Fu; }
-        else if ((b & 0xF8u) == 0xF0u) { extra = 3; min = 0x10000u; code = b & 0x07u; }
-        else return false;
-        if (extra > length - i - 1) return false;
-        for (uint64_t k = 1; k <= extra; k++) {
-            uint8_t c = bytes[i + k];
-            if ((c & 0xC0u) != 0x80u) return false;
-            code = (code << 6) | (c & 0x3Fu);
-        }
-        if (code < min || code > 0x10FFFFu || (code >= 0xD800u && code <= 0xDFFFu)) return false;
-        i += extra + 1;
-    }
-    return true;
 }
 
 void nova_write_view(nv_str text) {
@@ -303,24 +332,6 @@ void nova_arena_drop(nv_arena *a) {
     nova_arena_reset(a);
 }
 
-/* ---- Fixed-buffer allocator (type-system.md §19.4) ----------------------------------------- */
-
-nv_fba nova_fba_over(uint8_t *base, uint64_t capacity) {
-    nv_fba f = {base, capacity, 0u};
-    return f;
-}
-
-static void *fba_alloc(nv_fba *f, uint64_t size, uint64_t align) {
-    uintptr_t start = (uintptr_t)f->base + (uintptr_t)f->used;
-    uintptr_t aligned = (start + (uintptr_t)(align - 1u)) & ~(uintptr_t)(align - 1u);
-    uint64_t offset = (uint64_t)(aligned - (uintptr_t)f->base);
-    if (aligned < start || offset > f->capacity || size > f->capacity - offset) {
-        return NULL;
-    }
-    f->used = offset + size;
-    return (void *)aligned;
-}
-
 /* ---- Scratch frames (type-system.md §19.5; ADR 0004) -------------------------------------- */
 
 #define NV_SCRATCH_CHUNK 65536u
@@ -442,3 +453,4 @@ void nova_pool_drop(nv_pool *p) {
         nova_free(p->slots, (uint32_t)p->allocator);
     }
 }
+#endif /* NV_FREESTANDING */

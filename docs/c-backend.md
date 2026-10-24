@@ -33,6 +33,12 @@ Status: Milestone 0 proposal. Applies from M1. CosmoOS-specific flags are covere
 - `-nostdinc` builds: freestanding headers come from `-isystem $(clang
   -print-resource-dir)/include` (CosmoOS invariant B2). Generated code must not include libc headers
   directly; only `nova/rt*.h` does, and only in hosted and userland profiles.
+- **Runtime per profile (M8c, `cosmoos/profiles.md` §4.2).** Hosted programs get `nova/rt.h`, the
+  core runtime `nova_rt_core.c`, and the platform layer `nova_rt_hosted.c` / `nova_rt_io.c` (C library
+  calls). Freestanding programs get `nova/rt.h` and `nova_rt_core.c` compiled with `NV_FREESTANDING`
+  (a `#define` at its top), which leaves out everything that needs a platform service; the
+  environment defines `nova_panic`. Freestanding builds add `-ffreestanding -fno-stack-protector`
+  (the stack protector's `__stack_chk_*` symbols come from the C library).
 - Plain C `char` is **never** used for Nova data (`char` is signed on x86-64 and
   unsigned on AArch64; CosmoOS's `limits.h` is also wrong about it on AArch64). Bytes are `uint8_t`.
 

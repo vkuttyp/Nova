@@ -9,6 +9,16 @@ namespace Nova.Compiler.Semantics;
 /// Properties of the compilation target that affect semantics. This is the only source of
 /// target layout facts: never use host .NET properties (docs/decisions/0001).
 /// </summary>
+/// <summary>A compilation profile (cosmoos/profiles.md): what a package may use, and which runtime it is linked with.</summary>
+public enum Profile
+{
+    /// <summary>A C library and an operating system: the default (Linux, macOS, Windows, CosmoOS userland).</summary>
+    Hosted,
+
+    /// <summary>No C library and no operating system (§4): no heap, no I/O, no `main`; the environment supplies `nova_panic`.</summary>
+    Freestanding,
+}
+
 public sealed record TargetInfo(string Name, int PointerBits)
 {
     /// <summary>LP64: x86_64 and aarch64 CosmoOS, and 64-bit Linux/macOS hosts.</summary>

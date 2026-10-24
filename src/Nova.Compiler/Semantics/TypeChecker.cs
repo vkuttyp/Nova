@@ -96,6 +96,8 @@ internal sealed class TypeChecker
     }
 
     private readonly IReadOnlyList<CompilationUnit> _units;
+    private readonly Profile _profile;
+    private readonly HashSet<(SourceText, TextSpan)> _profileReports = [];
     private readonly SymbolTable _symbols;
     private readonly TypeTable _types;
     private DiagnosticBag _diagnostics;
@@ -148,8 +150,10 @@ internal sealed class TypeChecker
     private readonly HashSet<object> _usedBuiltins = [];
     private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch", "Pool", "PoolBox", "Vector", "String", "SlotMap", "StableVector", "Handle", "File", "TcpListener", "TcpStream", "Ptr", "Slice", "SliceMut"];
 
-    public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics)
+    public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics,
+        Profile profile = Profile.Hosted)
     {
+        _profile = profile;
         _units = units;
         _symbols = symbols;
         _types = types;
@@ -1464,6 +1468,17 @@ internal sealed class TypeChecker
 
     private NovaType ResolveType(TypeSyntax syntax, bool allowVoid, bool allowSources = false, bool allowCChar = false)
     {
+        var type = ResolveTypeCore(syntax, allowVoid, allowSources, allowCChar);
+        if (_profile == Profile.Freestanding && IsHostedOnly(type))
+        {
+            HostedOnly(syntax.Span, $"'{type}'");
+            return _types.Error;
+        }
+        return type;
+    }
+
+    private NovaType ResolveTypeCore(TypeSyntax syntax, bool allowVoid, bool allowSources, bool allowCChar)
+    {
         if (syntax is OptionalType optional)
         {
             var value = ResolveType(optional.Inner, allowVoid: false, allowSources);
@@ -2546,6 +2561,13 @@ internal sealed class TypeChecker
         {
             return;
         }
+        if (_profile == Profile.Freestanding)
+        {
+            _source = main.Source;
+            Error(DiagnosticCodes.HostedOnly, main.Syntax.Name.Span,
+                "a freestanding package has no 'main': nothing calls it; enter it through @export functions (cosmoos/profiles.md §4.1)");
+            return;
+        }
         var okReturn = ReferenceEquals(main.ReturnType, _types.I32) || ReferenceEquals(main.ReturnType, _types.Void);
         if (!main.Parameters.IsEmpty || !okReturn)
         {
@@ -2557,6 +2579,27 @@ internal sealed class TypeChecker
         {
             _source = main.Source;
             Error(DiagnosticCodes.InvalidMain, main.Syntax.Name.Span, "'main' cannot be unsafe; put the unsafe code in an 'unsafe { ... }' block");
+        }
+    }
+
+    // ---- Profiles (cosmoos/profiles.md §4) ----
+
+    /// <summary>A type that needs the hosted runtime (§4.1): a heap allocator, or anything allocating from one; I/O.</summary>
+    private bool IsHostedOnly(NovaType type) =>
+        type.IsBox || type.Kind is TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap or TypeKind.Resource
+        || type.Region is RegionKind.Arena or RegionKind.Pool or RegionKind.ScratchFrame
+        || IsAllocatorType(type) || type == _ioError.Type;
+
+    /// <summary>Built-in names whose every use needs the hosted runtime (§4.1).</summary>
+    private static bool IsHostedOnly(Builtin builtin) => builtin is not (Builtin.Truncate or Builtin.FixedBufferAllocator
+        or Builtin.Ptr or Builtin.Slice or Builtin.SliceMut);
+
+    /// <summary>Reports N0293 once per place: <paramref name="what"/> is not available in the freestanding profile.</summary>
+    private void HostedOnly(TextSpan span, string what)
+    {
+        if (_profileReports.Add((_source, span)))
+        {
+            Error(DiagnosticCodes.HostedOnly, span, $"{what} needs the hosted runtime and is not available with --profile freestanding (cosmoos/profiles.md §4.1)");
         }
     }
 
@@ -3878,6 +3921,12 @@ internal sealed class TypeChecker
     {
         switch (expr)
         {
+            case CallExpr { Callee: MemberExpr { Target: NameExpr hostedName } } hostedCall when _profile == Profile.Freestanding
+                && Lookup(hostedName.Name.Name) is Builtin hosted && IsHostedOnly(hosted):
+                // Box.create, Vector<T>.create, Console.write, … (cosmoos/profiles.md §4.1).
+                HostedOnly(hostedName.Span, $"'{Name(hostedName.Name.Name)}'");
+                CheckArgumentsLoosely(hostedCall);
+                return ErrorResult(hostedCall.Span);
             case IntLiteralExpr literal:
                 return CheckIntLiteral(literal, negative: false, expected, literal.Span);
             case BoolLiteralExpr b:
@@ -4184,6 +4233,11 @@ internal sealed class TypeChecker
             return ErrorResult(literal.Span);
         }
         Used(entry);
+        if (_profile == Profile.Freestanding && IsAllocatorType(entry.Type))
+        {
+            HostedOnly(literal.TypeName.Span, $"'{typeName}'");
+            return ErrorResult(literal.Span);
+        }
         if (!entry.Decl.TypeParameters.IsEmpty)
         {
             // `Pair { first: 1, … }` infers T from the fields; `Pair<u8> { … }` gives it (§20.2).
@@ -4760,6 +4814,15 @@ internal sealed class TypeChecker
         NovaType? expected = null, ImmutableArray<TypeSyntax> typeArguments = default)
     {
         Used(entry);
+        if (_profile == Profile.Freestanding && entry.Type == _ioError.Type)
+        {
+            HostedOnly(member.Target.Span, "'IoError'");
+            foreach (var argument in arguments)
+            {
+                Synth(argument, null);
+            }
+            return ErrorResult(span);
+        }
         if (!entry.Decl.TypeParameters.IsEmpty)
         {
             // `Maybe.Just(7)`, `Maybe<u8>.Nothing`, or a variant of the expected instance (§20.2).

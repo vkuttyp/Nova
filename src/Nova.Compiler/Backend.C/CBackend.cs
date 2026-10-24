@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Reflection;
 using Nova.Compiler.Diagnostics;
 using Nova.Compiler.Nir;
+using Nova.Compiler.Semantics;
 using Nova.Compiler.Syntax;
 
 namespace Nova.Compiler.Backend.C;
@@ -11,6 +12,12 @@ namespace Nova.Compiler.Backend.C;
 /// <param name="Files">Relative path → content. Compile every <c>.c</c> file with <c>-I</c> on the output root.</param>
 public sealed record CProgram(ImmutableArray<KeyValuePair<string, string>> Files)
 {
+    /// <summary>The profile it was generated for; freestanding programs get the flags of cosmoos/profiles.md §4.3.</summary>
+    public Profile Profile { get; init; }
+
+    /// <summary>Flags the profile itself needs: freestanding code may not depend on the C library's stack protector.</summary>
+    public IEnumerable<string> ProfileFlags => Profile == Profile.Freestanding ? ["-ffreestanding", "-fno-stack-protector"] : [];
+
     public const string MainFileName = "main.c";
 
     /// <summary>The C declarations of the program's exports and @repr types (c-backend.md §2.3).</summary>
@@ -18,7 +25,7 @@ public sealed record CProgram(ImmutableArray<KeyValuePair<string, string>> Files
 
     /// <summary>Adds C source files (type-system.md §28.6) under <c>c/</c>, compiled with the generated C.</summary>
     public CProgram WithCSources(IEnumerable<(string Name, string Content)> sources) =>
-        new([.. Files, .. sources.Select(s => new KeyValuePair<string, string>("c/" + s.Name, s.Content))]);
+        this with { Files = [.. Files, .. sources.Select(s => new KeyValuePair<string, string>("c/" + s.Name, s.Content))] };
 
     public IEnumerable<string> SourceFiles => Files.Select(f => f.Key).Where(k => k.EndsWith(".c", StringComparison.Ordinal));
 
@@ -42,6 +49,14 @@ public static class CBackend
         new("nova_rt_core.c", ReadResource("runtime/core/nova_rt_core.c")),
         new("nova_rt_hosted.c", ReadResource("runtime/hosted/nova_rt_hosted.c")),
         new("nova_rt_io.c", ReadResource("runtime/hosted/nova_rt_io.c")),
+    ];
+
+    /// <summary>The freestanding runtime (cosmoos/profiles.md §4.2): the header and the core without platform services.</summary>
+    private static readonly ImmutableArray<KeyValuePair<string, string>> FreestandingRuntime =
+    [
+        HostedRuntime[0],
+        new("nova_rt_core.c", "/* The core runtime for the freestanding profile (cosmoos/profiles.md §4.2). */\n#define NV_FREESTANDING 1\n"
+            + ReadResource("runtime/core/nova_rt_core.c")),
     ];
 
     /// <summary>
@@ -69,8 +84,12 @@ public static class CBackend
         nir = compilation.Nir ?? throw new InvalidOperationException("the compilation has no NIR");
         var mainSource = CEmitter.Emit(nir, compilation.Symbols, compilation.Types, compilation.Units.Select(u => u.Source), options);
         var header = CEmitter.ExportsHeader(nir, compilation.Symbols, compilation.Types);
-        return new CProgram([new(CProgram.MainFileName, mainSource), .. HostedRuntime,
-            .. header is null ? Array.Empty<KeyValuePair<string, string>>() : [new(CProgram.ExportsHeaderName, header)]]);
+        var runtime = compilation.Profile == Profile.Freestanding ? FreestandingRuntime : HostedRuntime;
+        return new CProgram([new(CProgram.MainFileName, mainSource), .. runtime,
+            .. header is null ? Array.Empty<KeyValuePair<string, string>>() : [new(CProgram.ExportsHeaderName, header)]])
+        {
+            Profile = compilation.Profile,
+        };
     }
 
     /// <summary>The runtime header plus the given C files, without the core or platform runtime (for tests and embedders).</summary>
@@ -108,10 +127,43 @@ public static class Toolchain
     {
         ArgumentNullException.ThrowIfNull(program);
         var args = new List<string>(StrictWarnings) { "-I", directory };
+        args.AddRange(program.ProfileFlags);
         args.AddRange(extraFlags);
         args.AddRange(program.SourceFiles.Select(f => Path.Combine(directory, f)));
         args.AddRange(["-o", output]);
         return Run(compiler, args, workingDirectory: workingDirectory);
+    }
+
+    /// <summary>
+    /// Compiles each C file with <c>-c</c> and joins the objects into one relocatable object with <c>-r</c>
+    /// (cosmoos/profiles.md §4.3): by <paramref name="linker"/> if given (<c>ld.lld</c> for ELF cross builds), else by the
+    /// C compiler with the target flag.
+    /// </summary>
+    public static ToolResult CompileObject(string compiler, string directory, CProgram program, string output, IEnumerable<string> extraFlags,
+        string? workingDirectory = null, string? linker = null)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        var flags = extraFlags.ToList();
+        var objects = new List<string>();
+        foreach (var file in program.SourceFiles)
+        {
+            var source = Path.Combine(directory, file);
+            var obj = source + ".o";
+            var args = new List<string>(StrictWarnings) { "-I", directory };
+            args.AddRange(program.ProfileFlags);
+            args.AddRange(flags);
+            args.AddRange(["-c", source, "-o", obj]);
+            var compiled = Run(compiler, args, workingDirectory: workingDirectory);
+            if (compiled.ExitCode != 0)
+            {
+                return compiled;
+            }
+            objects.Add(obj);
+        }
+        var link = linker is null ? [.. flags.Where(f => f.StartsWith("--target=", StringComparison.Ordinal)), "-nostdlib"] : new List<string>();
+        link.AddRange(["-r", "-o", output]);
+        link.AddRange(objects);
+        return Run(linker ?? compiler, link, workingDirectory: workingDirectory);
     }
 
     /// <summary>

@@ -1,0 +1,64 @@
+// profile: freestanding
+// A freestanding package (cosmoos/profiles.md §4): no C library, no heap, entered through exports. demo.c is
+// the host's stand-in for an environment: it defines nova_panic, calls the exports, and ends with a panic.
+
+extern "C" {
+    fn demo_log(value: u64);
+}
+
+@repr(C)
+struct Stats { count: u32; sum: u64; max: u8; }
+
+/// Safety: `data` points to `n` readable bytes (the C caller's contract).
+@export("demo_stats")
+unsafe fn stats(data: *u8, n: usize) -> Stats {
+    let bytes = Slice.fromRaw(data, n);
+    var s = Stats { count: 0, sum: 0, max: 0 };
+    for (b in bytes) {
+        s.count += 1;
+        s.sum += b as u64;
+        if (b > s.max) { s.max = b; }
+    }
+    return s;
+}
+
+/// Checked arithmetic panics through the environment's nova_panic.
+@export("demo_add")
+fn add(a: u32, b: u32) -> u32 => a + b; // expect-panic: integer overflow
+
+/// A fixed-buffer allocator over a local array: allocation without a heap.
+/// Safety: demo_log only reads its argument.
+@export("demo_fill")
+fn fill(seed: u8) -> u32 {
+    var storage: [u8; 64] = [0; 64];
+    using fba = FixedBufferAllocator.over(mut storage);
+    match (fba.allocArray(8usize, seed)) {
+        Ok(cells) => {
+            unsafe { demo_log(cells[7] as u64); }
+            return truncate<u32>(cells.length) + cells[7] as u32;
+        }
+        Err(e) => { return 0; }
+    }
+}
+
+/// String views, optionals and generics need no runtime either.
+@export("demo_find")
+fn find(needle: u8) -> i32 {
+    match (indexOf("freestanding", needle)) {
+        null => { return -1; }
+        Some(i) => { return truncate<i32>(i); }
+    }
+}
+
+fn indexOf(text: StringView, needle: u8) -> usize? {
+    let bytes = text.bytes();
+    for (i in 0..bytes.length) {
+        if (bytes[i] == needle) { return i; }
+    }
+    return null;
+}
+// expect-stdout: log 7
+// expect-stdout: fill 15
+// expect-stdout: stats 4 10 4
+// expect-stdout: find 2 -1
+// expect-stdout: add 3

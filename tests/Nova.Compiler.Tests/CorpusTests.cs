@@ -90,8 +90,12 @@ public partial class CorpusTests
     private static Compilation CompileFile(string relativePath)
     {
         var text = File.ReadAllText(Path.Combine(CorpusRoot, relativePath));
-        return Compilation.Create([new SourceText(relativePath, text)], TargetInfo.Lp64);
+        return Compilation.Create([new SourceText(relativePath, text)], TargetInfo.Lp64, ProfileOf(text));
     }
+
+    /// <summary>A file with a line <c>// profile: freestanding</c> is checked in that profile (cosmoos/profiles.md §4).</summary>
+    internal static Profile ProfileOf(string text) =>
+        text.ReplaceLineEndings("\n").Split('\n').Any(l => l.Trim() == "// profile: freestanding") ? Profile.Freestanding : Profile.Hosted;
 
     private static void AssertSnapshot(string relativePath, string extension, string actual)
     {

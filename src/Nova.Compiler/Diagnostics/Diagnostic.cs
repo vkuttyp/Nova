@@ -123,6 +123,7 @@ public static class DiagnosticCodes
     public const string InvalidAttribute = "N0290";
     public const string NotFfiSafe = "N0291";
     public const string InvalidCName = "N0292";
+    public const string HostedOnly = "N0293";
 
     // Build: N0300-N0399
     public const string MissingMain = "N0300";

@@ -24,10 +24,16 @@ internal static class Program
           --dump-ast        (parse) print the AST of each file
           --dump-hir        (check) print the typed HIR of the package
           --dump-nir        (build) print the NIR of the package
-          --emit c|exe      (build) write C sources (to the -o directory) or an executable (default)
+          --emit c|exe|obj  (build) write C sources (to the -o directory), an executable (default), or one
+                            relocatable object (cosmoos/profiles.md §4.3)
+          --profile hosted|freestanding
+                            (build, check) the profile: hosted (default) or freestanding, with no C library
+                            and no operating system (cosmoos/profiles.md §4)
           -o <path>         (build) output file or directory; default: name of the first input
           --cc <compiler>   (build) C compiler for --emit exe; default: $CC or cc
           --cflag <flag>    (build) extra flag for the C compiler (repeatable)
+          --ld <linker>     (build --emit obj) join the objects with '<linker> -r' (e.g. ld.lld for ELF
+                            cross builds) instead of the C compiler
           --line-directives (build) map the generated C to Nova lines with #line
           -g                (build) debug build: #line directives, C compiled with -g -O0
           --flat-c          (build) emit the flat form: one label per block, no if/loop reconstruction
@@ -44,6 +50,12 @@ internal static class Program
         public List<(string Name, string Content)> CSources { get; } = [];
         public bool Dump { get; set; }
         public string Emit { get; set; } = "exe";
+
+        /// <summary>--ld: joins the objects of --emit obj (cosmoos/profiles.md §4.3).</summary>
+        public string? Linker { get; set; }
+
+        /// <summary>--profile (cosmoos/profiles.md §4).</summary>
+        public Profile Profile { get; set; } = Profile.Hosted;
         public string? Output { get; set; }
         public string Compiler { get; set; } = Environment.GetEnvironmentVariable("CC") is { Length: > 0 } cc ? cc : "cc";
         public List<string> CFlags { get; } = ["-O2"];
@@ -108,7 +120,7 @@ internal static class Program
         return command switch
         {
             "parse" => Report(Parse(sources, options.Dump)),
-            "check" => Report(Check(sources, options.Dump)),
+            "check" => Report(Check(sources, options.Dump, options.Profile)),
             "run" => Run(sources, options),
             _ => Build(sources, options),
         };
@@ -166,7 +178,17 @@ internal static class Program
                 options.CFlags.Remove("-O2");
                 options.CFlags.InsertRange(0, ["-g", "-O0"]);
             }
-            else if (command == "build" && arg is "--emit" or "-o" or "--cc" or "--cflag")
+            else if (command is "build" or "check" && arg == "--profile")
+            {
+                switch (Value())
+                {
+                    case null: return null;
+                    case "hosted": options.Profile = Profile.Hosted; break;
+                    case "freestanding": options.Profile = Profile.Freestanding; break;
+                    case var other: Fail($"--profile must be 'hosted' or 'freestanding', not '{other}'"); return null;
+                }
+            }
+            else if (command == "build" && arg is "--emit" or "-o" or "--cc" or "--cflag" or "--ld")
             {
                 if (Value() is not { } value)
                 {
@@ -174,10 +196,11 @@ internal static class Program
                 }
                 switch (arg)
                 {
-                    case "--emit" when value is "c" or "exe": options.Emit = value; break;
-                    case "--emit": Fail($"--emit must be 'c' or 'exe', not '{value}'"); return null;
+                    case "--emit" when value is "c" or "exe" or "obj": options.Emit = value; break;
+                    case "--emit": Fail($"--emit must be 'c', 'exe' or 'obj', not '{value}'"); return null;
                     case "-o": options.Output = value; break;
                     case "--cc": options.Compiler = value; break;
+                    case "--ld": options.Linker = value; break;
                     default: options.CFlags.Add(value); break;
                 }
             }
@@ -228,9 +251,9 @@ internal static class Program
         return diagnostics;
     }
 
-    private static DiagnosticBag Check(List<SourceText> sources, bool dumpHir)
+    private static DiagnosticBag Check(List<SourceText> sources, bool dumpHir, Profile profile)
     {
-        var compilation = Compilation.Create(sources, TargetInfo.Lp64);
+        var compilation = Compilation.Create(sources, TargetInfo.Lp64, profile);
         if (dumpHir && compilation.Hir is not null)
         {
             Console.Out.Write(HirPrinter.Print(compilation.Hir, compilation.Symbols));
@@ -240,14 +263,15 @@ internal static class Program
 
     private static int Build(List<SourceText> sources, Options options)
     {
-        var compilation = Compilation.Create(sources, TargetInfo.Lp64);
+        var compilation = Compilation.Create(sources, TargetInfo.Lp64, options.Profile);
         if (compilation.Diagnostics.HasErrors)
         {
             return Report(compilation.Diagnostics);
         }
 
         // With C files, `main` may be in C (type-system.md §28.6).
-        var program = CBackend.Generate(compilation, requireMain: options.Emit == "exe" && options.CSources.Count == 0, out var nir,
+        var program = CBackend.Generate(compilation,
+            requireMain: options.Emit == "exe" && options.CSources.Count == 0 && options.Profile == Profile.Hosted, out var nir,
             new CEmitOptions(LineDirectives: options.LineDirectives, Structured: !options.Flat, Placement: options.Placement))
             ?.WithCSources(options.CSources);
         if (program is null)
@@ -272,14 +296,17 @@ internal static class Program
             return 0;
         }
 
-        var output = options.Output ?? defaultName;
+        var output = options.Output ?? (options.Emit == "obj" ? defaultName + ".o" : defaultName);
         var workDirectory = Path.Combine(Path.GetTempPath(), "novac-" + Guid.NewGuid().ToString("N"));
         try
         {
             program.WriteTo(workDirectory);
             // Run in the current directory: the source paths in #line directives are relative to it (c-backend.md §7).
-            var result = Toolchain.CompileExecutable(options.Compiler, workDirectory, program, output, options.CFlags,
-                workingDirectory: Environment.CurrentDirectory);
+            var result = options.Emit == "obj"
+                ? Toolchain.CompileObject(options.Compiler, workDirectory, program, Path.GetFullPath(output), options.CFlags,
+                    workingDirectory: Environment.CurrentDirectory, linker: options.Linker)
+                : Toolchain.CompileExecutable(options.Compiler, workDirectory, program, output, options.CFlags,
+                    workingDirectory: Environment.CurrentDirectory);
             Console.Error.Write(result.StandardOutput);
             Console.Error.Write(result.StandardError);
             if (result.ExitCode != 0)

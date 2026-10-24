@@ -1,0 +1,38 @@
+// profile: freestanding
+// The freestanding profile rejects everything that needs the hosted runtime (cosmoos/profiles.md §4.1, N0293).
+
+fn output() {
+    Console.writeLine(1); // error[N0293]
+    Process.exit(1); // error[N0293]
+}
+
+fn heap() -> i32 {
+    let b = Box.create(5); // error[N0293]
+    var v = Vector<i32>.create(); // error[N0293]
+    let s = String.create(); // error[N0293]
+    let a = SystemHeap {}; // error[N0293]
+    return 0;
+}
+
+fn types(b: Box<i32>) {} // error[N0293]
+fn vectors(v: borrow Vector<u8>) {} // error[N0293]
+fn files(f: File) {} // error[N0293]
+fn errors(e: IoError) {} // error[N0293]
+fn allocators(a: FailingAllocator) {} // error[N0293]
+fn arenas(a: borrow Arena) {} // error[N0293]
+
+struct Holder { items: SlotMap<i32>; } // error[N0293]
+
+fn ioValue() {
+    let e = IoError.NotFound; // error[N0293]
+}
+
+// What needs no runtime is fine: views, optionals, results, generics, fixed buffers, pointers, unsafe, FFI.
+fn fine(text: StringView, p: *u8) -> usize? {
+    var storage: [u8; 16] = [0; 16];
+    using fba = FixedBufferAllocator.over(mut storage);
+    let r: Result<i32, AllocError> = Ok(1);
+    return text.length;
+}
+
+fn main() {} // error[N0293]

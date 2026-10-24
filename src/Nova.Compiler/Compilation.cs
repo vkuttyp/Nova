@@ -16,6 +16,7 @@ namespace Nova.Compiler;
 public sealed class Compilation
 {
     private Compilation(
+        Profile profile,
         ImmutableArray<CompilationUnit> units,
         SymbolTable symbols,
         TypeTable types,
@@ -23,6 +24,7 @@ public sealed class Compilation
         HirProgram? hir,
         NirProgram? nir)
     {
+        Profile = profile;
         Nir = nir;
         Units = units;
         Symbols = symbols;
@@ -32,6 +34,9 @@ public sealed class Compilation
     }
 
     public ImmutableArray<CompilationUnit> Units { get; }
+
+    /// <summary>What the package may use and which runtime it gets (cosmoos/profiles.md §4).</summary>
+    public Profile Profile { get; }
 
     public SymbolTable Symbols { get; }
 
@@ -45,7 +50,7 @@ public sealed class Compilation
     /// <summary>The NIR of a program that type-checked; borrow-checked. Null if earlier phases failed.</summary>
     public NirProgram? Nir { get; }
 
-    public static Compilation Create(IEnumerable<SourceText> sources, TargetInfo target)
+    public static Compilation Create(IEnumerable<SourceText> sources, TargetInfo target, Profile profile = Profile.Hosted)
     {
         ArgumentNullException.ThrowIfNull(sources);
         ArgumentNullException.ThrowIfNull(target);
@@ -59,7 +64,7 @@ public sealed class Compilation
         NirProgram? nir = null;
         if (!diagnostics.HasErrors)
         {
-            hir = new TypeChecker(units, symbols, types, diagnostics).Check();
+            hir = new TypeChecker(units, symbols, types, diagnostics, profile).Check();
         }
         if (hir is not null && !diagnostics.HasErrors)
         {
@@ -81,6 +86,6 @@ public sealed class Compilation
                 }
             }
         }
-        return new Compilation(units, symbols, types, diagnostics, hir, nir);
+        return new Compilation(profile, units, symbols, types, diagnostics, hir, nir);
     }
 }

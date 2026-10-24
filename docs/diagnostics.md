@@ -158,13 +158,14 @@ N0271 is unassigned: destroying a value that holds loans while their referents a
 | N0282 | A pointer operation that the pointer or its pointee does not allow: reading or writing a non-Copy type, writing through a `*T`, `toBorrowMut` or `SliceMut.fromRaw` from a `*T`, any access through `*void` | `p.write(1)` with `p: *i32`; `q.read()` with `q: *void` |
 | N0283 | An `unsafe fn`, or a function containing `unsafe`, without a doc comment with a `Safety:` line (U2) | `unsafe fn f() {}` with no `/// Safety: …` above it |
 
-### C interoperability (N0290–N0299; `type-system.md` §28, M8b)
+### C interoperability and profiles (N0290–N0299; `type-system.md` §28, M8b; `cosmoos/profiles.md` §4, M8c)
 
 | Code | Meaning | Example |
 |---|---|---|
 | N0290 | An unknown attribute, an attribute in the wrong place or with wrong arguments, a repeated attribute, an ABI other than `"C"`, or an extern declaration with a body, receiver or type parameters; `@export` on `main` | `@inline fn f() {}`, `@repr(C) enum E { A }`, `extern "Rust" { … }` |
 | N0291 | A type that cannot cross the C boundary in an extern declaration, an export, or a `@repr(C)` struct's field | `fn f(s: Slice<u8>);` in `extern "C"`, `@export fn g() -> Box<i32>` |
 | N0292 | A C name that is not a valid C identifier, is a C keyword (or `bool`, `true`, `false`, `NULL`, `main`), is reserved by C, or starts with `nova_`, `nv_`, `NV_` or `nv` and an uppercase letter | `@export("int")`, `fn nova_alloc();` in `extern "C"`, `@repr(C) struct S { default: i32; }` |
+| N0293 | A hosted-only name (`Console`, `Process`, `File`, the heap allocators and every collection or box that needs them, …) or a `main` function in a package built with `--profile freestanding` (`cosmoos/profiles.md` §4.1) | `Console.writeLine(1);`, `let b = Box.create(5)!;` |
 
 Calling an extern function outside an unsafe context is N0280; two extern declarations or exports
 with one C name are N0201; `CChar` as a value type is N0281.
