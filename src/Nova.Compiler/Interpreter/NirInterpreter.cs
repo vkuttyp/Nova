@@ -277,6 +277,9 @@ public sealed partial class NirInterpreter
             {
                 case ProjectionKind.Field when projection.Field!.IsRegionPart:
                     break; // a scratch frame's borrow-checker part is the frame itself (§19.5)
+                case ProjectionKind.Field when type.Struct is { IsImported: true }:
+                    // Its layout is the C compiler's, from headers the interpreter does not have (type-system.md §31.4).
+                    throw new InterpreterFault($"access to a field of the imported C type '{type}', whose layout only the C compiler knows");
                 case ProjectionKind.Field:
                     address += (ulong)projection.Field!.Offset;
                     break;

@@ -48,7 +48,7 @@ public sealed class NirBuilder
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(types);
         return new NirProgram([.. program.Functions.Where(f => !f.IsExtern).Select(f => new NirBuilder(f, types).BuildFunction())], program.Structs,
-            [.. program.Functions.Where(f => f.IsExtern)]);
+            [.. program.Functions.Where(f => f.IsExtern)]) { Headers = program.Headers };
     }
 
     private NirFunction BuildFunction()

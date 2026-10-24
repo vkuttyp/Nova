@@ -54,4 +54,7 @@ much larger scale (layouts change with every `.config`).
   an interpreter fault, as C calls are (type-system §28.6).
 - Field types must be types C and Nova both spell (integers, `bool`, raw pointers, imported types, and
   `@repr(C)` structs); C arrays, bit-fields, unions and anonymous members need later additions.
-- It is specified in `type-system.md` and implemented with the first component that needs it (C6).
+- It is specified in `type-system.md` §31 and implemented with the first component that needs it (C6b,
+  2026-10-24). The first implementation leaves out embedded imported structs (a field whose type is
+  an imported type itself): fields are integers, `bool` and raw pointers. Embedded members are a later
+  addition, with arrays and the rest above.

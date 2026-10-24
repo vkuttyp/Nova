@@ -1,0 +1,96 @@
+// C struct types imported from a header (type-system.md §31): a linked list C owns, walked through C's own
+// `next` pointers; fields read and written in place; an opaque type; a typedef'd struct (`@ctype`); and a
+// `const char **` result. The C half, imports.c, owns every object and prints the results.
+
+@header("imports.types.h")
+extern "C" {
+    struct imp_device {
+        next: *mut imp_device;
+        base: u64;
+        irq: u32;
+        enabled: bool;
+        name: *CChar;
+        users: usize;
+        owner: *mut imp_registry;
+    }
+    struct imp_registry;
+    @ctype("imp_point")
+    struct point { x: i32; y: i32; }
+    fn c_main() -> i32;
+}
+
+const MAX_USERS: usize = 2;
+
+/// Why `device` cannot take another user, or null after claiming it for `who`.
+fn claim(device: borrow mut imp_device, who: *CChar) -> StringView? {
+    if (device.users >= MAX_USERS) { return "busy\0"; }
+    device.users += 1;
+    device.name = who;
+    device.enabled = true;
+    return null;
+}
+
+/// Safety: `first` is null or the head of a list of live devices that ends in null.
+@export("imp_sum_irqs")
+unsafe fn sumIrqsC(first: *imp_device) -> u32 {
+    var total: u32 = 0;
+    var p = first;
+    while (!p.isNull()) {
+        let device = Ptr.toBorrow(p);
+        if (device.enabled) { total += device.irq; }
+        p = device.next as *imp_device;
+    }
+    return total;
+}
+
+/// Safety: `d` is a live device nothing else uses, `who` a C string that outlives it, and `why` null or
+/// writable storage for one string pointer.
+@export("imp_claim")
+unsafe fn claimC(d: *mut imp_device, who: *CChar, why: *mut *CChar) -> bool {
+    match (claim(Ptr.toBorrowMut(d), who)) {
+        Some(reason) => {
+            if (!why.isNull()) { why.write(reason.ptr as *CChar); }
+            return false;
+        }
+        null => {
+            if (!why.isNull()) { why.write("\0".ptr as *CChar); }
+            return true;
+        }
+    }
+}
+
+/// Safety: `a` and `b` are live devices, and `a` is one nothing else uses.
+@export("imp_link")
+unsafe fn linkC(a: *mut imp_device, b: *mut imp_device) {
+    let device = Ptr.toBorrowMut(a);
+    device.next = b;
+    device.base = device.base + 16;
+}
+
+/// Safety: `a` and `b` are live devices.
+@export("imp_same_owner")
+unsafe fn sameOwnerC(a: *imp_device, b: *imp_device) -> bool => Ptr.toBorrow(a).owner == Ptr.toBorrow(b).owner;
+
+/// Safety: `a` and `b` are live points, and `out` one nothing else uses.
+@export("imp_mid")
+unsafe fn midC(a: *point, b: *point, out: *mut point) {
+    let from = Ptr.toBorrow(a);
+    let to = Ptr.toBorrow(b);
+    let result = Ptr.toBorrowMut(out);
+    result.x = (from.x + to.x) / 2;
+    result.y = (from.y + to.y) / 2;
+}
+
+/// Safety: c_main only calls the exports above, with objects it owns.
+fn main() -> i32 => unsafe { c_main() };
+
+// expect-stdout: 17
+// expect-stdout: 0 busy
+// expect-stdout: 1 [] clock 1 1
+// expect-stdout: 24
+// expect-stdout: 1 4112
+// expect-stdout: 17
+// expect-stdout: 1 0
+// expect-stdout: 4 -2
+// expect-stdout: 9 9 9
+// expect-stdout: 1

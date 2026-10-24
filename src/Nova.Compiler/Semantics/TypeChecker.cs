@@ -218,6 +218,12 @@ internal sealed class TypeChecker
                     case EnumDecl e:
                         DeclareEnum(e);
                         break;
+                    case ExternBlock { Abi: "C" } block:
+                        foreach (var imported in block.Structs)
+                        {
+                            DeclareImportedStruct(imported);
+                        }
+                        break;
                 }
             }
         }
@@ -287,7 +293,7 @@ internal sealed class TypeChecker
         // Generic types (with type parameters unsubstituted) are checked but never emitted (§20.3).
         return new HirProgram([.. _functions], [.. _constants.Select(c => c.Hir)],
             [.. _structs.Where(Emitted).Select(s => s.Type).Where(t => !t.IsGeneric),
-             .. _enums.Where(Emitted).Select(e => e.Type).Where(t => !t.IsGeneric)]);
+             .. _enums.Where(Emitted).Select(e => e.Type).Where(t => !t.IsGeneric)]) { Headers = [.. _headers] };
     }
 
     private string Name(Symbol symbol) => _symbols.GetName(symbol);
@@ -761,6 +767,46 @@ internal sealed class TypeChecker
         var entry = new StructEntry(decl, _source, TypeTable.CreateStruct(text, decl, _source));
         _items.Add(name, entry);
         _structs.Add(entry);
+    }
+
+    /// <summary>The `@header`s of `extern "C"` blocks, each once, in declaration order (§31.3).</summary>
+    private readonly List<string> _headers = [];
+
+    /// <summary>A struct in an `extern "C"` block: a C type imported from a header, with no Nova layout (§31.1).</summary>
+    private void DeclareImportedStruct(StructDecl decl)
+    {
+        var problem = !decl.TypeParameters.IsEmpty || !decl.RegionParameters.IsEmpty ? "cannot be generic"
+            : !decl.Functions.IsEmpty ? "cannot have methods"
+            : decl.Drop is not null ? "cannot have a 'drop' block"
+            : null;
+        if (problem is not null)
+        {
+            Error(DiagnosticCodes.InvalidAttribute, decl.Name.Span, $"imported C type '{Name(decl.Name.Name)}' {problem}; its definition is the header's (type-system.md §31.1)");
+            if (!decl.TypeParameters.IsEmpty || !decl.RegionParameters.IsEmpty)
+            {
+                return;
+            }
+        }
+        DeclareStruct(decl);
+        if (_items.GetValueOrDefault(decl.Name.Name) is not StructEntry entry || entry.Decl != decl)
+        {
+            return;
+        }
+        var definition = entry.Type.Struct!;
+        definition.IsImported = true;
+        definition.IsNonCopy = true; // no value of it exists in Nova (§31.2)
+        definition.CSpelling = $"struct {Name(decl.Name.Name)}";
+        foreach (var ctype in KnownAttributes(decl.Attributes, "an imported C type", "ctype"))
+        {
+            if (ctype.Arguments is not [StringLiteralExpr text])
+            {
+                AttributeError(ctype, "'@ctype' takes the C type's name as a string: '@ctype(\"name_t\")'");
+            }
+            else if (CheckCName(text.Value, ctype.Span, "the C type name"))
+            {
+                definition.CSpelling = text.Value;
+            }
+        }
     }
 
     /// <summary>Fresh type parameters for a generic declaration (§20.1), added to <paramref name="outer"/>.</summary>
@@ -1474,9 +1520,15 @@ internal sealed class TypeChecker
         }
     }
 
-    private NovaType ResolveType(TypeSyntax syntax, bool allowVoid, bool allowSources = false, bool allowCChar = false)
+    private NovaType ResolveType(TypeSyntax syntax, bool allowVoid, bool allowSources = false, bool allowCChar = false, bool allowImported = false)
     {
         var type = ResolveTypeCore(syntax, allowVoid, allowSources, allowCChar);
+        if (type.Struct is { IsImported: true } && !allowImported)
+        {
+            Error(DiagnosticCodes.ImportedTypeByValue, syntax.Span,
+                $"'{type}' is a C type imported from a header, whose size only the C compiler knows: use it behind a pointer or a reference ('*{type}', 'borrow {type}'; type-system.md §31.2)");
+            return _types.Error;
+        }
         if (_profile == Profile.Freestanding && IsHostedOnly(type))
         {
             HostedOnly(syntax.Span, $"'{type}'");
@@ -1510,7 +1562,7 @@ internal sealed class TypeChecker
                     }
                 }
             }
-            var pointee = ResolveType(reference.Pointee, allowVoid: false);
+            var pointee = ResolveType(reference.Pointee, allowVoid: false, allowImported: true);
             if (pointee.IsReference)
             {
                 Error(DiagnosticCodes.ReferenceNotAllowed, reference.Span, "references to references are not supported");
@@ -1524,7 +1576,7 @@ internal sealed class TypeChecker
         }
         if (syntax is PointerType pointer)
         {
-            var pointee = ResolveType(pointer.Pointee, allowVoid: true, allowCChar: true);
+            var pointee = ResolveType(pointer.Pointee, allowVoid: true, allowCChar: true, allowImported: true);
             if (pointee.IsBottom)
             {
                 return _types.Error;
@@ -2897,11 +2949,34 @@ internal sealed class TypeChecker
     /// <summary>`extern "C" { … }`: each function is declared like a top-level one, without a body (§28.2).</summary>
     private void DeclareExternBlock(ExternBlock block)
     {
-        KnownAttributes(block.Attributes, "an 'extern' block");
+        var header = KnownAttributes(block.Attributes, "an 'extern' block", "header").FirstOrDefault();
         if (block.Abi != "C")
         {
             Error(DiagnosticCodes.InvalidAttribute, block.AbiSpan, $"unsupported ABI \"{block.Abi}\": only extern \"C\" exists (type-system.md §28.2)");
             return;
+        }
+        if (header is not null)
+        {
+            if (header.Arguments.IsEmpty || header.Arguments.Any(a => a is not StringLiteralExpr))
+            {
+                AttributeError(header, "'@header' takes the headers to include as strings: '@header(\"path.h\")'");
+            }
+            foreach (var path in header.Arguments.OfType<StringLiteralExpr>())
+            {
+                if (path.Value.Length == 0 || path.Value.Any(c => c is '"' or '\\' or '\n' or '\r'))
+                {
+                    AttributeError(header, $"'{path.Value}' cannot be written in a C '#include \"…\"': a header path is non-empty, without quotes, backslashes or line breaks (type-system.md §31.1)");
+                }
+                else if (!_headers.Contains(path.Value))
+                {
+                    _headers.Add(path.Value);
+                }
+            }
+        }
+        else if (!block.Structs.IsEmpty)
+        {
+            Error(DiagnosticCodes.InvalidAttribute, block.Structs[0].Name.Span,
+                "an 'extern' block that imports C types needs '@header(\"…\")' naming the headers that define them (type-system.md §31.1)");
         }
         foreach (var fn in block.Functions)
         {
@@ -2990,7 +3065,7 @@ internal sealed class TypeChecker
     private static bool IsCPointee(NovaType type) => type.Kind switch
     {
         TypeKind.Integer or TypeKind.Bool or TypeKind.Void or TypeKind.CChar or TypeKind.Error => true,
-        TypeKind.Struct => type.Struct!.IsReprC,
+        TypeKind.Struct => type.Struct!.IsReprC || type.Struct.IsImported, // imported C types: §31.2
         TypeKind.RawPointer => IsCPointee(type.Pointee!),
         _ => false,
     };
@@ -3044,6 +3119,21 @@ internal sealed class TypeChecker
         {
             _source = entry.Source;
             CheckCName(Name(entry.Decl.Name.Name), entry.Decl.Name.Span, "the C type name");
+        }
+        foreach (var entry in _structs.Where(s => s.Type.Struct!.IsImported))
+        {
+            _source = entry.Source;
+            CheckCName(Name(entry.Decl.Name.Name), entry.Decl.Name.Span, "the C struct name");
+            foreach (var (field, syntax) in entry.Type.Struct!.Fields.Zip(entry.Decl.Fields))
+            {
+                field.HasNovaCName = true;
+                CheckCName(Name(field.Name), syntax.Name.Span, "the C member name");
+                if (field.Type.Kind is not (TypeKind.Integer or TypeKind.Bool or TypeKind.Error) && !(field.Type.IsRawPointer && IsCPointee(field.Type.Pointee!)))
+                {
+                    Error(DiagnosticCodes.NotFfiSafe, syntax.Type.Span,
+                        $"a field of an imported C type cannot be a '{field.Type}': only integers, bool and raw pointers to C types are spelled alike in C and Nova (type-system.md §31.1)");
+                }
+            }
         }
         foreach (var function in _functions.Where(f => f.IsExtern || f.ExportName is not null))
         {
@@ -3866,6 +3956,13 @@ internal sealed class TypeChecker
     /// <summary>A `borrow p` / `borrow mut p` of the place a checked expression denotes (N0247, N0248).</summary>
     private HirExpr BorrowPlace(HirExpr value, bool isMutable, TextSpan span)
     {
+        if (value is HirFieldAccess access && (access.Target.Type.IsReference ? access.Target.Type.Pointee! : access.Target.Type).Struct is { IsImported: true }
+            && (access.Field.Type.IsRawPointer || ReferenceEquals(access.Field.Type, _types.USize) || ReferenceEquals(access.Field.Type, _types.ISize)))
+        {
+            Error(DiagnosticCodes.ImportedTypeByValue, span,
+                $"a '{access.Field.Type}' field of an imported C type can be read and assigned, but not borrowed: its C type ('const', 'size_t') may differ from Nova's (type-system.md §31.2)");
+            return ErrorResult(span);
+        }
         if (ToPlace(value) is null && IsPathThroughReference(value, isMutable))
         {
             return new HirBorrowPath(isMutable, value, _types.ReferenceTo(value.Type, isMutable), span);
@@ -4428,6 +4525,16 @@ internal sealed class TypeChecker
             return ErrorResult(literal.Span);
         }
         Used(entry);
+        if (entry.Type.Struct!.IsImported)
+        {
+            Error(DiagnosticCodes.ImportedTypeByValue, literal.TypeName.Span,
+                $"'{typeName}' is a C type imported from a header: Nova cannot make one, only point to one (type-system.md §31.2)");
+            foreach (var init in literal.Fields)
+            {
+                Synth(init.Value, null);
+            }
+            return ErrorResult(literal.Span);
+        }
         if (_profile == Profile.Freestanding && IsAllocatorType(entry.Type))
         {
             HostedOnly(literal.TypeName.Span, $"'{typeName}'");
@@ -4824,6 +4931,13 @@ internal sealed class TypeChecker
             return new HirBuiltinCall(function, [pointer], _types.Bool, call.Span);
         }
         var unsafeOk = RequireUnsafe(call.Span, $"'{name}' through a raw pointer");
+        if (pointee.Struct is { IsImported: true })
+        {
+            Error(DiagnosticCodes.ImportedTypeByValue, call.Span,
+                $"'{name}' needs the size of '{pointee}', which only the C compiler knows; use 'Ptr.toBorrow' and its fields instead (type-system.md §31.2)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
         if (pointee.Kind is TypeKind.Void or TypeKind.CChar)
         {
             Error(DiagnosticCodes.InvalidPointerOperation, call.Span, $"'{name}' needs a typed pointer, but '{type}' points to '{pointee}'; cast it first (type-system.md §27.3)");
@@ -4900,6 +5014,12 @@ internal sealed class TypeChecker
         if (isMutable && !pointer.Type.IsMutablePointer)
         {
             Error(DiagnosticCodes.InvalidPointerOperation, call.Arguments[0].Span, $"'{owner}.{name}' gives mutable access, so it needs a '*mut {pointee}', not '{pointer.Type}'");
+            return ErrorResult(call.Span);
+        }
+        if (isSlice && pointee.Struct is { IsImported: true })
+        {
+            Error(DiagnosticCodes.ImportedTypeByValue, call.Arguments[0].Span,
+                $"a slice of '{pointee}' needs its size, which only the C compiler knows (type-system.md §31.2)");
             return ErrorResult(call.Span);
         }
         if (isSlice && !CheckElement(pointee, -1, call.Arguments[0].Span))

@@ -288,6 +288,15 @@ public sealed class StructDefinition
 
     public Hir.HirFunction? DeallocateMethod { get; internal set; }
 
+    /// <summary>
+    /// An imported C type (type-system.md §31): its layout is the C compiler's, so Nova has none, and it is named
+    /// <see cref="CSpelling"/> in C.
+    /// </summary>
+    public bool IsImported { get; internal set; }
+
+    /// <summary>For an imported C type: <c>struct name</c>, or its <c>@ctype</c> name (type-system.md §31.1).</summary>
+    public string? CSpelling { get; internal set; }
+
     /// <summary><c>@noncopy</c> (OD-7, type-system.md §29.2): a move type even if every field is Copy.</summary>
     public bool IsNonCopy { get; internal set; }
 
@@ -887,6 +896,10 @@ public sealed class TypeTable
                 if (definition.IsRecursive)
                 {
                     throw new InvalidOperationException($"recursive struct '{type}' has no layout");
+                }
+                if (definition.IsImported)
+                {
+                    throw new InvalidOperationException($"imported C type '{type}' has no Nova layout (type-system.md §31.2)");
                 }
                 int offset = 0, align = definition.ExplicitAlign; // `@align(n)` (§29.4), else 1
                 foreach (var field in definition.Fields)

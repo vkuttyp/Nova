@@ -1750,3 +1750,87 @@ fn make() -> Result<Box<u64, KernelHeap>, AllocError> => Box.createIn(KernelHeap
   allocator needs no hosted runtime. `Box.create` (`SystemHeap`) stays hosted-only.
 
 Diagnostics: N0263 (a box allocator that is not one), N0267 (an `impl` whose `unsafe` differs).
+
+## 31. C struct types imported from headers (C6b; ADR 0008)
+
+```nova
+@header("kernel/bootinfo.h")
+extern "C" {
+    struct cosmoboot_info {      // only the fields Nova uses, by their C names
+        fb_phys: u64;
+        fb_width: u32;
+    }
+    struct bootinfo_framebuffer { phys: u64; width: u32; }
+    struct cosmoboot_mem_entry;  // opaque: only pointed to
+}
+
+fn pixels(info: borrow cosmoboot_info) -> u64 => info.fb_width as u64;
+
+fn copyOut(info: borrow cosmoboot_info, out: borrow mut bootinfo_framebuffer) {
+    out.phys = info.fb_phys;
+    out.width = info.fb_width;
+}
+```
+
+### 31.1 Declarations
+- Inside an `extern "C"` block, `struct name { field: Type; … }` declares an **imported C type**: a type
+  that a C header defines, seen through the fields Nova declares. `struct name;` imports one with no
+  fields (opaque). The grammar is grammar.md §2's `ExternStruct`.
+- `@header("path", …)` on the block names the headers that define its types, one string per header,
+  as C's `#include "path"` would find them (the build's `-I` paths, then the generated file's
+  directory). A block that declares a struct needs a `@header` (N0290). A header string must be
+  non-empty and must not contain `"`, `\`, or a line break (N0290).
+- The type's C spelling is `struct name`. With `@ctype("cname")` on the declaration, it is `cname`
+  instead, for a C typedef (`typedef struct {…} cname;`). The name, the `@ctype` name and every field
+  name must be valid, unreserved C identifiers (§28.2, N0292).
+- Fields are declared with their C member names, in any order, and only those Nova uses. Their types
+  must be integers, `bool`, or raw pointers whose pointee C can name (§28.3, including imported types),
+  or N0291. A field's declared type must be exactly the member's C type, under §28.3's mapping (`u32`
+  is `uint32_t`, `usize` is `size_t`, `*CChar` is `const char *`, `*mut T` is `T *`). This is checked
+  when the C is compiled (§31.3), not by novac.
+- An imported struct has no methods, `drop` block, type or region parameters, or other attributes
+  (N0290). Its visibility is that of a struct.
+
+### 31.2 Use
+- Nova never knows an imported type's size, alignment or field offsets: they are the C compiler's,
+  under the build's flags. So an imported type `T` appears only behind a pointer or a reference:
+  `*T`, `*mut T`, `borrow T`, `borrow mut T`. As the type of a local, parameter, result, field,
+  array element, optional, or type argument, it is N0294. No value of it exists in Nova: it is
+  neither Copy nor movable, and has no struct literal (N0294) and no drop.
+- **Field places.** Through a reference, `r.f` is a place of the declared field type, as for any
+  struct (§12): read it, assign it through `borrow mut`, or borrow it. The borrow checker treats
+  it like any field place. A field of raw pointer type, `usize` or `isize` can be read and assigned
+  but not borrowed (N0294): its C member type (`const char *`, `size_t`) is not the C type Nova
+  uses for the value (`char *`, `uint64_t`), so a pointer to it would have the wrong type in C.
+- **Raw pointers.** Making, casting and comparing pointers to imported types is safe (§27.2), and
+  `Ptr.toBorrow` / `Ptr.toBorrowMut` make references from them (unsafe, §27.3). Everything that
+  needs the size is N0294: `read`, `write`, `readVolatile`, `writeVolatile`, `add`, `sub`, `offset`,
+  and `Slice.fromRaw` / `SliceMut.fromRaw`.
+- **Across the boundary**, `*T` and `*mut T` are FFI-safe (§28.3): `struct name const *` and
+  `struct name *` (or the `@ctype` name) in prototypes. The type itself is not, by value (N0291).
+
+### 31.3 Lowering
+- The generated C includes every `@header`, after `nova/rt.h`, once each, in the order the blocks
+  appear (files in command-line order); `nova_exports.h` includes them too.
+- Nova emits no definition, typedef or layout assertion for an imported type, and names it by its
+  C spelling. A field place is C's member access (`(*p).f`). Pointer fields are converted through
+  `uintptr_t` when read and written, as at exports (c-backend.md §2.3), so that `const` in the
+  header's member type causes no warning.
+- For every declared field `f` of type `F` (C type `CF`), the generated C asserts both
+  `_Generic(((S *)0)->f, CF: 1, default: 0)` and `sizeof(((S *)0)->f) == size(F)`, with a message
+  naming the struct, the field and the declaration's file and line. Neither expression is
+  evaluated. A header that lacks a field, or has it with another type in some configuration, fails
+  to compile; it cannot miscompile.
+
+### 31.4 The interpreter
+`run --interp` has no headers, so it has no layout for an imported type. A function that accesses
+a field of one is an interpreter fault (exit status 70) when it does so. Passing pointers to imported
+types along is fine.
+
+### 31.5 Profiles
+Imported types are platform-neutral (`cosmoos/profiles.md` §5). They are allowed in every profile.
+The same declarations work with CosmoOS's, Linux's or a C library's headers.
+
+Diagnostics: N0290 (a misplaced attribute, a block without `@header`, a bad header string, a member
+an imported struct cannot have), N0291 (a field type C and Nova do not both spell), N0292 (a C name),
+N0294 (an imported type used where Nova would need its size, or a borrow of a pointer or size field).

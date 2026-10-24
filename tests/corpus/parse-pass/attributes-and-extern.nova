@@ -18,3 +18,13 @@ public fn length(p: Point) -> i32 => p.x + p.y;
 @export
 @effects(nosleep, noalloc)
 fn plain() {}
+
+// Imported C types (type-system.md §31).
+@header("dev.h", "kernel/types.h")
+extern "C" {
+    struct dev { base: u64; next: *mut dev; }
+    struct opaque_t;
+    @ctype("cell_t")
+    public struct cell { v: i32; }
+    fn dev_open(d: *mut dev) -> i32;
+}

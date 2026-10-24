@@ -43,7 +43,11 @@ public sealed record AttributeSyntax(Identifier Name, ImmutableArray<Expr> Argum
 
 /// <summary><c>extern "C" { fn … ; }</c> (type-system.md §28.2). <see cref="Item.Name"/> is a placeholder.</summary>
 public sealed record ExternBlock(Visibility Visibility, Identifier Name, string Abi, TextSpan AbiSpan, ImmutableArray<FunctionDecl> Functions, TextSpan Span)
-    : Item(Visibility, Name, Span);
+    : Item(Visibility, Name, Span)
+{
+    /// <summary>The C struct types the block imports from its <c>@header</c>s (type-system.md §31).</summary>
+    public ImmutableArray<StructDecl> Structs { get; init; } = [];
+}
 
 /// <summary>
 /// A function. Exactly one of <see cref="Body"/> and <see cref="ExpressionBody"/> is set.
@@ -101,6 +105,12 @@ public sealed record StructDecl(
 {
     /// <summary>The struct's <c>drop { ... }</c> block, if any (type-system.md §14.2).</summary>
     public DropBlock? Drop { get; init; }
+
+    /// <summary>Declared in an <c>extern "C"</c> block: a C type imported from a header (type-system.md §31).</summary>
+    public bool IsImported { get; init; }
+
+    /// <summary><c>struct name;</c> in an <c>extern "C"</c> block: imported without fields (type-system.md §31.1).</summary>
+    public bool IsOpaque { get; init; }
 
     /// <summary><c>struct S&lt;T&gt;</c> (type-system.md §20); empty for a non-generic struct.</summary>
     public ImmutableArray<TypeParameter> TypeParameters { get; init; } = [];

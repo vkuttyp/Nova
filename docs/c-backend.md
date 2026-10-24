@@ -177,7 +177,7 @@ Everything else is unchanged. Heap boxes, and every other site, use the drop glu
   function and converts the result back (a `const T *` through `uintptr_t`; a `@repr` enum through
   a check that panics with `NV_PANIC_FFI_ENUM`). Nova code calls the wrapper like any function. The
   prototypes use C's own types so that they are compatible with the C library's declarations: the
-  generated code includes no C library header, but clang and GCC know the library functions'
+  generated code includes no C library header (unless a `@header` names one), but clang and GCC know the library functions'
   types (`-Wincompatible-library-redeclaration`, `-Wbuiltin-declaration-mismatch`), and C11
   6.5.2.2 makes a call through an incompatible type undefined.
 - **Exports.** Each `@export` function gets a non-`static` wrapper under its symbol, with the C
@@ -192,6 +192,14 @@ Everything else is unchanged. Heap boxes, and every other site, use the drop glu
 - **`nova_exports.h`**: an include guard; `<stdbool.h>`, `<stddef.h>`, `<stdint.h>`; each `@repr(C)`
   struct (after the structs it contains); each `@repr` enum as `typedef <int> E;` and constants
   `E_Variant`; each export's prototype. It is generated only when there is something to declare.
+- **Imported C types (C6b, type-system.md §31)**: `main.c` and `nova_exports.h` `#include "…"` each
+  `@header` after `nova/rt.h`, once, in declaration order; they are the only headers generated code
+  includes besides the runtime's. An imported type has no definition, typedef or layout assertion in
+  generated code: it is its C spelling (`struct name` or the `@ctype` name), and a field place is a
+  member access. Pointer, `usize` and `isize` fields convert through `uintptr_t` or a cast when read
+  and written, as wrappers do. For each declared field, two `_Static_assert`s (on `_Generic` of the
+  member, with the field's C type, and on its `sizeof`) make a header that disagrees a C compile error
+  that names the struct, the field and the Nova declaration's file and line.
 - **C sources** given to `novac build` are copied unchanged to `c/<file>` beside `main.c` and
   compiled with it (`-I` names the directory, so `#include "nova_exports.h"` works).
 - **Function pointers (M8d, §29.5)** are `typedef R (*nvP_<code>)(A, …);` with the C types of

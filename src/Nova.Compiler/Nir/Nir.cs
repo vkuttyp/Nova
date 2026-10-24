@@ -23,6 +23,9 @@ public sealed class NirProgram
 
     /// <summary>Struct types in declaration order.</summary>
     public ImmutableArray<NovaType> Structs { get; }
+
+    /// <summary>The headers the generated C includes for imported C types (type-system.md §31.3).</summary>
+    public ImmutableArray<string> Headers { get; init; } = [];
 }
 
 public sealed class NirLocal

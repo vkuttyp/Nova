@@ -24,6 +24,9 @@ public sealed class HirProgram
     public ImmutableArray<HirFunction> Functions { get; }
 
     public ImmutableArray<HirConst> Constants { get; }
+
+    /// <summary>The <c>@header</c>s of <c>extern "C"</c> blocks, each once, in declaration order (type-system.md §31.3).</summary>
+    public ImmutableArray<string> Headers { get; init; } = [];
 }
 
 public sealed class HirConst

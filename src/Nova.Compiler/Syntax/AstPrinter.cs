@@ -79,11 +79,15 @@ public sealed class AstPrinter
                     PrintAttributes(function.Attributes);
                     PrintFunction(function);
                 }
+                foreach (var s in block.Structs)
+                {
+                    PrintItem(s);
+                }
                 _indent--;
                 Line(")");
                 break;
             case StructDecl s:
-                Line($"(struct {visibility} {Name(s.Name)}{TypeParams([.. s.RegionParameters, .. s.TypeParameters])}");
+                Line($"({(s.IsImported ? "c-struct" : "struct")} {visibility} {Name(s.Name)}{TypeParams([.. s.RegionParameters, .. s.TypeParameters])}{(s.IsOpaque ? " opaque" : "")}");
                 _indent++;
                 foreach (var field in s.Fields)
                 {

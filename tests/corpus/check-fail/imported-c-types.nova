@@ -1,0 +1,81 @@
+// Imported C struct types (type-system.md §31): N0294 wherever Nova would need their layout, and the
+// declaration rules (N0290, N0291, N0292).
+@header("dev.h", "kernel/other.h")
+extern "C" {
+    struct dev { base: u64; name: *CChar; size: usize; next: *mut dev; }
+    struct opaque_t;
+    @ctype("cell_t")
+    struct cell { v: i32; }
+    struct bad_fields {
+        items: Slice<u8>; // error[N0270]
+        nested: dev; // error[N0294]
+        pair: Pair; // error[N0291]
+    }
+    struct with_method { // error[N0290]
+        x: i32;
+        fn get(borrow this) -> i32 => this.x;
+    }
+    struct generic<T> { x: i32; } // error[N0290]
+    @repr(C) // error[N0290]
+    struct attributed { x: i32; }
+    @ctype(name) // error[N0290]
+    struct untyped_name { x: i32; }
+    struct nova_owned { x: i32; } // error[N0292]
+    struct member_names { int: i32; } // error[N0292]
+    fn takes(d: *dev, c: *cell) -> bool;
+    fn byValue(d: dev); // error[N0294]
+}
+
+extern "C" {
+    struct headerless { x: i32; } // error[N0290]
+}
+
+@header("bad\"quote.h") // error[N0290]
+extern "C" {
+    struct quoted { x: i32; }
+}
+
+@header() // error[N0290]
+extern "C" {
+    fn nothing();
+}
+
+struct Pair { a: i32; b: i32; }
+
+struct Holder {
+    device: dev; // error[N0294]
+    pointer: *dev;
+}
+
+fn param(d: dev) {} // error[N0294]
+
+fn result() -> cell { // error[N0294]
+    return result();
+}
+
+fn optional(d: dev?) {} // error[N0294]
+
+fn array(d: [dev; 2]) {} // error[N0294]
+
+fn literal() {
+    let c = cell { v: 1 }; // error[N0294]
+}
+
+/// Safety: these pointers are never dereferenced: each operation is rejected.
+fn pointers(p: *mut dev, q: *opaque_t) {
+    unsafe {
+        let a = p.add(1); // error[N0294]
+        let b = p.offset(-1); // error[N0294]
+        let c = q.read(); // error[N0294]
+        let s = Slice.fromRaw(p, 2); // error[N0294]
+        let r = Ptr.toBorrowMut(p);
+        let n = borrow r.name; // error[N0294]
+        let z = borrow mut r.size; // error[N0294]
+        let base = borrow mut r.base;
+        base = 3;
+        r.size = 4;
+        r.name = r.name;
+        let raw = q as *u8;
+        let same = p as *dev == r.next as *dev;
+    }
+}

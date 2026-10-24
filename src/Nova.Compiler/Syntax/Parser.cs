@@ -247,7 +247,7 @@ public sealed class Parser
         return attributes.ToImmutable();
     }
 
-    /// <summary><c>extern "C" { (attributes visibility? fn …;)* }</c> (type-system.md §28.2).</summary>
+    /// <summary><c>extern "C" { (attributes visibility? (fn …; | struct …))* }</c> (type-system.md §28.2, §31).</summary>
     private ExternBlock ParseExternBlock(Visibility visibility, int start)
     {
         Expect(TokenKind.ExternKeyword);
@@ -262,24 +262,30 @@ public sealed class Parser
             Expect(TokenKind.StringLiteral);
         }
         var functions = ImmutableArray.CreateBuilder<FunctionDecl>();
+        var structs = ImmutableArray.CreateBuilder<StructDecl>();
         Expect(TokenKind.OpenBrace);
-        _parsingSignatures = true;
-        while (AtFunction || At(TokenKind.At) || At(TokenKind.PublicKeyword) || At(TokenKind.InternalKeyword) || At(TokenKind.PrivateKeyword))
+        while (AtFunction || At(TokenKind.StructKeyword) || At(TokenKind.At) || At(TokenKind.PublicKeyword) || At(TokenKind.InternalKeyword) || At(TokenKind.PrivateKeyword))
         {
-            var functionStart = Current.Span.Start;
+            var memberStart = Current.Span.Start;
             var attributes = ParseAttributes();
-            var functionVisibility = ParseVisibility();
+            var memberVisibility = ParseVisibility();
+            if (At(TokenKind.StructKeyword))
+            {
+                structs.Add(ParseStruct(memberVisibility, memberStart, imported: true) with { Attributes = attributes });
+                continue;
+            }
             if (!AtFunction)
             {
                 Expect(TokenKind.FnKeyword);
                 break;
             }
-            functions.Add(ParseFunction(functionVisibility, functionStart) with { Attributes = attributes, IsExtern = true });
+            _parsingSignatures = true;
+            functions.Add(ParseFunction(memberVisibility, memberStart) with { Attributes = attributes, IsExtern = true });
+            _parsingSignatures = false;
         }
-        _parsingSignatures = false;
         Expect(TokenKind.CloseBrace);
         var name = new Identifier(_symbols.Intern("<extern>"), abiToken.Span) { IsMissing = true };
-        return new ExternBlock(visibility, name, abi, abiToken.Span, functions.ToImmutable(), SpanFrom(start));
+        return new ExternBlock(visibility, name, abi, abiToken.Span, functions.ToImmutable(), SpanFrom(start)) { Structs = structs.ToImmutable() };
     }
 
     private Item? ParseItemCore()
@@ -427,11 +433,21 @@ public sealed class Parser
         return visibility;
     }
 
-    private StructDecl ParseStruct(Visibility visibility, int start)
+    private StructDecl ParseStruct(Visibility visibility, int start, bool imported = false)
     {
         Expect(TokenKind.StructKeyword);
         var name = ParseIdentifier();
         var typeParameters = ParseTypeParameters();
+        if (imported && At(TokenKind.Semicolon))
+        {
+            Advance(); // `struct name;`: imported without fields (type-system.md §31.1)
+            return new StructDecl(visibility, name, [], [], SpanFrom(start)) {
+                IsImported = true,
+                IsOpaque = true,
+                TypeParameters = [.. typeParameters.Where(p => !p.IsRegion)],
+                RegionParameters = [.. typeParameters.Where(p => p.IsRegion)],
+            };
+        }
         var fields = ImmutableArray.CreateBuilder<FieldDecl>();
         var functions = ImmutableArray.CreateBuilder<FunctionDecl>();
         DropBlock? drop = null;
@@ -488,6 +504,7 @@ public sealed class Parser
         return new StructDecl(visibility, name, fields.ToImmutable(), functions.ToImmutable(), SpanFrom(start))
         {
             Drop = drop,
+            IsImported = imported,
             TypeParameters = [.. typeParameters.Where(p => !p.IsRegion)],
             RegionParameters = [.. typeParameters.Where(p => p.IsRegion)],
         };

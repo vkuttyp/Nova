@@ -25,4 +25,19 @@
   (fn default plain (params)
     (block)
   )
+  (@header "dev.h" "kernel/types.h")
+  (extern default "C"
+    (fn default dev_open (params (d (ptr-mut dev))) (returns i32)
+    )
+    (c-struct default dev
+      (field default base u64)
+      (field default next (ptr-mut dev))
+    )
+    (c-struct default opaque_t opaque
+    )
+    (@ctype "cell_t")
+    (c-struct public cell
+      (field default v i32)
+    )
+  )
 )

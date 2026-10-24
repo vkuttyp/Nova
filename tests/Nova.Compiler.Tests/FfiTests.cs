@@ -8,7 +8,7 @@ namespace Nova.Compiler.Tests;
 /// <summary>
 /// C interoperability (type-system.md §28): each tests/corpus/ffi/NAME.nova is built with its C half NAME.c under
 /// every C configuration, run, and checked against its expectations (as in <see cref="RunCorpusTests"/>). The
-/// generated nova_exports.h is a reviewed snapshot, NAME.h.
+/// generated nova_exports.h is a reviewed snapshot, NAME.h. NAME.types.h, if present, holds C types NAME.nova imports.
 /// </summary>
 public class FfiTests
 {
@@ -32,6 +32,12 @@ public class FfiTests
         var cFile = Path.ChangeExtension(Path.Combine(CorpusRoot, relativePath), ".c");
         var program = CBackend.Generate(compilation, requireMain: false, out _, options)!
             .WithCSources([(Path.GetFileName(cFile), File.ReadAllText(cFile))]);
+        // NAME.types.h: C types the program imports (type-system.md §31), at the root, where `#include` finds it.
+        var types = Path.ChangeExtension(Path.Combine(CorpusRoot, relativePath), ".types.h");
+        if (File.Exists(types))
+        {
+            program = program with { Files = [.. program.Files, new(Path.GetFileName(types), File.ReadAllText(types))] };
+        }
         return (compilation, program);
     }
 
@@ -97,5 +103,30 @@ public class FfiTests
             """);
         Assert.Equal(Interpreter.NirInterpreter.FaultExitStatus, outcome.ExitCode);
         Assert.StartsWith("nova interp: fault: unsupported: call to C function 'c_function'", outcome.Stderr, StringComparison.Ordinal);
+    }
+    [Fact]
+    public void Interpreter_faults_on_fields_of_imported_C_types()
+    {
+        // The interpreter has no headers, so no layout for an imported type (type-system.md §31.4); passing pointers is fine.
+        const string Program = """
+            @header("dev.h")
+            extern "C" {
+                struct dev { base: u64; }
+            }
+
+            fn base(d: borrow dev) -> u64 => d.base;
+
+            /// Safety: the pointer is only dereferenced where the interpreter must refuse.
+            fn main() -> i32 {
+                let p = 0x1000 as *dev;
+                let q = p as *u8;
+                Console.writeLine(q as usize);
+                return truncate<i32>(base(unsafe { Ptr.toBorrow(p) }));
+            }
+            """;
+        var outcome = InterpreterTests.Interpret("t.nova", Program);
+        Assert.Equal("4096\n", outcome.Stdout.ReplaceLineEndings("\n"));
+        Assert.Equal(Interpreter.NirInterpreter.FaultExitStatus, outcome.ExitCode);
+        Assert.StartsWith("nova interp: fault: access to a field of the imported C type 'dev'", outcome.Stderr, StringComparison.Ordinal);
     }
 }
