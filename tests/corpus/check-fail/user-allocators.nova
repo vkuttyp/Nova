@@ -1,0 +1,42 @@
+// User-defined allocators (type-system.md §30): what can be a box's allocator, and what cannot.
+
+struct Good {}
+
+impl Allocator for Good {
+    fn allocate(borrow this, layout: Layout) -> Result<*mut u8, AllocError> => Err(AllocError.OutOfMemory);
+    /// Safety: never called.
+    unsafe fn deallocate(borrow this, p: *mut u8, layout: Layout) {}
+}
+
+struct NotImplemented {}
+
+struct HasState { count: u32; }
+
+impl Allocator for HasState {
+    fn allocate(borrow this, layout: Layout) -> Result<*mut u8, AllocError> => Err(AllocError.OutOfMemory);
+    /// Safety: never called.
+    unsafe fn deallocate(borrow this, p: *mut u8, layout: Layout) {}
+}
+
+struct SafeDeallocate {}
+
+impl Allocator for SafeDeallocate {
+    fn allocate(borrow this, layout: Layout) -> Result<*mut u8, AllocError> => Err(AllocError.OutOfMemory);
+    fn deallocate(borrow this, p: *mut u8, layout: Layout) {} // error[N0267]
+}
+
+fn boxes(a: Box<i32, Good>, b: Box<i32, NotImplemented>) {} // error[N0263]
+fn stateful(c: Box<i32, HasState>) {} // error[N0263]
+fn vectors(v: Vector<i32, Good>) {} // error[N0263]
+
+fn create() -> Result<Box<u8, Good>, AllocError> => Box.createIn(Good {}, 1u8);
+fn createWrong() -> i32 {
+    let b = Box.createIn(NotImplemented {}, 1u8); // error[N0263]
+    return 0;
+}
+
+fn callsDeallocate(p: *mut u8) {
+    Good {}.deallocate(p, Layout { size: 1, align: 1 }); // error[N0280]
+}
+
+fn main() {}

@@ -32,7 +32,8 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
   program generator (`tests/Nova.Fuzz`), MSVC, and a 24-hour campaign. M8 (systems and freestanding;
   `docs/milestone-8.md`, ADR 0007) is complete: `unsafe` and raw pointers (`docs/unsafe.md`), the C FFI, the freestanding profile
   (`docs/cosmoos/profiles.md` §4), and `lib/core` with MMIO and C function pointers. C4 (a freestanding object meeting
-  CosmoOS's module-loader rules; `docs/cosmoos/c4-report.md`, `integrations/cosmoos/c4.py`) is complete; C5 is next. `lib/core/*.nova` is part of every
+  CosmoOS's module-loader rules; `docs/cosmoos/c4-report.md`, `integrations/cosmoos/c4.py`) is complete, and so is C5 (user-defined allocators, `KernelHeap`, an in-kernel selftest module;
+  `docs/cosmoos/c5-report.md`, `integrations/cosmoos/c5.py`). C6 is next; its component is chosen with the owner. `lib/core/*.nova` is part of every
   package. M5 (escape and placement
   analysis; `docs/milestone-5.md`) is complete (`--placement`, `--explain-allocations`).
 - Guest checks: `python3 integrations/cosmoos/c2.py --arch x86_64` (QEMU), and for aarch64 either

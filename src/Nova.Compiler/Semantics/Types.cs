@@ -283,6 +283,11 @@ public sealed class StructDefinition
     /// <summary><c>@repr(C)</c> (type-system.md §28.5): in C it is <c>struct Name</c> with members named as in Nova.</summary>
     public bool IsReprC { get; internal set; }
 
+    /// <summary>For a user-defined allocator (type-system.md §30.2): its <c>allocate</c> and <c>deallocate</c>.</summary>
+    public Hir.HirFunction? AllocateMethod { get; internal set; }
+
+    public Hir.HirFunction? DeallocateMethod { get; internal set; }
+
     /// <summary><c>@noncopy</c> (OD-7, type-system.md §29.2): a move type even if every field is Copy.</summary>
     public bool IsNonCopy { get; internal set; }
 

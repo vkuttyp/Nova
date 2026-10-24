@@ -279,9 +279,13 @@ violations that stay in bounds.
 for this model of the C library, used when the declaration's parameter and result types have the
 expected shape (integers, `bool` or pointers of the right widths):
 `strlen` (reads bytes up to a zero byte, each access checked), `puts` (writes the bytes and a
-newline to standard output, returns 0), `abs`, `memcmp`, `memcpy` and `memset` (checked accesses;
+newline to standard output, returns 0), `abs`, `malloc` and `free` (C5: a heap allocation of the
+interpreter's memory, not counted as Nova's), `memcmp`, `memcpy` and `memset` (checked accesses;
 `memcpy` with overlapping ranges is a fault, as it is undefined in C). Any other extern call is the
 fault `unsupported: call to C function '<name>'`. Exported functions are ordinary Nova functions.
+**User allocators (C5).** A box with a user allocator gets its memory from the allocator's
+`allocate` method and returns it through `deallocate`, run as Nova code; `this` is a one-byte
+read-only allocation per allocator type.
 **Function pointers (M8d).** The C address of an extern or exported function is a value in a range
 no allocation uses (from `0xFFFF000000000000`); a call through it runs the exported function, or
 the C model for an extern. A call through null or any other value is a fault. Volatile accesses

@@ -24,6 +24,8 @@ public sealed partial class NirInterpreter
         ["memcmp"] = ([Shape.Pointer, Shape.Pointer, Shape.Size], Shape.Int32),
         ["memcpy"] = ([Shape.Pointer, Shape.Pointer, Shape.Size], Shape.Pointer),
         ["memset"] = ([Shape.Pointer, Shape.Int32, Shape.Size], Shape.Pointer),
+        ["malloc"] = ([Shape.Size], Shape.Pointer),
+        ["free"] = ([Shape.Pointer], null),
     };
 
     private static bool Fits(NovaType type, Shape shape) => shape switch
@@ -101,6 +103,15 @@ public sealed partial class NirInterpreter
                 }
                 return Value.Of(to, 8);
             }
+            case "malloc":
+                // A heap allocation of the interpreter's memory (not counted as Nova's own: it is C's).
+                return Value.Of(Count(0) == 0 ? 0 : _memory.Allocate(AllocationKind.Heap, checked((int)Count(0)), initialised: false, "malloc").Base, 8);
+            case "free":
+                if (Address(0) != 0)
+                {
+                    _memory.Free(Address(0));
+                }
+                return null;
             default: // memset
             {
                 var (to, n) = (Address(0), Count(2));

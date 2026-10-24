@@ -79,6 +79,10 @@ answer is indices or `Span` offsets (Ex16), and the long-term answer is OD-3.
 
 ### 3.2 Heap (owned)
 
+Implemented in C5 (`type-system.md` §30, `lib/core/alloc.nova`): `Layout` and `Allocator` with
+`allocate` and an `unsafe deallocate` (no `reallocate` yet), user allocators as field-less structs, for
+`Box` only.
+
 ```nova
 // core library (sketch)
 public struct Layout { size: usize; align: usize; }      // align: power of two

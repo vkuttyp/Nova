@@ -198,6 +198,7 @@ public sealed class CEmitter
         }
         EmitDropGlue();
         EmitBoxCreate();
+        EmitBoxFree();
         EmitArenaHelpers();
         EmitVectorHelpers();
         EmitContainerHelpers();
@@ -806,6 +807,41 @@ public sealed class CEmitter
             var contents = result.Enum!.ResultTypes!.Value.Ok.Pointee!;
             Line($"static NV_UNUSED {CTypeName(result)} {BoxCreateName(result)}({CType(contents)});");
         }
+        foreach (var box in UserAllocatedBoxes)
+        {
+            Line($"static NV_UNUSED void {BoxFreeName(box)}({CTypeName(box)} p);");
+        }
+    }
+
+    /// <summary>Boxes whose allocator is user-defined (type-system.md §30): their memory comes from Nova methods.</summary>
+    private IEnumerable<NovaType> UserAllocatedBoxes =>
+        Aggregates.Concat(BoxCreateResults.Select(r => r.Enum!.ResultTypes!.Value.Ok)).Where(t => t is { IsBox: true, IsPoolBox: false } && IsUserAllocator(t.Allocator!))
+            .Distinct();
+
+    private static bool IsUserAllocator(NovaType allocator) => allocator.Struct?.AllocateMethod is not null;
+
+    private static string BoxFreeName(NovaType box) => $"nvBF_{Mangle(box)}";
+
+    /// <summary>The <c>Layout</c> of a box's contents, as the lib/core struct's C literal (§30.3).</summary>
+    private string LayoutOf(NovaType allocator, NovaType contents)
+    {
+        var layout = allocator.Struct!.AllocateMethod!.Parameters[1].Type;
+        var fields = layout.Struct!.Fields;
+        return $"(({CTypeName(layout)}){{ .{FieldName(fields[0])} = sizeof({CType(contents)}), .{FieldName(fields[1])} = _Alignof({CType(contents)}) }})";
+    }
+
+    /// <summary>Frees a user-allocated box's memory: its allocator's <c>deallocate</c> (§30.3).</summary>
+    private void EmitBoxFree()
+    {
+        foreach (var box in UserAllocatedBoxes)
+        {
+            var allocator = box.Allocator!;
+            Line($"static void {BoxFreeName(box)}({CTypeName(box)} p) {{");
+            Line($"    {CTypeName(allocator)} a = {{ 0 }};");
+            Line($"    {FunctionName(allocator.Struct!.DeallocateMethod!)}(&a, (uint8_t *)(uintptr_t)p, {LayoutOf(allocator, box.Pointee!)});");
+            Line("}");
+            Line();
+        }
     }
 
     /// <summary>
@@ -821,8 +857,19 @@ public sealed class CEmitter
             var name = CTypeName(result);
             var errorType = result.Enum.ResultTypes.Value.Err;
             Line($"static {name} {BoxCreateName(result)}({CType(contents)} v) {{");
-            Line($"    _Static_assert(_Alignof({CType(contents)}) <= _Alignof(nv_max_align_t), \"novac: {box} needs over-aligned memory\");");
-            Line($"    {CType(contents)} *p = ({CType(contents)} *)nova_alloc(sizeof({CType(contents)}), {AllocatorId(box.Allocator!)});");
+            if (IsUserAllocator(box.Allocator!))
+            {
+                // The allocator's own `allocate` (§30.3); a field-less struct's value carries nothing.
+                var allocate = box.Allocator!.Struct!.AllocateMethod!;
+                Line($"    {CTypeName(box.Allocator!)} a = {{ 0 }};");
+                Line($"    {CTypeName(allocate.ReturnType)} r = {FunctionName(allocate)}(&a, {LayoutOf(box.Allocator!, contents)});");
+                Line($"    {CType(contents)} *p = r.tag == 0 ? ({CType(contents)} *)(uintptr_t)r.u.v_Ok.f__0 : NULL;");
+            }
+            else
+            {
+                Line($"    _Static_assert(_Alignof({CType(contents)}) <= _Alignof(nv_max_align_t), \"novac: {box} needs over-aligned memory\");");
+                Line($"    {CType(contents)} *p = ({CType(contents)} *)nova_alloc(sizeof({CType(contents)}), {AllocatorId(box.Allocator!)});");
+            }
             Line("    if (p == NULL) {");
             if (TypeTable.NeedsDrop(contents))
             {
@@ -1214,7 +1261,7 @@ public sealed class CEmitter
                 Line("    while (p != NULL) {");
                 Line($"        {CTypeName(type)} next = NULL;");
                 DestroyExceptTail("(*p)", type.Pointee!, type, "        ");
-                Line($"        nova_free(p, {AllocatorId(type.Allocator!)});");
+                Line(IsUserAllocator(type.Allocator!) ? $"        {BoxFreeName(type)}(p);" : $"        nova_free(p, {AllocatorId(type.Allocator!)});");
                 Line("        p = next;");
                 Line("    }");
                 Line("}");
@@ -1276,7 +1323,7 @@ public sealed class CEmitter
                 {
                     Line($"    {DropGlueName(type.Pointee!)}(*p);");
                 }
-                Line($"    nova_free(*p, {AllocatorId(type.Allocator!)});");
+                Line(IsUserAllocator(type.Allocator!) ? $"    {BoxFreeName(type)}(*p);" : $"    nova_free(*p, {AllocatorId(type.Allocator!)});");
                 Line("}");
                 Line();
                 continue;
@@ -1585,6 +1632,7 @@ public sealed class CEmitter
                 var box = Place(free.Box);
                 var release = free.Box.Type.IsPoolBox
                     ? $"nova_pool_release({box}.pool, {box}.ptr);"
+                    : IsUserAllocator(free.Box.Type.Allocator!) ? $"{BoxFreeName(free.Box.Type)}({box});"
                     : $"nova_free({box}, {AllocatorId(free.Box.Type.Allocator!)});";
                 Line(free.Flag is null ? $"    {release}" : $"    if ({LocalName(free.Flag)}) {release}");
                 break;

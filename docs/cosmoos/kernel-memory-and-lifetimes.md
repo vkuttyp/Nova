@@ -1,7 +1,7 @@
 # CosmoOS Kernel Integration — Allocators, Addresses, Object Lifetimes, Quiescence, Synchronisation
 
-Status: C0 design proposal (deliverables 5 and 6 of `prompts/cosmoos-native.md` §12).
-**Nothing here is implemented, and nothing here changes CosmoOS.** Facts are taken from
+Status: C0 design proposal (deliverables 5 and 6 of `prompts/cosmoos-native.md` §12). Since C5,
+`KernelHeap` (§2) is implemented; the rest is not. **Nothing here changes CosmoOS.** Facts are taken from
 `docs/research/cosmoos-kernel-audit.md` (CosmoOS HEAD `30d34b29`, main `4527d16d`),
 cited as **[KA §n]** and **[KA impl n]** (its "Implications" list). API names below are
 proposals; the prompt says they "do not establish final API names".
@@ -27,8 +27,8 @@ proposals; the prompt says they "do not establish final API names".
 
 | Nova type (proposed) | C interface | Free partner | Failure | Contexts today | Surface |
 |---|---|---|---|---|---|
-| `KernelHeap` (ZST allocator) | `kmalloc(size, flags)` / `kfree` | `kfree(p)` | `NULL` → `AllocError` | non-sleeping, IRQ-safe [KA §1.1] | built-in + module |
-| `ObjectCache<T>` declared as a `static` → allocator type `C` | `kmem_cache_create/alloc/free` | `kmem_cache_free(cache, obj)` (cache identity is in the type, so a mismatch is impossible) | `NULL` | non-sleeping | built-in + module (inferred; confirm exports) |
+| `KernelHeap` (ZST allocator) — **implemented in C5** (`integrations/cosmoos/c5/kernel.nova`, `c5-report.md`) | `kmalloc(size, flags)` / `kfree` | `kfree(p)` | `NULL` → `AllocError` | non-sleeping, IRQ-safe [KA §1.1] | built-in + module |
+| `ObjectCache<T>` declared as a `static` → allocator type `C` (not yet: needs statics or scoped cache boxes; `c5-report.md`) | `kmem_cache_create/alloc/free` | `kmem_cache_free(cache, obj)` (cache identity is in the type, so a mismatch is impossible) | `NULL` | non-sleeping | built-in + module (inferred; confirm exports) |
 | `PageBlock` (owned) | `pmm_alloc_pages(order, zone)` | `pmm_free_pages(page, order)`: the order is stored in the value | `NULL` | non-sleeping | **built-in only** |
 | `KernelVirtualRange` (owned) | `vm_kernel_alloc(...)` | `vm_kernel_free(base)` (needs IRQs enabled: TLB shootdown [KA open 5]) | `0` | thread context | **built-in only** |
 | `DmaBuffer<T>` (owned, typestate) | `dma_alloc(dev, size, ...)` | `dma_free(dev, size, va, dma)`: all four fields stored | `NULL` | thread context only [KA impl 2] | per export list |

@@ -37,7 +37,7 @@ struct Device {
 }
 
 interface Reader {
-    unsafe fn readOne(borrow this) -> u8; // error[N0216]
+    unsafe fn readOne(borrow this) -> u8; // allowed since C5 (type-system.md §30.1)
 }
 
 interface Plain {

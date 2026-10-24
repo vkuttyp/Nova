@@ -29,7 +29,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **M7** ✅ 2026-10-24 Production C backend ([plan](milestone-7.md)) | Source maps, structured C, Csmith-style fuzzer, NIR reference interpreter, MSVC best-effort | 24 h fuzz campaign with no miscompile across clang/gcc × O0/O2. Interpreter agrees with native output |
 | **M8** ✅ 2026-10-24 Systems/freestanding ([plan](milestone-8.md)) | core library split, FFI, raw pointers, MMIO types, custom entry points, `freestanding` profile | Freestanding object with no libc: verified by `llvm-nm -u` allowlist |
 | **C4** ✅ 2026-10-24 Freestanding in CosmoOS ([report](cosmoos/c4-report.md)) | Nova kernel-profile object built with kernel flags | Symbols, relocations and sections checked against the module loader allowlist. Frame sizes ≤ 2 KiB. No FP registers (disassembly check) |
-| **C5** Kernel memory adapter | `KernelHeap`, `ObjectCache<T>` bindings; isolated test component | In-kernel selftest: allocation, exhaustion (fault-injected), ownership transfer, cleanup. No allocator modifications |
+| **C5** ✅ 2026-10-24 Kernel memory adapter ([report](cosmoos/c5-report.md)) | `KernelHeap`, `ObjectCache<T>` bindings; isolated test component | In-kernel selftest: allocation, exhaustion (fault-injected), ownership transfer, cleanup. No allocator modifications |
 | **C6** Controlled kernel component | One small, non-critical component reimplemented beside its C original (candidate chosen with the owner) | Same test suite passes for both. Performance compared (measured, reproducible) |
 | **C7** Kernel concurrency | Effects, `SpinLock<T>`/`Mutex<T>` guards, `KRef`, `QuiesceGuard`, `PerCpu`, deferred reclamation | Negative effect tests. Lockdep clean under QEMU stress. Real concurrency rules exercised |
 | **C8** Experimental module | Nova `.ko` with generated `shutdown()` | Load/unload loops (≥ 1000) with no zombie modules, leaks or lockdep reports, on both arches. Signing via `modsign.py` |
@@ -131,6 +131,10 @@ CosmoOS's own module flags meets every structural rule of its module loader (ELF
 exported symbols), keeps frames under 2 KiB and touches no FP register, on both arches; eight
 negative controls are rejected.
 
-Next: **C5**, kernel memory integration: user-defined allocators, then a `KernelHeap` adapter over
-the kernel's allocation APIs, tested for allocation, exhaustion and cleanup. **M9** (performance)
-may start in parallel once its benchmarks exist. In parallel, when the owner wants it: propose the S1 in-tree port for C1 (OD-20).
+**C5 is done** (2026-10-24; `cosmoos/c5-report.md`): user-defined allocators (`Allocator`, `Layout`
+in `lib/core`; for `Box`), `KernelHeap` over `kmalloc`/`kfree`, and an out-of-tree, signed test module
+whose in-kernel selftest (allocation, real and injected exhaustion, ownership transfer, cleanup)
+passes in CosmoOS on both arches. `ObjectCache<T>` waits for statics or scoped cache boxes.
+
+Next: **C6**, a controlled kernel component in Nova beside its C original (the candidate is chosen
+with the owner). **M9** (performance) may start in parallel once its benchmarks exist. In parallel, when the owner wants it: propose the S1 in-tree port for C1 (OD-20).

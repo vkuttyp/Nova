@@ -81,6 +81,54 @@ public sealed partial class NirInterpreter
         return _memory.Allocate(AllocationKind.Heap, size == 0 ? 1 : (int)size, initialised: false, "a heap allocation").Base;
     }
 
+    /// <summary>A box's memory: from its user allocator's <c>allocate</c> (type-system.md §30.3), or the runtime heap; 0 on failure.</summary>
+    private ulong AllocBox(NovaType box)
+    {
+        var allocator = box.Allocator!;
+        if (allocator.Struct?.AllocateMethod is not { } allocate)
+        {
+            return Alloc((ulong)SizeOf(box.Pointee!), AllocatorId(allocator));
+        }
+        var result = Call(_functions[allocate], [AllocatorThis(allocator), LayoutValue(allocate.Parameters[1].Type, box.Pointee!)])!;
+        var (_, _, tagSize, unionOffset) = TypeTable.EnumLayout(allocate.ReturnType);
+        return result.Bits(0, tagSize) == 0 ? result.Bits(unionOffset, 8) : 0;
+    }
+
+    /// <summary>Returns a box's memory to where <see cref="AllocBox"/> got it.</summary>
+    private void FreeBox(ulong pointer, NovaType box)
+    {
+        var allocator = box.Allocator!;
+        if (allocator.Struct?.DeallocateMethod is not { } deallocate)
+        {
+            Free(pointer, AllocatorId(allocator));
+            return;
+        }
+        Call(_functions[deallocate], [AllocatorThis(allocator), Value.Of(pointer, 8), LayoutValue(deallocate.Parameters[2].Type, box.Pointee!)]);
+    }
+
+    private readonly Dictionary<NovaType, ulong> _allocatorValues = [];
+
+    /// <summary>`borrow this` for a field-less allocator: the address of a value of it (read-only static memory).</summary>
+    private Value AllocatorThis(NovaType allocator)
+    {
+        if (!_allocatorValues.TryGetValue(allocator, out var address))
+        {
+            address = _memory.Static(new byte[Math.Max(1, SizeOf(allocator))], $"the allocator {allocator}").Base;
+            _allocatorValues.Add(allocator, address);
+        }
+        return Value.Of(address, 8);
+    }
+
+    /// <summary>A <c>Layout</c> (lib/core) value for a box's contents.</summary>
+    private static Value LayoutValue(NovaType layout, NovaType contents)
+    {
+        var value = Value.Uninitialised(SizeOf(layout));
+        var fields = layout.Struct!.Fields;
+        value.Put(fields[0].Offset, Value.Of((ulong)SizeOf(contents), 8));
+        value.Put(fields[1].Offset, Value.Of((ulong)AlignOf(contents), 8));
+        return value;
+    }
+
     private void Free(ulong pointer, uint allocator)
     {
         _ = allocator;
@@ -409,12 +457,11 @@ public sealed partial class NirInterpreter
             case { IsBox: true } when LeadsTo(type.Pointee!, type):
             {
                 // Tail iteration (type-system.md §18.5).
-                var allocator = AllocatorId(type.Allocator!);
                 var node = Pointer(address);
                 while (node != 0)
                 {
                     var next = DestroyExceptTail(type.Pointee!, node, type);
-                    Free(node, allocator);
+                    FreeBox(node, type);
                     node = next;
                 }
                 return;
@@ -483,7 +530,7 @@ public sealed partial class NirInterpreter
                 {
                     Destroy(type.Pointee!, Pointer(address));
                 }
-                Free(Pointer(address), AllocatorId(type.Allocator!));
+                FreeBox(Pointer(address), type);
                 return;
             case { Enum: { } definition }:
             {
@@ -666,7 +713,7 @@ public sealed partial class NirInterpreter
             {
                 var value = Operand(frame, arguments[^1]);
                 var box = builtin.Type.Enum!.ResultTypes!.Value.Ok;
-                var pointer = Alloc((ulong)SizeOf(box.Pointee!), AllocatorId(box.Allocator!));
+                var pointer = AllocBox(box);
                 if (pointer == 0)
                 {
                     DestroyValue(box.Pointee!, value);

@@ -821,10 +821,6 @@ internal sealed class TypeChecker
         {
             Error(DiagnosticCodes.ImplMismatch, method.Name.Span, $"interface method '{Name(method.Name.Name)}' needs a receiver: this, borrow this or borrow mut this");
         }
-        foreach (var method in decl.Methods.Where(m => m.IsUnsafe))
-        {
-            Error(DiagnosticCodes.Unsupported, method.Name.Span, "interface methods cannot be 'unsafe' yet (type-system.md §27.4)");
-        }
     }
 
     /// <summary>An interface reference <c>I</c> or <c>I&lt;Args&gt;</c> in a bound or an `impl` (§21); null after an error.</summary>
@@ -871,6 +867,11 @@ internal sealed class TypeChecker
         foreach (var check in _pendingBoundChecks)
         {
             check();
+        }
+        foreach (var (type, span, source) in _pendingAllocators)
+        {
+            _source = source;
+            VerifyUserAllocator(type, span);
         }
         _pendingBoundChecks.Clear();
     }
@@ -1576,10 +1577,8 @@ internal sealed class TypeChecker
                     return _types.Error;
                 }
                 var allocator = generic.Arguments.Length == 2 ? ResolveType(generic.Arguments[1], allowVoid: false) : Used(_systemHeap).Type;
-                if (!allocator.IsBottom && !IsAllocatorType(allocator))
+                if (!allocator.IsBottom && !CheckBoxAllocator(allocator, generic.Arguments[^1].Span))
                 {
-                    Error(DiagnosticCodes.NotAnAllocator, generic.Arguments[1].Span,
-                        $"'{allocator}' is not an allocator type; use 'SystemHeap' or 'FailingAllocator'");
                     return _types.Error;
                 }
                 return contents.IsBottom || allocator.IsBottom ? _types.Error : BoxOf(contents, allocator);
@@ -1816,10 +1815,8 @@ internal sealed class TypeChecker
                 Synth(call.Arguments[1], null);
                 return ErrorResult(call.Span);
             }
-            if (!IsAllocatorType(allocatorValue.Type))
+            if (!CheckBoxAllocator(allocatorValue.Type, call.Arguments[0].Span))
             {
-                Error(DiagnosticCodes.NotAnAllocator, call.Arguments[0].Span,
-                    $"'{allocatorValue.Type}' is not an allocator type; use 'SystemHeap {{}}' or 'FailingAllocator {{}}'");
                 Synth(call.Arguments[1], null);
                 return ErrorResult(call.Span);
             }
@@ -2670,11 +2667,61 @@ internal sealed class TypeChecker
             : new HirBuiltinCall(BuiltinFunction.CallPointer, arguments.MoveToImmutable(), type.ResultType!, call.Span);
     }
 
+    // ---- User-defined allocators (type-system.md §30) ----
+
+    private readonly List<(NovaType Type, TextSpan Span, SourceText Source)> _pendingAllocators = [];
+
+    /// <summary>
+    /// Can <paramref name="type"/> be a box's allocator? A built-in one, or a non-generic struct without fields that
+    /// implements lib/core's `Allocator` (§30.2), which is verified once every `impl` is known.
+    /// </summary>
+    private bool CheckBoxAllocator(NovaType type, TextSpan span)
+    {
+        if (IsAllocatorType(type))
+        {
+            return true;
+        }
+        if (type.Struct is { TypeArguments.IsEmpty: true, Syntax: { Fields.IsEmpty: true, TypeParameters.IsEmpty: true, RegionParameters.IsEmpty: true } })
+        {
+            if (_implsReady)
+            {
+                return VerifyUserAllocator(type, span);
+            }
+            _pendingAllocators.Add((type, span, _source));
+            return true;
+        }
+        Error(DiagnosticCodes.NotAnAllocator, span,
+            $"'{type}' is not an allocator type: use 'SystemHeap', 'FailingAllocator', or a struct without fields that implements 'Allocator' (type-system.md §30.2)");
+        return false;
+    }
+
+    /// <summary>Checks a user allocator against `Allocator` and records its two methods for code generation (§30.3).</summary>
+    private bool VerifyUserAllocator(NovaType type, TextSpan span)
+    {
+        var definition = type.Struct!;
+        if (definition.AllocateMethod is not null)
+        {
+            return true;
+        }
+        var allocatorName = _symbols.Intern("Allocator");
+        if (_items.GetValueOrDefault(allocatorName) is InterfaceEntry entry
+            && Implements(type, new InterfaceBound(entry, "Allocator", []))
+            && _implMethods.TryGetValue(type, out var methods))
+        {
+            definition.AllocateMethod = methods[_symbols.Intern("allocate")];
+            definition.DeallocateMethod = methods[_symbols.Intern("deallocate")];
+            return true;
+        }
+        Error(DiagnosticCodes.NotAnAllocator, span,
+            $"'{type}' is not an allocator type: it does not implement 'Allocator' (type-system.md §30.2)");
+        return false;
+    }
+
     // ---- Profiles (cosmoos/profiles.md §4) ----
 
     /// <summary>A type that needs the hosted runtime (§4.1): a heap allocator, or anything allocating from one; I/O.</summary>
     private bool IsHostedOnly(NovaType type) =>
-        type.IsBox || type.Kind is TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap or TypeKind.Resource
+        (type.IsBox && (type.IsPoolBox || IsAllocatorType(type.Allocator!))) || type.Kind is TypeKind.Vector or TypeKind.StableVector or TypeKind.SlotMap or TypeKind.Resource
         || type.Region is RegionKind.Arena or RegionKind.Pool or RegionKind.ScratchFrame
         || IsAllocatorType(type) || type == _ioError.Type;
 
@@ -4065,8 +4112,9 @@ internal sealed class TypeChecker
     {
         switch (expr)
         {
-            case CallExpr { Callee: MemberExpr { Target: NameExpr hostedName } } hostedCall when _profile == Profile.Freestanding
-                && Lookup(hostedName.Name.Name) is Builtin hosted && IsHostedOnly(hosted):
+            case CallExpr { Callee: MemberExpr { Target: NameExpr hostedName } hostedMember } hostedCall when _profile == Profile.Freestanding
+                && Lookup(hostedName.Name.Name) is Builtin hosted && IsHostedOnly(hosted)
+                && !(hosted == Builtin.Box && Name(hostedMember.Member.Name) == "createIn"): // a user allocator needs no runtime (§30.3)
                 // Box.create, Vector<T>.create, Console.write, … (cosmoos/profiles.md §4.1).
                 HostedOnly(hostedName.Span, $"'{Name(hostedName.Name.Name)}'");
                 CheckArgumentsLoosely(hostedCall);

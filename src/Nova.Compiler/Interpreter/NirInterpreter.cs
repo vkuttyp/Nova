@@ -726,7 +726,7 @@ public sealed partial class NirInterpreter
                     }
                     else
                     {
-                        Free(Pointer(box), AllocatorId(free.Box.Type.Allocator!));
+                        FreeBox(Pointer(box), free.Box.Type);
                     }
                 }
                 break;

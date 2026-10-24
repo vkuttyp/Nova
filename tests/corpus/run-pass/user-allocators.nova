@@ -1,0 +1,76 @@
+// User-defined allocators (type-system.md §30): field-less structs implementing lib/core's Allocator, used by Box.
+
+extern "C" {
+    fn malloc(size: usize) -> *mut void;
+    fn free(p: *mut void);
+}
+
+/// The C library's heap, through malloc and free.
+struct CHeap {}
+
+impl Allocator for CHeap {
+    /// Safety: malloc returns null or a block of `layout.size` bytes aligned for any C object (16 here).
+    fn allocate(borrow this, layout: Layout) -> Result<*mut u8, AllocError> {
+        if (layout.align > 16) { return Err(AllocError.OutOfMemory); }
+        let p = unsafe { malloc(layout.size) } as *mut u8;
+        if (p.isNull()) { return Err(AllocError.OutOfMemory); }
+        return Ok(p);
+    }
+
+    /// Safety: Box passes back exactly the blocks `allocate` returned, once each.
+    unsafe fn deallocate(borrow this, p: *mut u8, layout: Layout) {
+        free(p as *mut void);
+    }
+}
+
+/// An allocator with nothing to give: every allocation fails.
+struct Empty {}
+
+impl Allocator for Empty {
+    fn allocate(borrow this, layout: Layout) -> Result<*mut u8, AllocError> => Err(AllocError.OutOfMemory);
+
+    /// Safety: never called, since `allocate` never succeeds.
+    unsafe fn deallocate(borrow this, p: *mut u8, layout: Layout) {}
+}
+
+struct Noisy {
+    id: i32;
+    drop { Console.write("drop "); Console.writeLine(this.id); }
+}
+
+enum List { Nil, Cons(i64, Box<List, CHeap>) }
+
+fn build(n: i64) -> Result<Box<List, CHeap>, AllocError> {
+    var list = Box.createIn(CHeap {}, List.Nil)?;
+    for (i in 0i64..n) { list = Box.createIn(CHeap {}, List.Cons(i, move list))?; }
+    return Ok(list);
+}
+
+fn head(list: borrow List) -> i64 {
+    match (list) {
+        List.Nil => { return -1; }
+        List.Cons(value, _) => { return value; }
+    }
+}
+
+fn keep(b: Box<Noisy, CHeap>) -> Box<Noisy, CHeap> => b;
+
+fn main() -> i32 {
+    let a = Box.createIn(CHeap {}, 41u64)!;
+    Console.writeLine(a + 1);
+    let n = keep(Box.createIn(CHeap {}, Noisy { id: 1 })!);
+    Console.writeLine(n.id);
+    match (Box.createIn(Empty {}, Noisy { id: 2 })) {
+        Ok(_) => { Console.writeLine("unexpected"); }
+        Err(e) => { Console.writeLine("no memory"); }
+    }
+    let list = build(100000)!;
+    Console.writeLine(head(list)); // dropping the list frees 100,001 nodes iteratively (§18.5)
+    return 0;
+}
+// expect-stdout: 42
+// expect-stdout: 1
+// expect-stdout: drop 2
+// expect-stdout: no memory
+// expect-stdout: 99999
+// expect-stdout: drop 1

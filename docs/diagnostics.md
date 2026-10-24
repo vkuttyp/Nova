@@ -172,7 +172,7 @@ with one C name are N0201; `CChar` as a value type is N0281.
 
 Raw pointers reuse codes: an invalid pointer cast is N0208, ordering comparisons on pointers are
 N0207, a constant of
-pointer type is N0216, an `unsafe main` is N0219, and an `unsafe` interface method is N0216.
+pointer type is N0216, and an `unsafe main` is N0219. (An `unsafe` interface method was N0216 until C5.)
 
 ### Results and the heap (N0260–N0269; `type-system.md` §17–§18)
 
@@ -181,7 +181,7 @@ pointer type is N0216, an `unsafe main` is N0219, and an `unsafe` interface meth
 | N0260 | `Ok(...)` / `Err(...)` (or, since M4c, `Pool.create(...)`; since M6c, `null`) without an expected type that fixes its type arguments, or where another type is expected | `let a = Ok(1);`, `let p = Pool.create(SystemHeap {}, 4u32);`, `let n = null;` |
 | N0261 | `?` in a function that does not return a `Result` with the same error type; `?` on an optional in a function that does not return an optional (M6c) | `?` on `Result<i32, F>` in a function returning `Result<i32, E>` |
 | N0262 | `?` or `!` on something that is not a `Result` or optional value (a reference to one included) | `n?` with `n: i32` |
-| N0263 | An allocator argument that is not an allocator type (`SystemHeap`, `FailingAllocator`) | `Box<i32, Point>`, `Box.createIn(point, 1)` |
+| N0263 | An allocator argument that is not an allocator type (`SystemHeap`, `FailingAllocator`, or for `Box` since C5 a struct without fields implementing `Allocator`) | `Box<i32, Point>`, `Box.createIn(point, 1)` |
 | N0265 | Type arguments that cannot be inferred: a generic call, struct literal or enum value whose arguments, fields or expected type do not determine every type parameter | `let d = Maybe.Nothing;`, `let e = make();` |
 | N0266 | Generic instantiation nested more than 64 deep (polymorphic recursion) | `fn deep<T>(x: Maybe<T>) { deep(Maybe.Just(x)); }` |
 | N0267 | An `impl` that does not match its interface (receiver, parameter or return type, a missing or extra method), a duplicate `impl`, an `impl` for a generic or scoped type, an interface method without a receiver, or a method call that two bounds both provide | `impl Shape for Square { fn area(this) -> i64 … }` |

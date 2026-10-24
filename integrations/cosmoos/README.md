@@ -11,6 +11,9 @@ and each script checks that CosmoOS's `git status` is unchanged.
 | `c1/nova-panic.nova` | Checks that a Nova panic reports its location and aborts under CosmoOS's libc |
 | `c4.py` | Milestone C4: a freestanding Nova object (`c4/kdemo.nova`) compiled with CosmoOS's own `MODULE_CFLAGS`, joined with its `ld.lld` and `MODULE_LDFLAGS`, and checked against the module loader's ELF, relocation and symbol rules, the frame limit and `scripts/check-fpregs.sh`; eight negative controls. No QEMU needed (`docs/cosmoos/c4-report.md`) |
 | `c4/nova_rt_kernel.c` | The kernel's `nova_panic`: a Nova panic is a kernel `panic()` |
+| `c5.py` | Milestone C5: builds `c5/` into a signed, out-of-tree kernel module (`nova_c5`) with CosmoOS's own rules, adds it to a copy of the boot archive, boots QEMU and checks the in-kernel selftest's log lines (`docs/cosmoos/c5-report.md`) |
+| `c5/kernel.nova` | `KernelHeap`: Nova's `Allocator` over `kmalloc`/`kfree` |
+| `c5/selftest.nova`, `c5/module.c` | The in-kernel selftest and the module around it (`COSMO_MODULE`, fault injection and accounting for `TestHeap`) |
 
 Requirements: a CosmoOS checkout that builds on this host (`gmake check-tools` there), QEMU with
 UEFI firmware, the .NET SDK, and Python 3.

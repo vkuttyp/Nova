@@ -1,0 +1,153 @@
+// profile: freestanding
+// C5's in-kernel selftest (docs/cosmoos/c5-report.md): allocation, exhaustion, ownership transfer and cleanup on
+// CosmoOS's kernel heap. module.c runs it from the module's init and logs each result; c5.py checks the log.
+
+extern "C" {
+    fn c5_report(name: *CChar, passed: bool, detail: i64);
+    fn c5_should_fail() -> bool;
+    fn c5_count_alloc();
+    fn c5_count_free();
+    fn c5_live() -> i64;
+    fn c5_fail_at(n: u64);
+}
+
+/// The kernel heap with Nova-side fault injection and accounting: module.c fails the n-th allocation when asked,
+/// and counts live blocks. The kernel's allocator itself is untouched (its own fault injection is debug-only).
+struct TestHeap {}
+
+impl Allocator for TestHeap {
+    /// Safety: as KernelHeap.allocate, which this wraps.
+    fn allocate(borrow this, layout: Layout) -> Result<*mut u8, AllocError> {
+        if (unsafe { c5_should_fail() }) { return Err(AllocError.OutOfMemory); }
+        let block = KernelHeap {}.allocate(layout)?;
+        unsafe { c5_count_alloc(); }
+        return Ok(block);
+    }
+
+    /// Safety: as KernelHeap.deallocate, which this wraps.
+    unsafe fn deallocate(borrow this, p: *mut u8, layout: Layout) {
+        KernelHeap {}.deallocate(p, layout);
+        c5_count_free();
+    }
+}
+
+struct Device { id: u32; buffer: Box<[u8; 64], TestHeap>; }
+
+enum Chain { End, Link(u32, Box<Chain, TestHeap>) }
+
+/// Safety: the name is a zero-terminated literal.
+fn report(name: StringView, passed: bool, detail: i64) -> u32 {
+    unsafe { c5_report(name.ptr as *CChar, passed, detail); }
+    if (passed) { return 0; }
+    return 1;
+}
+
+/// Safety: reads the accounting kept by module.c.
+fn live() -> i64 => unsafe { c5_live() };
+
+// ---- normal allocation ----
+
+fn allocation() -> u32 {
+    match (Box.createIn(KernelHeap {}, 0x1234u64)) {
+        Ok(first) => {
+            match (Box.createIn(KernelHeap {}, Device2 { a: first + 1, b: 7 })) {
+                Ok(second) => { return report("allocation\0", second.a == 0x1235 && second.b == 7, truncate<i64>(second.a)); }
+                Err(e) => { return report("allocation\0", false, -2); }
+            }
+        }
+        Err(e) => { return report("allocation\0", false, -1); }
+    }
+}
+
+struct Device2 { a: u64; b: u32; }
+
+// ---- ownership transfer ----
+
+fn makeDevice(id: u32) -> Result<Device, AllocError> {
+    let buffer = Box.createIn(TestHeap {}, [0u8; 64])?;
+    return Ok(Device { id: id, buffer: buffer });
+}
+
+fn takeAndReturn(d: Device) -> Device => d;
+
+fn ownership() -> u32 {
+    let before = live();
+    var moved: i64 = 0;
+    {
+        match (makeDevice(7)) {
+            Ok(device) => {
+                var mine = takeAndReturn(device);   // moved into a call and back
+                mine.buffer[3] = 9;
+                let kept: Device? = mine;           // into an optional
+                match (kept) {
+                    null => { }
+                    Some(d) => { moved = d.buffer[3] as i64 + d.id as i64; }
+                }
+            }
+            Err(e) => { return report("ownership\0", false, -1); }
+        }
+    }
+    return report("ownership\0", moved == 16 && live() == before, live() - before);
+}
+
+// ---- exhaustion: the kernel's own refusal, and injected failures ----
+
+fn realExhaustion() -> u32 {
+    let tooBig = KernelHeap {}.allocate(Layout { size: 8388608, align: 16 });   // over KMALLOC_MAX_SIZE
+    let overAligned = KernelHeap {}.allocate(Layout { size: 64, align: 64 });
+    var failures: i64 = 0;
+    match (tooBig) { Ok(p) => { failures += 1; } Err(e) => { } }
+    match (overAligned) { Ok(p) => { failures += 1; } Err(e) => { } }
+    return report("exhaustion-kmalloc\0", failures == 0, failures);
+}
+
+fn buildChain(n: u32) -> Result<Box<Chain, TestHeap>, AllocError> {
+    var chain = Box.createIn(TestHeap {}, Chain.End)?;
+    for (i in 0u32..n) { chain = Box.createIn(TestHeap {}, Chain.Link(i, move chain))?; }
+    return Ok(chain);
+}
+
+/// Fails each allocation of an 8-link chain in turn: every attempt returns Err and leaks nothing, until the
+/// first that succeeds, which also leaks nothing once dropped (the M3 sweep, in the kernel).
+/// Safety: only sets the fault-injection point in module.c.
+fn exhaustionSweep() -> u32 {
+    var failedRuns: i64 = 0;
+    var cleanRuns: i64 = 0;
+    var at: u64 = 1;
+    loop {
+        unsafe { c5_fail_at(at); }
+        let before = live();
+        let outcome = buildChain(8);
+        let ok = match_ok(outcome);
+        if (live() == before) { cleanRuns += 1; }
+        if (!ok) { failedRuns += 1; }
+        if (ok || at > 32) { break; }
+        at += 1;
+    }
+    unsafe { c5_fail_at(0); }
+    // 9 allocations: runs 1..9 fail, run 10 succeeds; every run ends with nothing live.
+    return report("exhaustion-injected\0", failedRuns == 9 && cleanRuns == 10, failedRuns * 100 + cleanRuns);
+}
+
+/// Consumes a result, dropping whatever it holds, and says whether it was Ok.
+fn match_ok(outcome: Result<Box<Chain, TestHeap>, AllocError>) -> bool {
+    match (outcome) {
+        Ok(chain) => { return true; }
+        Err(e) => { return false; }
+    }
+}
+
+// ---- cleanup of deep structures ----
+
+fn deepCleanup() -> u32 {
+    let before = live();
+    match (buildChain(20000)) {
+        Ok(chain) => { }   // dropped here: 20,001 kfrees, iteratively (type-system.md §18.5), on a 16 KiB stack
+        Err(e) => { return report("cleanup-deep\0", false, -1); }
+    }
+    return report("cleanup-deep\0", live() == before, live() - before);
+}
+
+/// Runs every test; returns how many failed.
+@export("c5_selftest")
+fn selftest() -> u32 => allocation() + ownership() + realExhaustion() + exhaustionSweep() + deepCleanup();

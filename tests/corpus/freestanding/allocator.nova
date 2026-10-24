@@ -1,0 +1,41 @@
+// profile: freestanding
+// A user-defined allocator in a freestanding package (type-system.md §30.3): the environment (allocator.c) owns the
+// memory; Nova boxes it. Only Box.createIn with a user allocator is allowed here: Box.create needs SystemHeap.
+
+extern "C" {
+    fn env_alloc(size: usize, align: usize) -> *mut void;
+    fn env_free(p: *mut void, size: usize);
+}
+
+struct EnvHeap {}
+
+impl Allocator for EnvHeap {
+    /// Safety: env_alloc returns null or `size` bytes aligned to `align` (allocator.c's contract).
+    fn allocate(borrow this, layout: Layout) -> Result<*mut u8, AllocError> {
+        let p = unsafe { env_alloc(layout.size, layout.align) } as *mut u8;
+        if (p.isNull()) { return Err(AllocError.OutOfMemory); }
+        return Ok(p);
+    }
+
+    /// Safety: Box returns each block once, with its layout.
+    unsafe fn deallocate(borrow this, p: *mut u8, layout: Layout) {
+        env_free(p as *mut void, layout.size);
+    }
+}
+
+struct Pair { a: u64; b: u64; }
+
+@export("alloc_demo")
+fn demo(n: u64) -> u64 {
+    match (Box.createIn(EnvHeap {}, Pair { a: n, b: n * 2 })) {
+        Ok(pair) => {
+            match (Box.createIn(EnvHeap {}, pair.a + pair.b)) {
+                Ok(sum) => { return sum; }
+                Err(e) => { return 0; }
+            }
+        }
+        Err(e) => { return 0; }
+    }
+}
+// expect-stdout: demo 30, live 0, allocations 2
+// expect-stdout: refused 0, live 0

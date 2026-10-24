@@ -1467,8 +1467,8 @@ expression, evaluated once.
 - `unsafe { statements }` is a statement; `unsafe { e }` is an expression whose value is `e`'s
   (grammar §2). In statement position, `unsafe {` always starts the statement form.
 - `unsafe fn` (a modifier after the visibility): calling the function is an unsafe operation, and its
-  body is an unsafe context. `main` may not be `unsafe` (N0219). Methods may be `unsafe`; interface
-  methods may not yet be (N0216).
+  body is an unsafe context. `main` may not be `unsafe` (N0219). Methods may be `unsafe`; since C5,
+  interface methods may be too (§30.1), and an `impl` must match (N0267).
 - Everything lexically inside an unsafe block, an unsafe expression or the body of an `unsafe fn`
   is in an unsafe context, including deferred statements. A nested `unsafe` is allowed.
 - **The Safety rule** (U2): an `unsafe fn`, and every function whose body contains an `unsafe`
@@ -1688,3 +1688,65 @@ symbols (§28.2 reserves only `__` and `_` with an uppercase letter); other rese
 
 Diagnostics: no new codes. Volatile accesses outside an unsafe context are N0280; a function pointer
 type or value that cannot cross to C is N0291; a misused `@align` is N0290.
+
+## 30. User-defined allocators (C5)
+
+```nova
+extern "C" {
+    fn kmalloc(size: usize, flags: u32) -> *mut void;
+    fn kfree(p: *mut void);
+}
+
+/// CosmoOS's kernel heap: kmalloc and kfree (integrations/cosmoos/c5/kernel.nova).
+struct KernelHeap {}
+
+impl Allocator for KernelHeap {
+    /// Safety: kmalloc returns null or a block of `layout.size` bytes, 16-byte aligned.
+    fn allocate(borrow this, layout: Layout) -> Result<*mut u8, AllocError> {
+        if (layout.align > 16) { return Err(AllocError.OutOfMemory); }
+        let p = unsafe { kmalloc(layout.size, 0) } as *mut u8;
+        if (p.isNull()) { return Err(AllocError.OutOfMemory); }
+        return Ok(p);
+    }
+    /// Safety: the caller passes a block this allocator returned (Box guarantees it).
+    unsafe fn deallocate(borrow this, p: *mut u8, layout: Layout) { kfree(p as *mut void); }
+}
+
+fn make() -> Result<Box<u64, KernelHeap>, AllocError> => Box.createIn(KernelHeap {}, 42u64);
+```
+
+### 30.1 `Layout` and `Allocator` (`lib/core/alloc.nova`)
+- `struct Layout { size: usize; align: usize; }`: a block's size in bytes and its alignment (a power of
+  two).
+- `interface Allocator`, with two methods:
+  - `fn allocate(borrow this, layout: Layout) -> Result<*mut u8, AllocError>`: a block of at least
+    `layout.size` bytes aligned to `layout.align`, or `Err` (never a null `Ok`);
+  - `unsafe fn deallocate(borrow this, p: *mut u8, layout: Layout)`: returns a block. Its contract:
+    `p` came from `allocate` of this allocator type with the same layout, and is returned once.
+- Interface methods may be `unsafe` (lifting §27.4's earlier rule); an `impl` must match the
+  interface's `unsafe` (N0267).
+
+### 30.2 Allocator types
+- A **user-defined allocator** is a non-generic struct **with no fields** that implements `Allocator`.
+  It may be the `A` of `Box<T, A>`, and `Box.createIn(a, v)` takes a value of it. Having no fields, it
+  has no state that a box would need to carry: a `Box<T, A>` stays one pointer, and dropping it
+  needs no allocator value (the memory-model's free-standing allocators, §3.2 there). State that an
+  allocator needs (counters, a C handle) lives on the C side or in global C state.
+- The built-in allocators are still `SystemHeap` and `FailingAllocator`. `Vector`, `String`,
+  `SlotMap`, `StableVector`, `Arena` and `Pool` take only those in v0 (N0263): their growth is in the C
+  runtime, which cannot call Nova methods.
+- A type named as a box's allocator that is not a struct without fields implementing `Allocator` is
+  N0263.
+
+### 30.3 Semantics
+- `Box.createIn(a, v)` with a user allocator calls `allocate(Layout { size: size(T), align: align(T) })`
+  once. On `Err`, it destroys `v` and returns `Err(AllocError.OutOfMemory)`; on `Ok(p)`, it moves `v`
+  to `p`. Destroying the box destroys the contents, then calls `deallocate(p, the same layout)`
+  once (H1). The compiler only calls `deallocate` with blocks `allocate` returned, so the contract
+  holds for every safe program.
+- A `size(T)` of 0 is never requested: such boxes still allocate one byte (as `SystemHeap` does).
+- User allocators are not placement-transparent (M5): their boxes stay on the heap.
+- They are allowed in the freestanding profile (`cosmoos/profiles.md` §4.1): `Box` with a user
+  allocator needs no hosted runtime. `Box.create` (`SystemHeap`) stays hosted-only.
+
+Diagnostics: N0263 (a box allocator that is not one), N0267 (an `impl` whose `unsafe` differs).

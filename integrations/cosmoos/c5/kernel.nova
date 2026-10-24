@@ -1,0 +1,28 @@
+// profile: freestanding
+// C5: Nova's binding to CosmoOS's kernel heap (docs/cosmoos/c5-report.md, type-system.md §30). The kernel's
+// allocator is used as it is: kmalloc and kfree, both exported (kernel/memory/kmalloc.c:182-185).
+
+extern "C" {
+    fn kmalloc(size: usize, flags: u32) -> *mut void;
+    fn kfree(p: *mut void);
+}
+
+/// CosmoOS's kernel heap (kernel/include/kernel/kmalloc.h): non-blocking and interrupt-safe; blocks are at least
+/// 16-byte aligned; at most KMALLOC_MAX_SIZE (4 MiB). `Box<T, KernelHeap>` is one pointer, freed with kfree.
+public struct KernelHeap {}
+
+impl Allocator for KernelHeap {
+    /// Safety: kmalloc returns null or a block of `layout.size` bytes, 16-byte aligned (kmalloc.h); larger
+    /// alignments are refused here, so an Ok block always meets `layout`.
+    fn allocate(borrow this, layout: Layout) -> Result<*mut u8, AllocError> {
+        if (layout.align > 16) { return Err(AllocError.OutOfMemory); }
+        let p = unsafe { kmalloc(layout.size, 0) } as *mut u8;
+        if (p.isNull()) { return Err(AllocError.OutOfMemory); }
+        return Ok(p);
+    }
+
+    /// Safety: the caller (Box) passes a block from `allocate`, once: kfree's contract (kmalloc.h).
+    unsafe fn deallocate(borrow this, p: *mut u8, layout: Layout) {
+        kfree(p as *mut void);
+    }
+}
