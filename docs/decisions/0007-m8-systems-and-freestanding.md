@@ -41,6 +41,19 @@ Result, Box, Vector, Console, File, …) is built into the compiler and the C ru
 5. **Generated C has no undefined pointer arithmetic**: raw pointers are plain `T *` (no `const`),
    and arithmetic and casts go through `uintptr_t` (`unsafe.md` §4).
 
+6. **FFI (8b)**:
+   - Extern declarations name C types exactly, through the mapping of `type-system.md` §28.3
+     (`usize` is `size_t`, `*T` is `const T *`, and the pointee-only `CChar` is `char`), and calls go
+     through generated wrappers. Calling a C function through an incompatible prototype is undefined
+     in C11, and clang and GCC reject redeclared library functions with other types.
+   - `@export` alone makes a function C-callable. Ex17's `public extern "C" fn` spelling is not
+     used: the attribute already says everything, and an `extern` definition would read like a
+     declaration.
+   - `@repr(C)` structs keep their Nova names in C, so C code using `nova_exports.h` has the same
+     struct type. Arrays and other non-FFI-safe types are not allowed in them yet.
+   - The interpreter models a few C library functions and faults on any other C call.
+   - Function pointers move to 8d: a C callback needs a C-typed wrapper, which exports provide.
+
 ## Consequences
 
 - `ownership.md` U3's `borrowFromRaw(p)` is spelled `Ptr.toBorrow(p)` / `Ptr.toBorrowMut(p)` (`borrow` is a

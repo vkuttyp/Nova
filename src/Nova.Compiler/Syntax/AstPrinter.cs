@@ -54,13 +54,33 @@ public sealed class AstPrinter
         Line(")");
     }
 
+    private void PrintAttributes(ImmutableArray<AttributeSyntax> attributes)
+    {
+        foreach (var attribute in attributes)
+        {
+            Line($"(@{Name(attribute.Name)}{string.Concat(attribute.Arguments.Select(a => " " + Expr(a)))})");
+        }
+    }
+
     private void PrintItem(Item item)
     {
         var visibility = item.Visibility.ToString().ToLowerInvariant();
+        PrintAttributes(item.Attributes);
         switch (item)
         {
             case FunctionDecl fn:
                 PrintFunction(fn);
+                break;
+            case ExternBlock block:
+                Line($"(extern {visibility} {Quote(block.Abi, '"')}");
+                _indent++;
+                foreach (var function in block.Functions)
+                {
+                    PrintAttributes(function.Attributes);
+                    PrintFunction(function);
+                }
+                _indent--;
+                Line(")");
                 break;
             case StructDecl s:
                 Line($"(struct {visibility} {Name(s.Name)}{TypeParams([.. s.RegionParameters, .. s.TypeParameters])}");

@@ -1,0 +1,89 @@
+// C calls Nova and Nova calls C (type-system.md §28): exports, @repr(C) structs and @repr enums, with
+// the C side in exports.c, which includes the generated nova_exports.h.
+
+extern "C" {
+    fn c_entry(seed: i32) -> i32;
+    fn c_total(points: *Point, count: usize) -> i64;
+    // A @repr enum value from C that is no variant panics, reported where the C function is declared.
+    fn c_bad_color() -> Color; // expect-panic: invalid enum value from C
+    @effects(may_block)
+    fn c_fill(out: *mut Segment, name: *CChar);
+}
+
+@repr(C)
+struct Point { x: i32; y: i32; }
+
+@repr(C)
+struct Segment { from: Point; to: Point; label: *CChar; length: usize; }
+
+@repr(u8)
+enum Color { Red, Green, Blue }
+
+@repr(i32)
+enum Mode { Off, On }
+
+/// The Manhattan length of a point.
+@export("geo_length")
+fn length(p: Point) -> i32 => abs32(p.x) + abs32(p.y);
+
+@export("geo_next_color")
+fn next(c: Color) -> Color {
+    match (c) {
+        Color.Red => { return Color.Green; }
+        Color.Green => { return Color.Blue; }
+        Color.Blue => { return Color.Red; }
+    }
+}
+
+@export
+fn geo_flip(m: Mode) -> Mode {
+    match (m) {
+        Mode.Off => { return Mode.On; }
+        Mode.On => { return Mode.Off; }
+    }
+}
+
+/// Safety: `data` points to `n` readable bytes (the C caller's contract).
+@export("geo_sum_bytes")
+unsafe fn sumBytes(data: *u8, n: usize) -> u64 {
+    var total: u64 = 0;
+    for (i in 0..n) { total += data.add(i).read() as u64; }
+    return total;
+}
+
+@export("geo_flag")
+fn flag(on: bool, scale: isize) -> isize { if (on) { return scale * 2; } return -scale; }
+
+fn abs32(v: i32) -> i32 { if (v < 0) { return -v; } return v; }
+
+fn colorName(c: Color) -> StringView {
+    match (c) {
+        Color.Red => { return "red"; }
+        Color.Green => { return "green"; }
+        Color.Blue => { return "blue"; }
+    }
+}
+
+/// Safety: the pointers passed to C are made from live locals and arrays that outlive each call.
+fn main() -> i32 {
+    Console.writeLine(unsafe { c_entry(7) });
+    var points = [Point { x: 1, y: 2 }, Point { x: -3, y: 4 }];
+    Console.writeLine(unsafe { c_total(borrow points[0] as *Point, points.length) });
+    var segment = Segment { from: points[0], to: points[1], label: 0 as *mut CChar, length: 0 };
+    unsafe { c_fill(borrow mut segment as *mut Segment, "segment\0".ptr as *CChar); }
+    Console.writeLine(segment.from.x + segment.to.y);
+    Console.writeLine(segment.length);
+    Console.writeLine(colorName(next(Color.Blue)));
+    Console.writeLine(length(Point { x: 5, y: -6 }));
+    Console.writeLine("checking a bad enum value from C");
+    let bad = unsafe { c_bad_color() };
+    Console.writeLine(colorName(bad));
+    return 0;
+}
+// expect-stdout: 1263
+// expect-stdout: 30
+// expect-stdout: 13
+// expect-stdout: 7
+// expect-stdout: red
+// expect-stdout: 11
+// expect-stdout: checking a bad enum value from C

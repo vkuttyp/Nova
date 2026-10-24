@@ -9,13 +9,17 @@ namespace Nova.Compiler.Nir;
 
 public sealed class NirProgram
 {
-    internal NirProgram(ImmutableArray<NirFunction> functions, ImmutableArray<NovaType> structs)
+    internal NirProgram(ImmutableArray<NirFunction> functions, ImmutableArray<NovaType> structs, ImmutableArray<HirFunction> externs = default)
     {
         Functions = functions;
         Structs = structs;
+        Externs = externs.IsDefault ? [] : externs;
     }
 
     public ImmutableArray<NirFunction> Functions { get; }
+
+    /// <summary>The <c>extern "C"</c> functions, in declaration order: defined in C, so they have no NIR (type-system.md §28.2).</summary>
+    public ImmutableArray<HirFunction> Externs { get; }
 
     /// <summary>Struct types in declaration order.</summary>
     public ImmutableArray<NovaType> Structs { get; }

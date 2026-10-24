@@ -213,6 +213,7 @@ internal sealed class TypeChecker
                 }
             }
         }
+        ProcessTypeAttributes();
         foreach (var unit in _units)
         {
             _source = unit.Source;
@@ -221,6 +222,7 @@ internal sealed class TypeChecker
                 Declare(item);
             }
         }
+        ProcessFunctionAttributes();
         ProcessImpls();
         // Instantiations made while resolving members are resolved too (§20.4).
         for (int s = 0, e = 0; s < _structs.Count || e < _enums.Count;)
@@ -238,6 +240,7 @@ internal sealed class TypeChecker
         CheckStructRecursion();
         ComputeCopyAndDrop();
         _copyKnown = true;
+        CheckForeignInterfaces();
         foreach (var (element, length, span, source) in _pendingElements)
         {
             _source = source;
@@ -253,6 +256,10 @@ internal sealed class TypeChecker
         for (var i = 0; i < _functions.Count; i++)
         {
             var function = _functions[i];
+            if (function.IsExtern)
+            {
+                continue; // defined in C (§28.2)
+            }
             if (function.IsInstantiation)
             {
                 // Its generic version reports (§20.3); a scoped type argument the body cannot take is N0274.
@@ -347,6 +354,11 @@ internal sealed class TypeChecker
         if (item is ImplDecl impl)
         {
             _impls.Add((impl, _source)); // processed once every item is declared (§21.1)
+            return;
+        }
+        if (item is ExternBlock block)
+        {
+            DeclareExternBlock(block);
             return;
         }
         var name = item.Name.Name;
@@ -1450,7 +1462,7 @@ internal sealed class TypeChecker
         }
     }
 
-    private NovaType ResolveType(TypeSyntax syntax, bool allowVoid, bool allowSources = false)
+    private NovaType ResolveType(TypeSyntax syntax, bool allowVoid, bool allowSources = false, bool allowCChar = false)
     {
         if (syntax is OptionalType optional)
         {
@@ -1485,7 +1497,7 @@ internal sealed class TypeChecker
         }
         if (syntax is PointerType pointer)
         {
-            var pointee = ResolveType(pointer.Pointee, allowVoid: true);
+            var pointee = ResolveType(pointer.Pointee, allowVoid: true, allowCChar: true);
             if (pointee.IsBottom)
             {
                 return _types.Error;
@@ -1643,6 +1655,11 @@ internal sealed class TypeChecker
         if (type.Kind == TypeKind.Void && !allowVoid)
         {
             Error(DiagnosticCodes.VoidNotAllowed, named.Span, "'void' can only be used as a function return type");
+            return _types.Error;
+        }
+        if (type.Kind == TypeKind.CChar && !allowCChar)
+        {
+            Error(DiagnosticCodes.InvalidPointee, named.Span, "'CChar' is C's 'char' and can only be pointed to: use '*CChar' (type-system.md §28.3)");
             return _types.Error;
         }
         return type;
@@ -2540,6 +2557,289 @@ internal sealed class TypeChecker
         {
             _source = main.Source;
             Error(DiagnosticCodes.InvalidMain, main.Syntax.Name.Span, "'main' cannot be unsafe; put the unsafe code in an 'unsafe { ... }' block");
+        }
+    }
+
+    // ---- C interoperability (type-system.md §28) ----
+
+    private static readonly HashSet<string> s_cKeywords =
+    [
+        "auto", "break", "case", "char", "const", "continue", "default", "do", "double", "else", "enum", "extern", "float", "for",
+        "goto", "if", "inline", "int", "long", "register", "restrict", "return", "short", "signed", "sizeof", "static", "struct",
+        "switch", "typedef", "union", "unsigned", "void", "volatile", "while", "bool", "true", "false", "main", "NULL",
+        "alignas", "alignof", "noreturn", "static_assert", "thread_local",
+    ];
+
+    /// <summary>A C name Nova may define or declare (§28.2): an identifier, no keyword, not reserved by C or by Nova's C (c-backend §2.1).</summary>
+    private bool CheckCName(string name, TextSpan span, string what)
+    {
+        var valid = name.Length > 0 && (char.IsAsciiLetter(name[0]) || name[0] == '_') && name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
+        var reason = !valid ? "is not a C identifier"
+            : s_cKeywords.Contains(name) ? "is a C keyword or a name C programs depend on"
+            : name.StartsWith("__", StringComparison.Ordinal) || (name.Length > 1 && name[0] == '_' && char.IsAsciiLetterUpper(name[1])) ? "is reserved by the C standard"
+            : name.StartsWith("nova_", StringComparison.Ordinal) || name.StartsWith("nv_", StringComparison.Ordinal) || name.StartsWith("NV_", StringComparison.Ordinal)
+              || (name.Length > 2 && name.StartsWith("nv", StringComparison.Ordinal) && char.IsAsciiLetterUpper(name[2]))
+                ? "is reserved for the Nova runtime and generated code (c-backend.md §2.1)"
+            : null;
+        if (reason is not null)
+        {
+            Error(DiagnosticCodes.InvalidCName, span, $"{what} '{name}' {reason} (type-system.md §28.2)");
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>The type of an integer named in <c>@repr(…)</c>; null if the name is not one.</summary>
+    private NovaType? ReprInteger(string name) => name switch
+    {
+        "u8" => _types.U8, "u16" => _types.U16, "u32" => _types.U32, "u64" => _types.U64,
+        "i8" => _types.I8, "i16" => _types.I16, "i32" => _types.I32, "i64" => _types.I64,
+        _ => null,
+    };
+
+    private void AttributeError(AttributeSyntax attribute, string message) =>
+        Error(DiagnosticCodes.InvalidAttribute, attribute.Span, $"{message} (type-system.md §28.1)");
+
+    /// <summary>Reports repeated attributes, and returns those named <paramref name="known"/>; the rest are N0290.</summary>
+    private List<AttributeSyntax> KnownAttributes(ImmutableArray<AttributeSyntax> attributes, string where, params string[] known)
+    {
+        var seen = new HashSet<string>();
+        var result = new List<AttributeSyntax>();
+        foreach (var attribute in attributes)
+        {
+            var name = Name(attribute.Name.Name);
+            if (!seen.Add(name))
+            {
+                AttributeError(attribute, $"'@{name}' is given twice");
+            }
+            else if (!known.Contains(name))
+            {
+                AttributeError(attribute, name is "export" or "repr" or "effects"
+                    ? $"'@{name}' cannot be used on {where}"
+                    : $"unknown attribute '@{name}'");
+            }
+            else
+            {
+                result.Add(attribute);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>`@repr` on structs and enums, before any layout is computed (§28.5).</summary>
+    private void ProcessTypeAttributes()
+    {
+        foreach (var unit in _units)
+        {
+            _source = unit.Source;
+            foreach (var item in unit.Items)
+            {
+                switch (item)
+                {
+                    case StructDecl s:
+                        foreach (var repr in KnownAttributes(s.Attributes, "a struct", "repr"))
+                        {
+                            if (repr.Arguments is not [NameExpr { Name: var c }] || Name(c.Name) != "C")
+                            {
+                                AttributeError(repr, "a struct takes '@repr(C)'");
+                            }
+                            else if (!s.TypeParameters.IsEmpty || !s.RegionParameters.IsEmpty)
+                            {
+                                AttributeError(repr, "a generic struct cannot be '@repr(C)'");
+                            }
+                            else if (_items.GetValueOrDefault(s.Name.Name) is StructEntry entry && entry.Decl == s)
+                            {
+                                entry.Type.Struct!.IsReprC = true;
+                            }
+                        }
+                        break;
+                    case EnumDecl e:
+                        foreach (var repr in KnownAttributes(e.Attributes, "an enum", "repr"))
+                        {
+                            var integer = repr.Arguments is [NameExpr { Name: var n }] ? ReprInteger(Name(n.Name)) : null;
+                            if (integer is null)
+                            {
+                                AttributeError(repr, "an enum takes '@repr(u8)', '@repr(u16)', '@repr(u32)', '@repr(u64)' or a signed 'i' form");
+                            }
+                            else if (!e.TypeParameters.IsEmpty || !e.RegionParameters.IsEmpty)
+                            {
+                                AttributeError(repr, "a generic enum cannot have '@repr'");
+                            }
+                            else if (e.Variants.Any(v => !v.Payload.IsEmpty))
+                            {
+                                AttributeError(repr, "only an enum without payloads can have '@repr'");
+                            }
+                            else if (!integer.Fits(e.Variants.Length - 1))
+                            {
+                                AttributeError(repr, $"'{integer}' cannot hold the index of each of the {e.Variants.Length} variants");
+                            }
+                            else if (_items.GetValueOrDefault(e.Name.Name) is EnumEntry entry && entry.Decl == e)
+                            {
+                                entry.Type.Enum!.Repr = integer;
+                            }
+                        }
+                        break;
+                    case FunctionDecl or ExternBlock:
+                        break; // after they are declared
+                    default:
+                        KnownAttributes(item.Attributes, "this declaration");
+                        break;
+                }
+            }
+        }
+    }
+
+    /// <summary>`extern "C" { … }`: each function is declared like a top-level one, without a body (§28.2).</summary>
+    private void DeclareExternBlock(ExternBlock block)
+    {
+        KnownAttributes(block.Attributes, "an 'extern' block");
+        if (block.Abi != "C")
+        {
+            Error(DiagnosticCodes.InvalidAttribute, block.AbiSpan, $"unsupported ABI \"{block.Abi}\": only extern \"C\" exists (type-system.md §28.2)");
+            return;
+        }
+        foreach (var fn in block.Functions)
+        {
+            KnownAttributes(fn.Attributes, "a C function", "effects");
+            var problem = fn.Body is not null || fn.ExpressionBody is not null ? "cannot have a body; it is defined in C"
+                : fn.Receiver is not null ? "cannot have a 'this' parameter"
+                : !fn.TypeParameters.IsEmpty || !fn.RegionParameters.IsEmpty ? "cannot be generic"
+                : fn.IsUnsafe ? "is unsafe to call already; leave out 'unsafe'"
+                : null;
+            if (problem is not null)
+            {
+                Error(DiagnosticCodes.InvalidAttribute, fn.Name.Span, $"C function '{Name(fn.Name.Name)}' {problem} (type-system.md §28.2)");
+                continue;
+            }
+            Declare(fn);
+        }
+    }
+
+    /// <summary>`@export` and `@effects` on functions (§28.1, §28.4).</summary>
+    private void ProcessFunctionAttributes()
+    {
+        foreach (var unit in _units)
+        {
+            _source = unit.Source;
+            foreach (var fn in unit.Items.OfType<FunctionDecl>())
+            {
+                foreach (var export in KnownAttributes(fn.Attributes, "a function", "export", "effects").Where(a => Name(a.Name.Name) == "export"))
+                {
+                    var symbol = export.Arguments switch
+                    {
+                        [] => Name(fn.Name.Name),
+                        [StringLiteralExpr text] => text.Value,
+                        _ => null,
+                    };
+                    if (symbol is null)
+                    {
+                        AttributeError(export, "'@export' takes nothing or the C symbol as a string: '@export(\"name\")'");
+                    }
+                    else if (Name(fn.Name.Name) == "main")
+                    {
+                        AttributeError(export, "'main' cannot be exported; the generated C 'main' calls it");
+                    }
+                    else if (_items.GetValueOrDefault(fn.Name.Name) is GenericFunctionEntry)
+                    {
+                        AttributeError(export, "a generic function cannot be exported");
+                    }
+                    else if (_items.GetValueOrDefault(fn.Name.Name) is HirFunction function && function.Syntax == fn)
+                    {
+                        function.ExportName = symbol;
+                    }
+                }
+            }
+            foreach (var s in unit.Items.OfType<StructDecl>())
+            {
+                foreach (var member in s.Functions)
+                {
+                    KnownAttributes(member.Attributes, "a method");
+                }
+            }
+        }
+    }
+
+    /// <summary>Can a value of this type cross the C boundary? (§28.3) A `@repr` enum only by value, not inside a struct.</summary>
+    private static bool IsFfiSafe(NovaType type, bool isResult, bool inStruct = false) => type.Kind switch
+    {
+        TypeKind.Integer or TypeKind.Bool or TypeKind.Error => true,
+        TypeKind.RawPointer => IsCPointee(type.Pointee!),
+        TypeKind.Void => isResult,
+        TypeKind.Struct => type.Struct!.IsReprC,
+        TypeKind.Enum => type.Enum!.Repr is not null && !inStruct,
+        _ => false,
+    };
+
+    /// <summary>A pointee C can name: an integer, bool, void, CChar, a @repr(C) struct, or such a pointer (§28.3).</summary>
+    private static bool IsCPointee(NovaType type) => type.Kind switch
+    {
+        TypeKind.Integer or TypeKind.Bool or TypeKind.Void or TypeKind.CChar or TypeKind.Error => true,
+        TypeKind.Struct => type.Struct!.IsReprC,
+        TypeKind.RawPointer => IsCPointee(type.Pointee!),
+        _ => false,
+    };
+
+    private void CheckSignatureIsFfiSafe(HirFunction function, string what)
+    {
+        var syntax = function.Syntax;
+        for (var i = 0; i < syntax.Parameters.Length; i++)
+        {
+            var type = function.Parameters[i].Type;
+            if (!IsFfiSafe(type, isResult: false))
+            {
+                Error(DiagnosticCodes.NotFfiSafe, syntax.Parameters[i].Type.Span,
+                    $"{what} cannot take a '{type}': only integers, bool, raw pointers, @repr(C) structs and @repr enums cross to C (type-system.md §28.3)");
+            }
+        }
+        if (!IsFfiSafe(function.ReturnType, isResult: true))
+        {
+            Error(DiagnosticCodes.NotFfiSafe, syntax.ReturnType?.Span ?? syntax.Name.Span,
+                $"{what} cannot return a '{function.ReturnType}': only integers, bool, raw pointers, @repr(C) structs, @repr enums and void cross to C (type-system.md §28.3)");
+        }
+    }
+
+    /// <summary>Once every type is resolved: FFI-safe signatures and fields, and valid, unique C names (§28.2–§28.5).</summary>
+    private void CheckForeignInterfaces()
+    {
+        var cNames = new Dictionary<string, TextSpan>(StringComparer.Ordinal);
+        void Claim(string name, TextSpan span, string what)
+        {
+            if (!cNames.TryAdd(name, span))
+            {
+                Error(DiagnosticCodes.DuplicateItem, span, $"the C name '{name}' of {what} is already used by another C function or export (type-system.md §28.2)");
+            }
+        }
+        foreach (var entry in _structs.Where(s => s.Type.Struct!.IsReprC))
+        {
+            _source = entry.Source;
+            CheckCName(Name(entry.Decl.Name.Name), entry.Decl.Name.Span, "the C struct name");
+            foreach (var (field, syntax) in entry.Type.Struct!.Fields.Zip(entry.Decl.Fields))
+            {
+                field.HasNovaCName = true;
+                CheckCName(Name(field.Name), syntax.Name.Span, "the C member name");
+                if (!IsFfiSafe(field.Type, isResult: false, inStruct: true))
+                {
+                    Error(DiagnosticCodes.NotFfiSafe, syntax.Type.Span,
+                        $"a @repr(C) struct cannot hold a '{field.Type}': only integers, bool, raw pointers to C types and @repr(C) structs have C layouts (type-system.md §28.5)");
+                }
+            }
+        }
+        foreach (var entry in _enums.Where(e => e.Type.Enum!.Repr is not null))
+        {
+            _source = entry.Source;
+            CheckCName(Name(entry.Decl.Name.Name), entry.Decl.Name.Span, "the C type name");
+        }
+        foreach (var function in _functions.Where(f => f.IsExtern || f.ExportName is not null))
+        {
+            _source = function.Source;
+            var name = function.ExportName ?? Name(function.Name);
+            var what = function.IsExtern ? $"C function '{name}'" : $"exported function '{Name(function.Name)}'";
+            var span = function.IsExtern ? function.Syntax.Name.Span : function.Syntax.Attributes.First(a => Name(a.Name.Name) == "export").Span;
+            if (CheckCName(name, span, function.IsExtern ? "the C function name" : "the exported symbol"))
+            {
+                Claim(name, span, what);
+            }
+            CheckSignatureIsFfiSafe(function, what);
         }
     }
 
@@ -4270,9 +4570,9 @@ internal sealed class TypeChecker
             return new HirBuiltinCall(function, [pointer], _types.Bool, call.Span);
         }
         var unsafeOk = RequireUnsafe(call.Span, $"'{name}' through a raw pointer");
-        if (pointee.Kind == TypeKind.Void)
+        if (pointee.Kind is TypeKind.Void or TypeKind.CChar)
         {
-            Error(DiagnosticCodes.InvalidPointerOperation, call.Span, $"'{name}' needs a typed pointer, but '{type}' points to 'void'; cast it first (type-system.md §27.3)");
+            Error(DiagnosticCodes.InvalidPointerOperation, call.Span, $"'{name}' needs a typed pointer, but '{type}' points to '{pointee}'; cast it first (type-system.md §27.3)");
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
         }
@@ -4337,9 +4637,9 @@ internal sealed class TypeChecker
         }
         var pointee = pointer.Type.Pointee!;
         var isMutable = name == "toBorrowMut" || owner == Builtin.SliceMut;
-        if (pointee.Kind == TypeKind.Void)
+        if (pointee.Kind is TypeKind.Void or TypeKind.CChar)
         {
-            Error(DiagnosticCodes.InvalidPointerOperation, call.Arguments[0].Span, $"'{owner}.{name}' needs a typed pointer, but '{pointer.Type}' points to 'void'; cast it first");
+            Error(DiagnosticCodes.InvalidPointerOperation, call.Arguments[0].Span, $"'{owner}.{name}' needs a typed pointer, but '{pointer.Type}' points to '{pointee}'; cast it first");
             return ErrorResult(call.Span);
         }
         if (isMutable && !pointer.Type.IsMutablePointer)
@@ -4431,6 +4731,10 @@ internal sealed class TypeChecker
         if (function.Syntax.IsUnsafe)
         {
             RequireUnsafe(call.Span, $"calling unsafe function '{displayName}'");
+        }
+        else if (function.IsExtern)
+        {
+            RequireUnsafe(call.Span, $"calling C function '{displayName}'");
         }
         if (call.Arguments.Length != parameters.Length)
         {

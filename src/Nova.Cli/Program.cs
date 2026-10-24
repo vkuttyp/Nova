@@ -12,12 +12,13 @@ namespace Nova.Cli;
 internal static class Program
 {
     private const string Usage = """
-        usage: novac <command> [options] <file.nova>... [-- <program arguments>]
+        usage: novac <command> [options] <file.nova>... [<file.c>...] [-- <program arguments>]
 
         commands:
           parse    lex and parse the files, report syntax errors
           check    parse and type-check the files as one package
-          build    compile the package to C, and by default to an executable
+          build    compile the package to C, and by default to an executable; .c files are compiled
+                   and linked with it (type-system.md §28.6)
           run      run the package with the NIR reference interpreter (--interp)
         options:
           --dump-ast        (parse) print the AST of each file
@@ -38,6 +39,9 @@ internal static class Program
     private sealed class Options
     {
         public List<string> Files { get; } = [];
+
+        /// <summary>C source files given on the command line, by file name.</summary>
+        public List<(string Name, string Content)> CSources { get; } = [];
         public bool Dump { get; set; }
         public string Emit { get; set; } = "exe";
         public string? Output { get; set; }
@@ -79,6 +83,16 @@ internal static class Program
         {
             try
             {
+                if (file.EndsWith(".c", StringComparison.Ordinal))
+                {
+                    // C sources go to the C compiler with the generated code (type-system.md §28.6).
+                    if (options.CSources.Any(c => c.Name == Path.GetFileName(file)))
+                    {
+                        return Fail($"two C files are named '{Path.GetFileName(file)}'");
+                    }
+                    options.CSources.Add((Path.GetFileName(file), File.ReadAllText(file)));
+                    continue;
+                }
                 sources.Add(new SourceText(SourceText.SourcePath(file, Environment.CurrentDirectory), File.ReadAllText(file)));
             }
             catch (IOException e)
@@ -87,6 +101,10 @@ internal static class Program
             }
         }
 
+        if (sources.Count == 0)
+        {
+            return Fail("no Nova input files");
+        }
         return command switch
         {
             "parse" => Report(Parse(sources, options.Dump)),
@@ -228,8 +246,10 @@ internal static class Program
             return Report(compilation.Diagnostics);
         }
 
-        var program = CBackend.Generate(compilation, requireMain: options.Emit == "exe", out var nir,
-            new CEmitOptions(LineDirectives: options.LineDirectives, Structured: !options.Flat, Placement: options.Placement));
+        // With C files, `main` may be in C (type-system.md §28.6).
+        var program = CBackend.Generate(compilation, requireMain: options.Emit == "exe" && options.CSources.Count == 0, out var nir,
+            new CEmitOptions(LineDirectives: options.LineDirectives, Structured: !options.Flat, Placement: options.Placement))
+            ?.WithCSources(options.CSources);
         if (program is null)
         {
             return Report(compilation.Diagnostics);

@@ -275,6 +275,14 @@ violations that stay in bounds.
   When the interpreter's output streams are the process's own, the child inherits them. When the
   caller captures output (tests), the child's output is copied into the captured streams.
 
+**C code (M8b).** The interpreter runs no C. A call to an `extern "C"` function is interpreted only
+for this model of the C library, used when the declaration's parameter and result types have the
+expected shape (integers, `bool` or pointers of the right widths):
+`strlen` (reads bytes up to a zero byte, each access checked), `puts` (writes the bytes and a
+newline to standard output, returns 0), `abs`, `memcmp`, `memcpy` and `memset` (checked accesses;
+`memcpy` with overlapping ranges is a fault, as it is undefined in C). Any other extern call is the
+fault `unsupported: call to C function '<name>'`. Exported functions are ordinary Nova functions.
+
 ### 5.5a Placement and the drop trace (M5)
 
 - `InterpreterOptions.Placement` applies the same `PlacementAnalysis` as the C backend. A

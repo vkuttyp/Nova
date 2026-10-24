@@ -32,7 +32,18 @@ public enum Visibility
     Private,
 }
 
-public abstract record Item(Visibility Visibility, Identifier Name, TextSpan Span) : SyntaxNode(Span);
+public abstract record Item(Visibility Visibility, Identifier Name, TextSpan Span) : SyntaxNode(Span)
+{
+    /// <summary>The attributes before the item (type-system.md §28.1).</summary>
+    public ImmutableArray<AttributeSyntax> Attributes { get; init; } = [];
+}
+
+/// <summary><c>@name</c> or <c>@name(arguments)</c>; each argument is a name, a string or an integer literal.</summary>
+public sealed record AttributeSyntax(Identifier Name, ImmutableArray<Expr> Arguments, bool HasParentheses, TextSpan Span) : SyntaxNode(Span);
+
+/// <summary><c>extern "C" { fn … ; }</c> (type-system.md §28.2). <see cref="Item.Name"/> is a placeholder.</summary>
+public sealed record ExternBlock(Visibility Visibility, Identifier Name, string Abi, TextSpan AbiSpan, ImmutableArray<FunctionDecl> Functions, TextSpan Span)
+    : Item(Visibility, Name, Span);
 
 /// <summary>
 /// A function. Exactly one of <see cref="Body"/> and <see cref="ExpressionBody"/> is set.
@@ -59,6 +70,9 @@ public sealed record FunctionDecl(
 
     /// <summary>The doc comment before the declaration (grammar.md §1.2), or null.</summary>
     public string? Doc { get; init; }
+
+    /// <summary>Declared in an <c>extern "C"</c> block: defined in C, no body (type-system.md §28.2).</summary>
+    public bool IsExtern { get; init; }
 }
 
 /// <summary>A type parameter <c>T</c>, with the interface bounds of <c>T: I + J</c> (§21; empty without).</summary>

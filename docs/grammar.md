@@ -89,7 +89,11 @@ CompilationUnit = NamespaceDecl? Item* EOF
 NamespaceDecl   = 'namespace' QualifiedName ';'
 QualifiedName   = Identifier ('.' Identifier)*
 
-Item       = Visibility? (FunctionDecl | ConstDecl | StructDecl | EnumDecl)
+Item       = Attribute* Visibility? (FunctionDecl | ConstDecl | StructDecl | EnumDecl | ExternBlock)
+Attribute  = '@' Identifier ('(' AttributeArg (',' AttributeArg)* ')')?   (* M8b; type-system.md §28.1 *)
+AttributeArg = Identifier | StringLiteral | IntLiteral
+ExternBlock = 'extern' StringLiteral '{' ExternFn* '}'                   (* M8b; §28.2 *)
+ExternFn   = Attribute* Visibility? 'fn' Identifier '(' (Param (',' Param)* ','?)? ')' ('->' Type)? ';'
 TypeParams = '<' TypeParam (',' TypeParam)* '>'               (* M6a; type-system.md §20 *)
 InterfaceDecl = 'interface' Identifier TypeParams? '{' MethodSig* '}'   (* M6b; §21 *)
 MethodSig  = 'fn' Identifier '(' Receiver (',' Param)* ')' ('->' Type)? ';'

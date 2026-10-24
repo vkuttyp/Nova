@@ -160,6 +160,7 @@ public sealed class Parser
     }
 
     private static bool IsItemStart(TokenKind kind) => kind is TokenKind.FnKeyword or TokenKind.UnsafeKeyword or TokenKind.ConstKeyword
+        or TokenKind.At or TokenKind.ExternKeyword
         or TokenKind.StructKeyword or TokenKind.EnumKeyword or TokenKind.InterfaceKeyword or TokenKind.ImplKeyword
         or TokenKind.PublicKeyword or TokenKind.InternalKeyword or TokenKind.PrivateKeyword;
 
@@ -199,6 +200,90 @@ public sealed class Parser
 
     private Item? ParseItem()
     {
+        var doc = _stream.Docs.GetValueOrDefault(_pos); // before the attributes, if any (grammar.md §1.2)
+        var attributes = ParseAttributes();
+        var item = ParseItemCore();
+        return item switch
+        {
+            null => null,
+            FunctionDecl fn => fn with { Attributes = attributes, Doc = doc ?? fn.Doc },
+            _ => item with { Attributes = attributes },
+        };
+    }
+
+    /// <summary><c>('@' name ('(' argument (',' argument)* ')')?)*</c> (type-system.md §28.1).</summary>
+    private ImmutableArray<AttributeSyntax> ParseAttributes()
+    {
+        var attributes = ImmutableArray.CreateBuilder<AttributeSyntax>();
+        while (At(TokenKind.At))
+        {
+            var start = Advance().Span.Start;
+            var name = ParseIdentifier();
+            var arguments = ImmutableArray.CreateBuilder<Expr>();
+            var hasParentheses = Eat(TokenKind.OpenParen);
+            if (hasParentheses)
+            {
+                while (!At(TokenKind.CloseParen) && !At(TokenKind.EndOfFile))
+                {
+                    if (At(TokenKind.Identifier) || At(TokenKind.StringLiteral) || At(TokenKind.IntLiteral))
+                    {
+                        arguments.Add(ParsePrimary());
+                    }
+                    else
+                    {
+                        Error(DiagnosticCodes.ExpectedToken, Current.Span,
+                            $"expected a name, a string or an integer in an attribute, found {TokenFacts.Describe(Current.Kind)}");
+                        break;
+                    }
+                    if (!Eat(TokenKind.Comma))
+                    {
+                        break;
+                    }
+                }
+                Expect(TokenKind.CloseParen);
+            }
+            attributes.Add(new AttributeSyntax(name, arguments.ToImmutable(), hasParentheses, SpanFrom(start)));
+        }
+        return attributes.ToImmutable();
+    }
+
+    /// <summary><c>extern "C" { (attributes visibility? fn …;)* }</c> (type-system.md §28.2).</summary>
+    private ExternBlock ParseExternBlock(Visibility visibility, int start)
+    {
+        Expect(TokenKind.ExternKeyword);
+        var abiToken = Current;
+        var abi = "";
+        if (At(TokenKind.StringLiteral))
+        {
+            abi = _stream.Strings[Advance().Data];
+        }
+        else
+        {
+            Expect(TokenKind.StringLiteral);
+        }
+        var functions = ImmutableArray.CreateBuilder<FunctionDecl>();
+        Expect(TokenKind.OpenBrace);
+        _parsingSignatures = true;
+        while (AtFunction || At(TokenKind.At) || At(TokenKind.PublicKeyword) || At(TokenKind.InternalKeyword) || At(TokenKind.PrivateKeyword))
+        {
+            var functionStart = Current.Span.Start;
+            var attributes = ParseAttributes();
+            var functionVisibility = ParseVisibility();
+            if (!AtFunction)
+            {
+                Expect(TokenKind.FnKeyword);
+                break;
+            }
+            functions.Add(ParseFunction(functionVisibility, functionStart) with { Attributes = attributes, IsExtern = true });
+        }
+        _parsingSignatures = false;
+        Expect(TokenKind.CloseBrace);
+        var name = new Identifier(_symbols.Intern("<extern>"), abiToken.Span) { IsMissing = true };
+        return new ExternBlock(visibility, name, abi, abiToken.Span, functions.ToImmutable(), SpanFrom(start));
+    }
+
+    private Item? ParseItemCore()
+    {
         var start = Current.Span.Start;
         var visibility = Current.Kind switch
         {
@@ -235,6 +320,10 @@ public sealed class Parser
         if (At(TokenKind.ImplKeyword))
         {
             return ParseImpl(visibility, start);
+        }
+        if (At(TokenKind.ExternKeyword))
+        {
+            return ParseExternBlock(visibility, start);
         }
 
         Error(DiagnosticCodes.ExpectedItem, Current.Span,

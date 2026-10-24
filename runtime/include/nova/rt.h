@@ -50,7 +50,8 @@ typedef enum nv_panic_kind {
     NV_PANIC_UNWRAP = 7,
     NV_PANIC_SCRATCH = 8,
     NV_PANIC_UNWRAP_NULL = 9,
-    NV_PANIC_STR_BOUNDARY = 10
+    NV_PANIC_STR_BOUNDARY = 10,
+    NV_PANIC_FFI_ENUM = 11
 } nv_panic_kind;
 
 /* A Nova source location; `file` points to a string in the generated program's file table. */

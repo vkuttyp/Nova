@@ -27,7 +27,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **M6** ✅ 2026-10-23 Generics & collections (ADR 0005) | Monomorphisation, interfaces, `Vector`, `String`, `StringView`, `StableVector`, `SlotMap`, iterators. OD-3 design | Invalidation compile-fail tests. Property tests of collections against a model. Ex9, Ex10, Ex12, Ex13 |
 | **C3** ✅ 2026-10-23 Collections & syscalls ([report](cosmoos/c3-report.md)) | Files, sockets, processes in Profile A; a useful utility (candidate: a `wc`/`sha256sum`-class tool or a hexdump) | The utility runs in QEMU on both arches, with output compared to the C/BusyBox equivalent on a test corpus |
 | **M7** ✅ 2026-10-24 Production C backend ([plan](milestone-7.md)) | Source maps, structured C, Csmith-style fuzzer, NIR reference interpreter, MSVC best-effort | 24 h fuzz campaign with no miscompile across clang/gcc × O0/O2. Interpreter agrees with native output |
-| **M8** Systems/freestanding ([plan](milestone-8.md); 8a unsafe and raw pointers ✅ 2026-10-24) | core library split, FFI, raw pointers, MMIO types, custom entry points, `freestanding` profile | Freestanding object with no libc: verified by `llvm-nm -u` allowlist |
+| **M8** Systems/freestanding ([plan](milestone-8.md); 8a unsafe and raw pointers, 8b C FFI ✅ 2026-10-24) | core library split, FFI, raw pointers, MMIO types, custom entry points, `freestanding` profile | Freestanding object with no libc: verified by `llvm-nm -u` allowlist |
 | **C4** Freestanding in CosmoOS | Nova kernel-profile object built with kernel flags | Symbols, relocations and sections checked against the module loader allowlist. Frame sizes ≤ 2 KiB. No FP registers (disassembly check) |
 | **C5** Kernel memory adapter | `KernelHeap`, `ObjectCache<T>` bindings; isolated test component | In-kernel selftest: allocation, exhaustion (fault-injected), ownership transfer, cleanup. No allocator modifications |
 | **C6** Controlled kernel component | One small, non-critical component reimplemented beside its C original (candidate chosen with the owner) | Same test suite passes for both. Performance compared (measured, reproducible) |
@@ -110,8 +110,9 @@ outputs and identical drop traces.
 
 **M8, systems and freestanding support, is in progress** (`milestone-8.md`, ADR 0007: a hybrid core
 library). 8a is done (2026-10-24): `unsafe` blocks, expressions and functions, raw pointers `*T` and
-`*mut T`, the `Safety:` rule, and interpreter faults for invalid accesses through pointers.
+`*mut T`, the `Safety:` rule, and interpreter faults for invalid accesses through pointers. 8b is
+done (2026-10-24): `extern "C"` declarations, `@export`, `@repr(C)` structs and `@repr` enums, a
+generated `nova_exports.h`, and C files in a build.
 
-Next: **8b**, the C FFI (`extern "C"`, `@export`, `@repr(C)`, function pointers). Then 8c (profiles,
-the core library, freestanding objects), 8d (entry points, MMIO), 8e (acceptance); C4 needs all of
-them. In parallel, when the owner wants it: propose the S1 in-tree port for C1 (OD-20).
+Next: **8c** (profiles, the core library, freestanding objects). Then 8d (entry points, C function
+pointers, MMIO) and 8e (acceptance); C4 needs all of them. In parallel, when the owner wants it: propose the S1 in-tree port for C1 (OD-20).

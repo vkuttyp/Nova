@@ -1,0 +1,123 @@
+// C interoperability rules (type-system.md §28): N0290, N0291, N0292, and the codes FFI reuses.
+extern "C" {
+    fn good(x: i32, p: *mut u8, n: usize) -> isize;
+    fn takesSlice(s: Slice<u8>); // error[N0291]
+    fn returnsBox() -> Box<i32>; // error[N0291]
+    fn takesPlain(p: Plain); // error[N0291]
+    fn pointsAtPlain(p: *Plain); // error[N0291]
+    fn pointsAtEnum(p: *Mode); // error[N0291]
+    fn withBody() -> i32 { return 1; } // error[N0290]
+    fn generic<T>(x: i32); // error[N0290]
+    unsafe fn alreadyUnsafe(); // error[N0290]
+    @export fn exportedExtern(); // error[N0290]
+    fn nova_alloc(); // error[N0292]
+    fn nvF_main(); // error[N0292]
+    fn __reserved(); // error[N0292]
+    fn int(); // error[N0292]
+    fn takesCChar(c: CChar); // error[N0281]
+}
+
+extern "C" {
+    fn good(); // error[N0201]
+}
+
+extern "Rust" { // error[N0290]
+    fn other();
+}
+
+struct Plain { a: i32; }
+
+@repr(C)
+struct Fine { a: u8; b: *mut Fine; c: Inner; flag: bool; }
+
+@repr(C)
+struct Inner { v: u64; }
+
+@repr(C)
+struct HasSlice { s: Slice<u8>; } // error[N0270]
+
+@repr(C)
+struct HasPlain { p: Plain; } // error[N0291]
+
+@repr(C)
+struct HasEnum { m: Mode; } // error[N0291]
+
+@repr(C)
+struct HasArray { a: [u8; 4]; } // error[N0291]
+
+@repr(C)
+struct default { x: i32; } // error[N0292]
+
+@repr(C)
+struct BadMember { switch: i32; } // error[N0292]
+
+@repr(C) // error[N0290]
+struct Generic<T> { v: T; }
+
+@repr(u8) // error[N0290]
+struct WrongRepr { v: i32; }
+
+@repr(i32)
+enum Mode { Off, On }
+
+@repr(u8) // error[N0290]
+enum WithPayload { A(i32), B }
+
+@repr(C) // error[N0290]
+enum CEnum { A }
+
+@repr(usize) // error[N0290]
+enum SizeEnum { A }
+
+@repr(u8) @repr(u8) // error[N0290]
+enum Twice { A }
+
+@inline // error[N0290]
+fn inlined() {}
+
+@export("geo_ok")
+fn ok(a: i32, m: Mode, f: Fine) -> Mode => m;
+
+@export("geo_ok") // error[N0201]
+fn again() {}
+
+@export // error[N0292]
+fn nova_thing() {}
+
+@export("not a name") // error[N0292]
+fn spaced() {}
+
+@export(42) // error[N0290]
+fn numbered() {}
+
+@export
+fn takesView(s: StringView) {} // error[N0291]
+
+@export
+fn returnsOptional() -> i32? => null; // error[N0291]
+
+@export // error[N0290]
+fn generic2<T>(x: T) {}
+
+@export // error[N0290]
+fn main() {}
+
+fn callsC() -> isize {
+    var buffer = [0u8; 4];
+    return good(1, borrow mut buffer[0] as *mut u8, 4); // error[N0280]
+}
+
+/// Safety: the call is inside an unsafe block.
+fn callsCUnsafely() -> isize {
+    var buffer = [0u8; 4];
+    return unsafe { good(1, borrow mut buffer[0] as *mut u8, 4) };
+}
+
+fn exportsAreSafe() -> Mode => ok(1, Mode.On, Fine { a: 1, b: 0 as *mut Fine, c: Inner { v: 2 }, flag: true });
+
+/// Safety: no pointer is used.
+fn cchars(p: *CChar) -> u8 {
+    let bytes = p as *u8;
+    unsafe { let c = p.read(); } // error[N0282]
+    return 0;
+}

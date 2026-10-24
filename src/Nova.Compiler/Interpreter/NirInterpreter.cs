@@ -482,7 +482,7 @@ public sealed partial class NirInterpreter
             case NirCall call:
             {
                 var arguments = call.Arguments.Select(a => Operand(frame, a)).ToArray();
-                return Call(_functions[call.Callee], arguments);
+                return call.Callee.IsExtern ? CallC(call.Callee, arguments) : Call(_functions[call.Callee], arguments);
             }
             case NirAggregate aggregate:
             {

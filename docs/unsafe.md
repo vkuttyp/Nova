@@ -9,8 +9,8 @@ what the toolchain checks.
 
 ## 1. What unsafe permits
 
-Exactly the operations of `type-system.md` §27.3 (later increments add calls to `extern`
-functions and MMIO accesses):
+Exactly the operations of `type-system.md` §27.3, and calls to `extern "C"` functions (§28.2;
+M8b). Later increments add MMIO accesses:
 - reading and writing through a raw pointer;
 - pointer arithmetic (`add`, `sub`, `offset`);
 - making references and slices from raw parts (`Ptr.toBorrow`, `Ptr.toBorrowMut`, `Slice.fromRaw`,
@@ -32,6 +32,7 @@ Every unsafe operation must be **valid** when it runs:
 | `Ptr.toBorrow(p)` | as `read`, for as long as the reference is used; nothing writes the `T` meanwhile (except through the reference itself, for `toBorrowMut`), and for `toBorrowMut` nothing else reads it either |
 | `Slice.fromRaw(p, n)` | as `Ptr.toBorrow`, for each of the `n` elements; `n × size(T)` ≤ 2^63 − 1 |
 | calling an `unsafe fn` | the function's own `Safety:` contract |
+| calling an `extern "C"` function | the C function's documented contract, and the declaration's types match its definition; pointers it is given are valid for what it does with them, for as long as it keeps them; values it returns meet Nova's type invariants (`@repr` enums are checked) |
 
 "Live" means the object's storage has not ended: the local is in scope (between its
 `StorageLive` and `StorageDead`), the box or vector buffer has not been freed, the region has not

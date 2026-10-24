@@ -1,0 +1,20 @@
+// Attributes and extern blocks (grammar.md §2, type-system.md §28).
+extern "C" {
+    fn strlen(s: *CChar) -> usize;
+    @effects(may_block)
+    public fn write(fd: i32, buffer: *u8, count: usize) -> isize;
+}
+
+@repr(C)
+struct Point { x: i32; y: i32; }
+
+@repr(u8)
+enum Color { Red, Green }
+
+/// Exported.
+@export("geo_length")
+public fn length(p: Point) -> i32 => p.x + p.y;
+
+@export
+@effects(nosleep, noalloc)
+fn plain() {}

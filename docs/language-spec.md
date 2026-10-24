@@ -414,7 +414,7 @@ let fields = fba.allocArray<Span>(32)?;
 A user-defined allocator implements the `Allocator` interface
 (`memory-model.md` §3.2) inside `unsafe` code with a documented contract.
 
-### Ex17 — C interoperability [MVP-M8; minimal form in M1 for `Console`]
+### Ex17 — C interoperability [M8b; `type-system.md` §28]
 
 ```nova
 extern "C" {
@@ -423,25 +423,32 @@ extern "C" {
 }
 
 /// Safety: `bytes` is a valid borrowed slice; write() does not retain the pointer.
-public fn writeAll(fd: i32, bytes: Slice<u8>) -> Result<void, IoError> {
+public fn writeAll(fd: i32, bytes: Slice<u8>) -> bool {
     var off: usize = 0;
     while (off < bytes.length) {
         let rest = bytes[off..];
         let n = unsafe { write(fd, rest.ptr, rest.length) };
-        if (n < 0) { return Err(IoError.fromErrno()); }
-        off += n.checkedCast<usize>()!;
+        if (n < 0) { return false; }
+        off += truncate<usize>(n); // n >= 0 here
     }
-    return Ok(());
+    return true;
 }
 
-@export("nova_checksum")            // C-callable symbol
-public extern "C" fn checksum(data: *u8, len: usize) -> u32 {
-    let s = unsafe { Slice.fromRaw(data, len) };   // caller's contract
+/// Safety: the caller passes `len` readable bytes at `data` (the C side's contract).
+@export("geo_checksum")             // C-callable symbol; `nova_` names belong to the runtime
+public unsafe fn checksum(data: *u8, len: usize) -> u32 {
+    let s = Slice.fromRaw(data, len);
     var h: u32 = 2166136261;
-    for b in s { h = (h ^ b as u32).wrappingMul(16777619); }
+    for (b in s) { h = (h ^ b as u32).wrappingMul(16777619); }
     return h;
 }
 ```
+
+M8b changed this example from its M0 form: `@export` alone makes a function C-callable (no
+`extern "C"` on definitions), and an export that reads through a pointer is `unsafe fn`, since a
+safe Nova caller could pass any pointer. `IoError.fromErrno()`, `checkedCast` and `wrappingMul` are
+not built in yet. `run-pass/ffi-libc.nova` is the running form of this example, with `puts`, `strlen`
+and `memcpy` in place of `write`, which is not in every C library (MSVC calls it `_write`).
 
 ### Ex18 — Unsafe systems operations: MMIO [MVP-M8, kernel profile]
 

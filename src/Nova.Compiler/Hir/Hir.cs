@@ -118,6 +118,12 @@ public sealed class HirFunction
     /// <summary>Where an instantiation was first written, for N0274 (type-system.md §25.4).</summary>
     internal (SourceText Source, TextSpan Span)? InstantiationSite { get; set; }
 
+    /// <summary>Declared in an <c>extern "C"</c> block: defined in C (type-system.md §28.2).</summary>
+    public bool IsExtern => Syntax.IsExtern;
+
+    /// <summary>The C symbol of an <c>@export</c> function (type-system.md §28.4); null otherwise.</summary>
+    public string? ExportName { get; internal set; }
+
     /// <summary>True for a method: its first parameter is the <c>this</c> receiver (type-system.md §12).</summary>
     public bool IsMethod => Syntax.Receiver is not null && Owner is not null;
 

@@ -13,6 +13,13 @@ public sealed record CProgram(ImmutableArray<KeyValuePair<string, string>> Files
 {
     public const string MainFileName = "main.c";
 
+    /// <summary>The C declarations of the program's exports and @repr types (c-backend.md §2.3).</summary>
+    public const string ExportsHeaderName = "nova_exports.h";
+
+    /// <summary>Adds C source files (type-system.md §28.6) under <c>c/</c>, compiled with the generated C.</summary>
+    public CProgram WithCSources(IEnumerable<(string Name, string Content)> sources) =>
+        new([.. Files, .. sources.Select(s => new KeyValuePair<string, string>("c/" + s.Name, s.Content))]);
+
     public IEnumerable<string> SourceFiles => Files.Select(f => f.Key).Where(k => k.EndsWith(".c", StringComparison.Ordinal));
 
     public void WriteTo(string directory)
@@ -61,7 +68,9 @@ public static class CBackend
 
         nir = compilation.Nir ?? throw new InvalidOperationException("the compilation has no NIR");
         var mainSource = CEmitter.Emit(nir, compilation.Symbols, compilation.Types, compilation.Units.Select(u => u.Source), options);
-        return new CProgram([new(CProgram.MainFileName, mainSource), .. HostedRuntime]);
+        var header = CEmitter.ExportsHeader(nir, compilation.Symbols, compilation.Types);
+        return new CProgram([new(CProgram.MainFileName, mainSource), .. HostedRuntime,
+            .. header is null ? Array.Empty<KeyValuePair<string, string>>() : [new(CProgram.ExportsHeaderName, header)]]);
     }
 
     /// <summary>The runtime header plus the given C files, without the core or platform runtime (for tests and embedders).</summary>

@@ -1492,3 +1492,113 @@ expression, evaluated once.
 Diagnostics: N0280 (an unsafe operation outside an unsafe context), N0281 (an invalid pointee
 type), N0282 (a pointer operation the pointer or its pointee does not allow), N0283 (no `Safety:`
 doc comment). Invalid pointer casts are N0208.
+
+## 28. C interoperability (M8b)
+
+```nova
+extern "C" {
+    fn strlen(s: *CChar) -> usize;
+    fn puts(s: *CChar) -> i32;
+}
+
+@repr(C)
+struct Point { x: i32; y: i32; }
+
+/// The Manhattan length of a point, callable from C as `geo_length(struct Point)`.
+@export("geo_length")
+fn length(p: Point) -> i32 => abs32(p.x) + abs32(p.y);
+
+fn abs32(v: i32) -> i32 { if (v < 0) { return -v; } return v; }
+
+/// Safety: the literal ends in a zero byte, as `puts` and `strlen` need.
+fn main() -> i32 {
+    let text = "hello from C\0";
+    let p = text.ptr as *CChar;
+    unsafe { puts(p); }
+    return truncate<i32>(unsafe { strlen(p) });
+}
+```
+
+### 28.1 Attributes
+An item may be preceded by attributes `@name` or `@name(arguments)` (grammar §2). The known ones:
+
+| Attribute | On | Meaning |
+|---|---|---|
+| `@export`, `@export("symbol")` | a top-level, non-generic function | callable from C under `symbol` (default: the function's name), §28.4 |
+| `@repr(C)` | a non-generic struct | a C-compatible struct, §28.5 |
+| `@repr(u8)` … `@repr(i64)` | a non-generic enum without payloads | passed to and from C as that integer type, §28.5 |
+| `@effects(…)` | a function or an `extern` function | context effects; accepted and ignored until C7 (`cosmoos/profiles.md` §1: ignored outside the kernel profile) |
+
+An unknown attribute, a known one in the wrong place or with the wrong arguments, or the same
+attribute twice is N0290.
+
+### 28.2 `extern "C"` blocks
+- `extern "C" { … }` at the top level declares functions defined in C: `fn name(parameters) ->
+  Result;`, each optionally preceded by attributes and a visibility, with no body, receiver, type
+  parameters or region parameters (N0290). `"C"` is the only ABI (N0290).
+- Calling an extern function is an unsafe operation (U1, N0280): Nova cannot check what C does.
+- Its C name is its Nova name. It must be a valid C identifier that is not a C keyword (or `bool`,
+  `true`, `false`, `NULL`, `main`), not reserved by C (starting with `__`, or `_` and an uppercase
+  letter), and not owned by the runtime and generated code (starting with `nova_`, `nv_`, `NV_`, or
+  `nv` and an uppercase letter; c-backend §2.1): N0292.
+  Two declarations, or a declaration and an `@export`, with one C name are N0201.
+- Parameter and result types must be **FFI-safe** (§28.3), or N0291.
+
+### 28.3 FFI-safe types and their C types
+| Nova | C, in prototypes and in `nova_exports.h` |
+|---|---|
+| `i8`…`i64`, `u8`…`u64` | `int8_t`…`int64_t`, `uint8_t`…`uint64_t` |
+| `usize`, `isize` | `size_t`, `ptrdiff_t` |
+| `bool` | `bool` |
+| `*T`, `*mut T` | `T const *`, `T *`, where `T` is an integer, `bool`, a `@repr(C)` struct, or (recursively) such a pointer |
+| `*void`, `*mut void` | `const void *`, `void *` |
+| `*CChar`, `*mut CChar` | `const char *`, `char *` |
+| a `@repr(C)` struct `S` | `struct S` |
+| a `@repr(uN)` / `@repr(iN)` enum | that integer type |
+| `void` (results only) | `void` |
+
+Nothing else crosses: references, slices, string views, boxes, arrays, optionals, results and other
+structs and enums are N0291. (A slice crosses as its `.ptr` and `.length`; a pointer to any other
+Nova value crosses as `*void`.) A `@repr` enum crosses by value only, not behind a pointer or as a
+field of a `@repr(C)` struct: inside Nova it is not a plain integer.
+
+`CChar` is C's `char`, whose signedness differs between targets. It may only be a pointee
+(`*CChar`), never a value (N0281); `p as *u8` and `q as *CChar` convert. It exists so that
+declarations of C library functions match the C library's own prototypes exactly.
+
+### 28.4 Exports
+- `@export` makes a top-level, non-generic, non-method function callable from C, with the C types of
+  §28.3 (N0291 otherwise). `main` cannot be exported (N0290). The symbol must be a valid, unreserved
+  C name (N0292) and unique (N0201).
+- The function stays an ordinary Nova function too. Its body is checked like any other; an
+  exported function is not unsafe to call from Nova.
+- A C caller must call it with the declared types. A C value for a `@repr` enum parameter that is
+  not one of its variants panics (`invalid enum value from C`) before the body runs.
+
+### 28.5 C-compatible structs and enums
+- `@repr(C)` on a struct fixes its layout to C's rules (fields in declaration order, each aligned,
+  the size rounded up to the alignment; Nova's layout already is this, and M9 may reorder only
+  structs without it). Its fields must be integers, `bool`, raw pointers as in §28.3, or `@repr(C)`
+  structs, and their names valid, unreserved C identifiers (N0291, N0292). In C it is `struct S`
+  with members named as in Nova, of the types Nova uses inside its own C (`usize` is `uint64_t`,
+  pointers have no `const`), so that the generated code and C code that includes `nova_exports.h`
+  declare the same struct type. It is otherwise an ordinary struct.
+- `@repr(uN)` / `@repr(iN)` on an enum without payloads gives each variant its index (0, 1, …) as
+  that integer type, which must hold every index (N0290). Across the boundary the enum is that
+  integer; a value from C that is not a variant's index panics (`invalid enum value from C`).
+
+### 28.6 Building with C
+- `novac build` accepts C source files (`.c`) besides Nova files. They are compiled with the generated
+  C and linked into the program, with the same C compiler and flags. With them, a program may have
+  its `main` in C instead of in Nova; without a Nova `main`, the Nova runtime is not started, so
+  allocation-failure injection (`NOVA_FAIL_ALLOC_AT`) and program arguments are not available to
+  exported functions.
+- When a program has `@export` functions or `@repr` types, novac also writes `nova_exports.h`: the
+  `@repr` structs and enums, and a prototype for each export. C files include it as
+  `#include "nova_exports.h"`.
+- `run --interp` runs no C code. Calls to extern functions are interpreted only for a model of a few
+  C library functions (`intermediate-representation.md` §5.4); any other is an interpreter fault.
+
+Diagnostics: N0290 (attribute or extern declaration misuse), N0291 (a type that is not FFI-safe),
+N0292 (a C name that is invalid, a C keyword, or reserved). Calls to extern functions outside an
+unsafe context are N0280.

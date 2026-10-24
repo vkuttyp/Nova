@@ -137,6 +137,7 @@ public sealed class CEmitter
         Line();
 
         EmitStructs();
+        EmitExterns();
 
         foreach (var function in CompiledFunctions)
         {
@@ -167,6 +168,7 @@ public sealed class CEmitter
         EmitIoHelpers();
         EmitPoolTake();
 
+        EmitExports();
         EmitMainWrapper();
     }
 
@@ -184,7 +186,7 @@ public sealed class CEmitter
         }
         foreach (var type in aggregates)
         {
-            Line($"typedef struct {CTypeName(type)} {CTypeName(type)};");
+            Line($"typedef struct {StructTag(type)} {CTypeName(type)};");
         }
         Line();
 
@@ -213,7 +215,7 @@ public sealed class CEmitter
 
             var name = CTypeName(type);
             var (size, align) = TypeTable.LayoutOf(type);
-            Line($"struct {name} {{");
+            Line($"struct {StructTag(type)} {{");
             if (definition.Fields.Count == 0)
             {
                 Line("    uint8_t nv_empty; /* C has no empty structs */");
@@ -330,7 +332,185 @@ public sealed class CEmitter
 
     private string VariantName(EnumVariant variant) => "v_" + _symbols.GetName(variant.Name);
 
-    private string FieldName(StructField field) => "f_" + _symbols.GetName(field.Name);
+    private string FieldName(StructField field) => (field.HasNovaCName ? "" : "f_") + _symbols.GetName(field.Name);
+
+    /// <summary>The C tag of a struct type: its Nova name for <c>@repr(C)</c> (type-system.md §28.5), else its C type name.</summary>
+    private static string StructTag(NovaType type) => type.Struct is { IsReprC: true } ? type.Name : CTypeName(type);
+
+    // ---- C interoperability (type-system.md §28, c-backend.md §2.3) ----
+
+    /// <summary>The C type of a value crossing to or from C (§28.3); in the header, @repr(C) structs are <c>struct S</c>.</summary>
+    private string BoundaryType(NovaType type, bool header = false) => type.Kind switch
+    {
+        TypeKind.Integer when ReferenceEquals(type, _types.USize) => "size_t",
+        TypeKind.Integer when ReferenceEquals(type, _types.ISize) => "ptrdiff_t",
+        TypeKind.Enum => header ? type.Name : CTypeName(type.Enum!.Repr!), // the header's typedef names the same integer type
+        TypeKind.Struct => header ? $"struct {type.Name}" : CTypeName(type),
+        TypeKind.RawPointer => $"{type.Pointee!.Kind switch { TypeKind.CChar => "char", TypeKind.Void => "void", _ => BoundaryType(type.Pointee!, header) }}{(type.IsMutablePointer ? "" : " const")} *",
+        _ => CTypeName(type),
+    };
+
+    /// <summary>A member of a @repr(C) struct in <c>nova_exports.h</c>: the types the generated code uses (§28.5).</summary>
+    private static string HeaderMemberType(NovaType type) => type.Kind switch
+    {
+        TypeKind.Struct => $"struct {type.Name}",
+        TypeKind.RawPointer => $"{type.Pointee!.Kind switch { TypeKind.CChar => "char", TypeKind.Void => "void", _ => HeaderMemberType(type.Pointee!) }} *",
+        _ => CTypeName(type),
+    };
+
+    /// <summary>A Nova value as the C type of §28.3.</summary>
+    private string ToBoundary(NovaType type, string value) => type.Kind switch
+    {
+        TypeKind.RawPointer => $"({BoundaryType(type)})(uintptr_t){value}",
+        TypeKind.Integer when type.Bits == 64 && (ReferenceEquals(type, _types.USize) || ReferenceEquals(type, _types.ISize)) => $"({BoundaryType(type)}){value}",
+        TypeKind.Enum => $"({BoundaryType(type)}){value}.tag",
+        _ => value,
+    };
+
+    /// <summary>A C value of the type of §28.3 as Nova's; an enum must have been checked (<see cref="CheckEnumFromC"/>).</summary>
+    private string FromBoundary(NovaType type, string value) => type.Kind switch
+    {
+        TypeKind.RawPointer => $"({CType(type)})(uintptr_t){value}",
+        TypeKind.Integer when ReferenceEquals(type, _types.USize) || ReferenceEquals(type, _types.ISize) => $"({CType(type)}){value}",
+        TypeKind.Enum => $"(({CType(type)}){{ .tag = (uint{TypeTable.EnumLayout(type).TagSize * 8}_t){value} }})",
+        _ => value,
+    };
+
+    /// <summary>A @repr enum value from C must be a variant's index (§28.5): panics otherwise.</summary>
+    private void CheckEnumFromC(NovaType type, string value, HirFunction function)
+    {
+        if (type.Kind != TypeKind.Enum)
+        {
+            return;
+        }
+        var count = type.Enum!.Variants.Count;
+        var repr = type.Enum.Repr!;
+        var tests = new List<string>();
+        if (repr.IsSigned)
+        {
+            tests.Add($"{value} < 0");
+        }
+        if (count - 1 < repr.Max)
+        {
+            tests.Add($"{value} >= {count}");
+        }
+        if (tests.Count > 0)
+        {
+            Line($"    if ({string.Join(" || ", tests)}) nova_panic(NV_PANIC_FFI_ENUM, {Location(function.Source, function.Syntax.Name.Span)});");
+        }
+    }
+
+    private static string CParameters(HirFunction function, Func<NovaType, string> type, bool withNames) =>
+        function.Parameters.IsEmpty ? "void" : string.Join(", ", function.Parameters.Select((p, i) => withNames ? $"{type(p.Type)} a{i}" : type(p.Type)));
+
+    /// <summary>Each extern function's C prototype, and a static wrapper with Nova's types that converts (c-backend §2.3).</summary>
+    private void EmitExterns()
+    {
+        foreach (var function in _program.Externs)
+        {
+            var name = _symbols.GetName(function.Name);
+            Line($"{BoundaryType(function.ReturnType)} {name}({CParameters(function, t => BoundaryType(t), withNames: false)});");
+            var parameters = function.Parameters.IsEmpty
+                ? "void"
+                : string.Join(", ", function.Parameters.Select((p, i) => $"{CType(p.Type)} a{i}"));
+            Line($"static NV_UNUSED {CType(function.ReturnType)} nvC_{name}({parameters}) {{");
+            var call = $"{name}({string.Join(", ", function.Parameters.Select((p, i) => ToBoundary(p.Type, $"a{i}")))})";
+            if (function.ReturnType.Kind == TypeKind.Void)
+            {
+                Line($"    {call};");
+            }
+            else
+            {
+                Line($"    {BoundaryType(function.ReturnType)} r = {call};");
+                CheckEnumFromC(function.ReturnType, "r", function);
+                Line($"    return {FromBoundary(function.ReturnType, "r")};");
+            }
+            Line("}");
+        }
+        if (!_program.Externs.IsEmpty)
+        {
+            Line();
+        }
+    }
+
+    /// <summary>A C-callable wrapper for each <c>@export</c> function, with the C types of §28.3 (c-backend §2.3).</summary>
+    private void EmitExports()
+    {
+        foreach (var function in CompiledFunctions.Select(f => f.Source).Where(f => f.ExportName is not null))
+        {
+            var signature = $"{BoundaryType(function.ReturnType)} {function.ExportName}({CParameters(function, t => BoundaryType(t), withNames: true)})";
+            Line($"{signature};");
+            Line($"{signature} {{");
+            for (var i = 0; i < function.Parameters.Length; i++)
+            {
+                CheckEnumFromC(function.Parameters[i].Type, $"a{i}", function);
+            }
+            var call = $"{FunctionName(function)}({string.Join(", ", function.Parameters.Select((p, i) => FromBoundary(p.Type, $"a{i}")))})";
+            Line(function.ReturnType.Kind == TypeKind.Void ? $"    {call};" : $"    return {ToBoundary(function.ReturnType, call)};");
+            Line("}");
+            Line();
+        }
+    }
+
+    /// <summary>
+    /// <c>nova_exports.h</c> (c-backend §2.3): the @repr(C) structs and @repr enums, and the exports' prototypes; null
+    /// when the program has none.
+    /// </summary>
+    public static string? ExportsHeader(NirProgram program, SymbolTable symbols, TypeTable types)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        ArgumentNullException.ThrowIfNull(symbols);
+        ArgumentNullException.ThrowIfNull(types);
+        var emitter = new CEmitter(program, symbols, types, [], CEmitOptions.Default);
+        var structs = program.Structs.Where(t => t.Struct is { IsReprC: true }).ToList();
+        var enums = program.Structs.Where(t => t.Enum is { Repr: not null }).ToList();
+        var exports = program.Functions.Select(f => f.Source).Where(f => f.ExportName is not null && !f.IsGeneric).ToList();
+        if (structs.Count == 0 && enums.Count == 0 && exports.Count == 0)
+        {
+            return null;
+        }
+        var lines = new List<string>
+        {
+            $"/* Generated by novac {NovaVersion.Text}. Do not edit. Nova's C interface (type-system.md §28). */",
+            "#ifndef NOVA_EXPORTS_H",
+            "#define NOVA_EXPORTS_H",
+            "",
+            "#include <stdbool.h>",
+            "#include <stddef.h>",
+            "#include <stdint.h>",
+            "",
+        };
+        var written = new HashSet<NovaType>();
+        void Struct(NovaType type)
+        {
+            if (!written.Add(type))
+            {
+                return;
+            }
+            foreach (var field in type.Struct!.Fields.Where(f => f.Type.Kind == TypeKind.Struct))
+            {
+                Struct(field.Type);
+            }
+            lines.Add($"struct {type.Name} {{");
+            lines.AddRange(type.Struct.Fields.Select(f => $"    {HeaderMemberType(f.Type)} {symbols.GetName(f.Name)};"));
+            lines.Add("};");
+            lines.Add("");
+        }
+        structs.ForEach(Struct);
+        foreach (var type in enums)
+        {
+            lines.Add($"typedef {CTypeName(type.Enum!.Repr!)} {type.Name};");
+            lines.Add($"enum {{ {string.Join(", ", type.Enum.Variants.Select(v => $"{type.Name}_{symbols.GetName(v.Name)} = {v.Index}"))} }};");
+            lines.Add("");
+        }
+        foreach (var function in exports)
+        {
+            lines.Add($"{emitter.BoundaryType(function.ReturnType, header: true)} {function.ExportName}({CParameters(function, t => emitter.BoundaryType(t, header: true), withNames: false)});");
+        }
+        lines.Add("");
+        lines.Add("#endif");
+        return string.Join("\n", lines) + "\n";
+    }
 
     /// <summary>
     /// The drop glue of a type that needs drop: <c>nvD_&lt;length&gt;&lt;Name&gt;</c> for user structs and enums,
@@ -1031,7 +1211,7 @@ public sealed class CEmitter
     /// (the code starts with a letter, so it cannot collide with the length-prefixed form); a generic
     /// function's instance is <c>nvG_&lt;length&gt;&lt;name&gt;&lt;mangled arguments&gt;</c>.
     /// </remarks>
-    private string FunctionName(HirFunction function) => function.Owner is { } owner
+    private string FunctionName(HirFunction function) => function.IsExtern ? "nvC_" + _symbols.GetName(function.Name) : function.Owner is { } owner
         ? IsInstance(owner)
             ? $"nvM_{Mangle(owner)}_{_symbols.GetName(function.Name)}"
             : $"nvM_{owner.Name.Length}{owner.Name}_{_symbols.GetName(function.Name)}"
@@ -1751,6 +1931,7 @@ public sealed class CEmitter
         TypeKind.Box when type.IsPoolBox => $"nvPB_{Mangle(type.Pointee!)}",
         TypeKind.Box => $"{CTypeName(type.Pointee!)} *",
         TypeKind.RawPointer => $"{CTypeName(type.Pointee!)} *", // no const (unsafe.md §4); `*void` is `void *`
+        TypeKind.CChar => "char", // only behind a pointer, for C library prototypes (type-system.md §28.3)
         TypeKind.Vector => $"nvV_{Mangle(type)[1..]}",
         TypeKind.StableVector => $"nvSV_{Mangle(type)[1..]}",
         TypeKind.SlotMap => $"nvK_{Mangle(type)[1..]}",

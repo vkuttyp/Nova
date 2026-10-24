@@ -67,6 +67,8 @@ public enum TypeKind
     /// with no loans. Never dereferenced implicitly.
     /// </summary>
     RawPointer,
+    /// <summary><c>CChar</c> (type-system.md §28.3): C's <c>char</c>, only ever a pointee.</summary>
+    CChar,
 }
 
 /// <summary>
@@ -123,6 +125,9 @@ public sealed class StructField
 
     /// <summary>Byte offset in the target layout (set by <see cref="TypeTable.LayoutOf"/>).</summary>
     public int Offset { get; internal set; }
+
+    /// <summary>A field of a <c>@repr(C)</c> struct: named as in Nova in C, too (type-system.md §28.5).</summary>
+    public bool HasNovaCName { get; internal set; }
 
     /// <summary>
     /// A part of a scratch frame that only the borrow checker sees (its memory or its allocation
@@ -226,6 +231,9 @@ public sealed class EnumDefinition
 
     public bool IsRecursive { get; internal set; }
 
+    /// <summary>The integer type of <c>@repr(uN)</c> / <c>@repr(iN)</c> (type-system.md §28.5); null otherwise.</summary>
+    public NovaType? Repr { get; internal set; }
+
     internal (int Size, int Align, int TagSize, int UnionOffset)? Layout { get; set; }
 
     public EnumVariant? FindVariant(Symbol name) => Variants.Find(v => v.Name == name);
@@ -256,6 +264,9 @@ public sealed class StructDefinition
 
     /// <summary>Set if the struct contains itself by value (N0227); such a struct has no layout.</summary>
     public bool IsRecursive { get; internal set; }
+
+    /// <summary><c>@repr(C)</c> (type-system.md §28.5): in C it is <c>struct Name</c> with members named as in Nova.</summary>
+    public bool IsReprC { get; internal set; }
 
     /// <summary>The body of the struct's <c>drop</c> block as a <c>borrow mut this</c> method, if any.</summary>
     public HirFunction? DropFunction { get; internal set; }
@@ -506,11 +517,12 @@ public sealed class TypeTable
         FixedBufferAllocator = new NovaType(RegionKind.FixedBuffer, "FixedBufferAllocator");
         ScratchFrame = new NovaType(RegionKind.ScratchFrame, "ScratchFrame");
         File = new NovaType(ResourceKind.File, "File");
+        CChar = new NovaType(TypeKind.CChar, "CChar");
         TcpListener = new NovaType(ResourceKind.TcpListener, "TcpListener");
         TcpStream = new NovaType(ResourceKind.TcpStream, "TcpStream");
 
         _byName = new Dictionary<string, NovaType>(StringComparer.Ordinal);
-        foreach (var t in new[] { I8, I16, I32, I64, ISize, U8, U16, U32, U64, USize, Bool, Void, Arena, FixedBufferAllocator, ScratchFrame, File, TcpListener, TcpStream })
+        foreach (var t in new[] { I8, I16, I32, I64, ISize, U8, U16, U32, U64, USize, Bool, Void, CChar, Arena, FixedBufferAllocator, ScratchFrame, File, TcpListener, TcpStream })
         {
             _byName.Add(t.Name, t);
         }
@@ -533,6 +545,9 @@ public sealed class TypeTable
     public NovaType Bool { get; }
     public NovaType Void { get; }
     public NovaType Never { get; }
+
+    /// <summary><c>CChar</c> (§28.3).</summary>
+    public NovaType CChar { get; }
     public NovaType File { get; }
     public NovaType TcpListener { get; }
     public NovaType TcpStream { get; }
@@ -763,6 +778,8 @@ public sealed class TypeTable
                 return type.IsSlice ? (16, 8) : (8, 8); // a slice is (pointer, u64 length)
             case TypeKind.RawPointer:
                 return (8, 8); // one address (§27.1)
+            case TypeKind.CChar:
+                return (1, 1); // C's char (§28.3)
             case TypeKind.Box:
                 return type.IsPoolBox ? (16, 8) : (8, 8); // a pool box also points to its pool
             case TypeKind.Vector:
@@ -853,7 +870,9 @@ public sealed class TypeTable
         {
             return cached;
         }
-        var tagSize = definition.Variants.Count <= 256 ? 1 : definition.Variants.Count <= 65536 ? 2 : 4;
+        // `@repr(uN)` / `@repr(iN)` fixes the tag's width (§28.5).
+        var tagSize = definition.Repr is { } repr ? repr.Bits / 8
+            : definition.Variants.Count <= 256 ? 1 : definition.Variants.Count <= 65536 ? 2 : 4;
         int unionSize = 0, unionAlign = 1;
         foreach (var variant in definition.Variants.Where(v => v.Payload.Count > 0))
         {

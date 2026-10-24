@@ -160,6 +160,32 @@ When `CEmitOptions.Placement` is on, `PlacementAnalysis` decides each `Box.creat
 
 Everything else is unchanged. Heap boxes, and every other site, use the drop glue of §2.
 
+## 2.3 C interoperability (M8b; type-system.md §28)
+
+- **Extern functions.** Each `extern "C"` function gets a prototype with the C types of §28.3
+  (`size_t strlen(const char *);`) and a `static` wrapper `nvC_<name>` with Nova's own C types,
+  which converts the arguments (`(size_t)n`; a `T *` converts to `const T *` implicitly), calls the
+  function and converts the result back (a `const T *` through `uintptr_t`; a `@repr` enum through
+  a check that panics with `NV_PANIC_FFI_ENUM`). Nova code calls the wrapper like any function. The
+  prototypes use C's own types so that they are compatible with the C library's declarations: the
+  generated code includes no C library header, but clang and GCC know the library functions'
+  types (`-Wincompatible-library-redeclaration`, `-Wbuiltin-declaration-mismatch`), and C11
+  6.5.2.2 makes a call through an incompatible type undefined.
+- **Exports.** Each `@export` function gets a non-`static` wrapper under its symbol, with the C
+  types, that converts the arguments (checking `@repr` enums), calls `nvF_<name>`, and converts the
+  result. Nothing else in the generated code has external linkage except `main`.
+- **`@repr(C)` structs** are `struct S` with members named as in Nova (other structs are `struct
+  nvT_S` with members `f_<name>`), and `typedef struct S nvT_S;`, so generated code uses them like
+  any struct, and C code that includes `nova_exports.h` sees the same type (C11 6.2.7 makes struct
+  types in two translation units compatible only if their tags and members match).
+- **`@repr(uN)` enums** keep the internal form `struct { uintN_t tag; }` (the tag has the repr's
+  width and signedness); wrappers convert to and from the integer.
+- **`nova_exports.h`**: an include guard; `<stdbool.h>`, `<stddef.h>`, `<stdint.h>`; each `@repr(C)`
+  struct (after the structs it contains); each `@repr` enum as `typedef <int> E;` and constants
+  `E_Variant`; each export's prototype. It is generated only when there is something to declare.
+- **C sources** given to `novac build` are copied unchanged to `c/<file>` beside `main.c` and
+  compiled with it (`-I` names the directory, so `#include "nova_exports.h"` works).
+
 ## 3. Lowering of control flow and cleanup
 
 **Flat form** (M1; `--flat-c`): each NIR block becomes a C label. Terminators become `goto`, `switch`

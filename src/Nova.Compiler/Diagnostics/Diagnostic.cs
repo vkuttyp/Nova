@@ -119,6 +119,11 @@ public static class DiagnosticCodes
     public const string InvalidPointerOperation = "N0282";
     public const string MissingSafetyComment = "N0283";
 
+    // C interoperability (type-system.md §28): N0290-N0299
+    public const string InvalidAttribute = "N0290";
+    public const string NotFfiSafe = "N0291";
+    public const string InvalidCName = "N0292";
+
     // Build: N0300-N0399
     public const string MissingMain = "N0300";
 }

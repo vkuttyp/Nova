@@ -168,6 +168,7 @@ _Noreturn void nova_panic(nv_panic_kind kind, nv_loc loc) {
     case NV_PANIC_SCRATCH: reason = "a scratch frame is already active; nest with frame.enter()"; break;
     case NV_PANIC_UNWRAP_NULL: reason = "unwrapped null"; break;
     case NV_PANIC_STR_BOUNDARY: reason = "string slice not on a character boundary"; break;
+    case NV_PANIC_FFI_ENUM: reason = "invalid enum value from C"; break;
     default: reason = "unknown panic"; break;
     }
     write_err_cstr("nova panic: ");
