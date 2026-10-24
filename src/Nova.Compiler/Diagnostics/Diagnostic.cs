@@ -125,6 +125,7 @@ public static class DiagnosticCodes
     public const string InvalidCName = "N0292";
     public const string HostedOnly = "N0293";
     public const string ImportedTypeByValue = "N0294";
+    public const string EffectViolation = "N0295";
 
     // Build: N0300-N0399
     public const string MissingMain = "N0300";

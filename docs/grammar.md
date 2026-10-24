@@ -98,7 +98,7 @@ ExternFn   = Attribute* Visibility? 'fn' Identifier '(' (Param (',' Param)* ','?
 TypeParams = '<' TypeParam (',' TypeParam)* '>'               (* M6a; type-system.md §20 *)
 InterfaceDecl = 'interface' Identifier TypeParams? '{' MethodSig* '}'   (* M6b; §21 *)
 MethodSig  = 'fn' Identifier '(' Receiver (',' Param)* ')' ('->' Type)? ';'
-ImplDecl   = 'impl' Type 'for' Type '{' FunctionDecl* '}'              (* M6b; §21 *)
+ImplDecl   = 'impl' Type 'for' Type '{' (Attribute* Visibility? FunctionDecl)* '}'   (* M6b; §21; attributes C7a *)
 TypeParam  = 'region' Identifier                               (* M6x: a region, before any type parameter; §25.1 *)
            | Identifier (':' Type ('+' Type)*)?                (* bounds: M6b *)
 (* `region` is contextual: only `region` followed by a name declares a region. In a type, a region
@@ -114,7 +114,7 @@ Receiver     = ('borrow' 'mut'?)? 'this'   (* M2a: by value; M2b: reference rece
 Param        = Identifier ':' Type
 
 StructDecl   = 'struct' Identifier TypeParams? '{' Member* '}'          (* M2a; TypeParams M6a *)
-Member       = Visibility? (FieldDecl | FunctionDecl) | DropBlock
+Member       = Visibility? FieldDecl | Attribute* Visibility? FunctionDecl | DropBlock   (* method attributes: C7a, type-system.md §32 *)
 DropBlock    = 'drop' Block                (* M2c *)
 FieldDecl    = Identifier ':' Type ';'
 FunctionBody = Block | '=>' Expr ';'

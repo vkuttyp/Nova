@@ -35,7 +35,8 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
   CosmoOS's module-loader rules; `docs/cosmoos/c4-report.md`, `integrations/cosmoos/c4.py`) is complete, and so is C5 (user-defined allocators, `KernelHeap`, an in-kernel selftest module;
   `docs/cosmoos/c5-report.md`, `integrations/cosmoos/c5.py`). C6 (CosmoOS's LZ4 codec and framebuffer
   validator in Nova, held to CosmoOS's own tests; imported C struct types, type-system §31; `docs/cosmoos/c6-report.md`,
-  `integrations/cosmoos/c6.py`, `benchmarks/lz4/`, `benchmarks/fbvalid/`) is complete; C7 is next. `lib/core/*.nova` is part of every
+  `integrations/cosmoos/c6.py`, `benchmarks/lz4/`, `benchmarks/fbvalid/`) is complete. C7 (kernel concurrency; `docs/cosmoos/c7-report.md`, ADR 0009) is in progress: C7a
+  (context effects, type-system §32) is done; C7b (C state embedded by value) is next. `lib/core/*.nova` is part of every
   package. M5 (escape and placement
   analysis; `docs/milestone-5.md`) is complete (`--placement`, `--explain-allocations`).
 - Guest checks: `python3 integrations/cosmoos/c2.py --arch x86_64` (QEMU), and for aarch64 either

@@ -23,7 +23,7 @@ allowed or not, and the list below is normative.
 | Whole-call-chain stack budget | — | — | report + error against **16 KiB** (shared with IRQs) [KA §8] | configurable |
 | Scratch regions | reserved VM | reserved VM via `mmap` | fixed per-thread buffer, explicit checks | fixed buffer |
 | Panic | stderr + `abort()` | stderr + `abort()` via libc | CosmoOS `panic()` | user-provided `nova_panic` |
-| Context effects (`@context`, `sleep`/`alloc`) | ignored | ignored | **enforced** (C7) | optional |
+| Context effects (`@context`, `@effects`, `sleep`/`alloc`) | checked | checked | checked | checked (C7a, type-system §32: obligations arise only where declared) |
 | `extern "C"` imports | any | libc public headers only (L1, OD-15) | bindings file (exports only for modules) | any |
 | `static var`, raw pointers, MMIO | unsafe | unsafe | unsafe (+ MMIO types) | unsafe |
 | TLS (`@threadLocal`) | yes | yes (`__thread` works) [PA §4] | **no** (no TLS in the kernel) | no |

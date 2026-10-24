@@ -1,7 +1,7 @@
 // Attributes and extern blocks (grammar.md §2, type-system.md §28).
 extern "C" {
     fn strlen(s: *CChar) -> usize;
-    @effects(may_block)
+    @effects(sleep)
     public fn write(fd: i32, buffer: *u8, count: usize) -> isize;
 }
 
@@ -16,7 +16,7 @@ enum Color { Red, Green }
 public fn length(p: Point) -> i32 => p.x + p.y;
 
 @export
-@effects(nosleep, noalloc)
+@effects()
 fn plain() {}
 
 // Imported C types (type-system.md §31).

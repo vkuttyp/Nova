@@ -297,6 +297,9 @@ public sealed class StructDefinition
     /// <summary>For an imported C type: <c>struct name</c>, or its <c>@ctype</c> name (type-system.md §31.1).</summary>
     public string? CSpelling { get; internal set; }
 
+    /// <summary><c>@context(atomic)</c> (type-system.md §32.3): holding a value of it is an atomic context.</summary>
+    public bool IsAtomicContext { get; internal set; }
+
     /// <summary><c>@noncopy</c> (OD-7, type-system.md §29.2): a move type even if every field is Copy.</summary>
     public bool IsNonCopy { get; internal set; }
 

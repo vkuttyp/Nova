@@ -1,0 +1,32 @@
+// Misused @effects and @context (type-system.md §32.2–§32.3): N0290.
+extern "C" {
+    @effects(blocking) // error[N0290]
+    fn a();
+    @effects // error[N0290]
+    fn b();
+    @context(atomic) // error[N0290]
+    fn c();
+    @effects(sleep)
+    @effects(alloc) // error[N0290]
+    fn d();
+}
+
+@context(process) // error[N0290]
+fn e() {}
+
+@context() // error[N0290]
+fn f() {}
+
+@context(irq) // error[N0290]
+struct G { x: i32; }
+
+@effects(sleep) // error[N0290]
+struct H { x: i32; }
+
+struct I {
+    x: i32;
+    @context(atomic)
+    fn fine(borrow this) -> i32 => this.x;
+    @effects(allocate) // error[N0290]
+    fn wrong(borrow this) -> i32 => this.x;
+}

@@ -85,6 +85,8 @@ public sealed class Compilation
                 {
                     DropElaborator.Elaborate(function, types);
                 }
+                // Context effects need the drops explicit (type-system.md §32).
+                EffectChecker.Check(nir, symbols, diagnostics);
             }
         }
         return new Compilation(profile, units, symbols, types, diagnostics, hir, nir);

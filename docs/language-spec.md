@@ -418,7 +418,7 @@ A user-defined allocator implements the `Allocator` interface
 
 ```nova
 extern "C" {
-    @effects(may_block)
+    @effects(sleep)
     fn write(fd: i32, buf: *u8, count: usize) -> isize;
 }
 

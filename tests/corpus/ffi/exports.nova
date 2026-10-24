@@ -6,7 +6,7 @@ extern "C" {
     fn c_total(points: *Point, count: usize) -> i64;
     // A @repr enum value from C that is no variant panics, reported where the C function is declared.
     fn c_bad_color() -> Color; // expect-panic: invalid enum value from C
-    @effects(may_block)
+    @effects(sleep)
     fn c_fill(out: *mut Segment, name: *CChar);
 }
 

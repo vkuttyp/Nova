@@ -2,7 +2,7 @@
   (extern default "C"
     (fn default strlen (params (s (ptr CChar))) (returns usize)
     )
-    (@effects may_block)
+    (@effects sleep)
     (fn public write (params (fd i32) (buffer (ptr u8)) (count usize)) (returns isize)
     )
   )
@@ -21,7 +21,7 @@
     (=> (+ (. p x) (. p y)))
   )
   (@export)
-  (@effects nosleep noalloc)
+  (@effects)
   (fn default plain (params)
     (block)
   )

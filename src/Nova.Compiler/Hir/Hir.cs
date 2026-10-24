@@ -80,6 +80,23 @@ public sealed class HirLocal
     public bool IsUsing { get; internal set; }
 }
 
+/// <summary>Context effects (type-system.md §32.1).</summary>
+[Flags]
+public enum Effects
+{
+    None = 0,
+    Sleep = 1,
+    Alloc = 2,
+}
+
+/// <summary>A context that forbids effects (type-system.md §32.3).</summary>
+public enum EffectContext
+{
+    None,
+    Atomic,
+    Irq,
+}
+
 public sealed class HirFunction
 {
     private readonly List<HirLocal> _locals = [];
@@ -123,6 +140,12 @@ public sealed class HirFunction
 
     /// <summary>Declared in an <c>extern "C"</c> block: defined in C (type-system.md §28.2).</summary>
     public bool IsExtern => Syntax.IsExtern;
+
+    /// <summary>Its <c>@effects</c> (type-system.md §32.2): an extern's declaration, a Nova function's bound; null without.</summary>
+    public Effects? DeclaredEffects { get; internal set; }
+
+    /// <summary>Its <c>@context</c> (type-system.md §32.3).</summary>
+    public EffectContext Context { get; internal set; }
 
     /// <summary>The C symbol of an <c>@export</c> function (type-system.md §28.4); null otherwise.</summary>
     public string? ExportName { get; internal set; }

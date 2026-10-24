@@ -175,6 +175,11 @@ static devices: SpinLock<DeviceTable> = SpinLock.new("nova.net.devices", ...);  
 
 ### Context effects (C7)
 
+**Implemented in C7a** as `type-system.md` §32 (ADR 0009), with three changes to the proposal below: effects are inferred
+over the whole package, so annotations are required nowhere (only where a context or bound is wanted); the kernel lattice's
+`process` is the absence of a context; and generated code calls no `might_sleep()` (its debug half is not exported to
+modules; the primitives Nova calls have their own).
+
 Effects: `sleep`, `alloc`, `irq` (callable from hard-IRQ context), `atomic`
 (callable with preemption disabled). Lattice:
 `process ⊒ atomic ⊒ irq`.

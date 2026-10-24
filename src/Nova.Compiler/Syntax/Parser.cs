@@ -462,6 +462,11 @@ public sealed class Parser
         {
             var startPos = _pos;
             var memberStart = Current.Span.Start;
+            var memberAttributes = ParseAttributes(); // on methods: @effects, @context (type-system.md §32)
+            if (!memberAttributes.IsEmpty && !(AtFunction || ((At(TokenKind.PublicKeyword) || At(TokenKind.InternalKeyword) || At(TokenKind.PrivateKeyword)) && Peek(1).Kind is TokenKind.FnKeyword or TokenKind.UnsafeKeyword)))
+            {
+                Error(DiagnosticCodes.InvalidAttribute, memberAttributes[0].Span, "attributes in a struct apply only to its methods (type-system.md §28.1)");
+            }
             var memberVisibility = ParseVisibility();
             if (At(TokenKind.DropKeyword))
             {
@@ -478,7 +483,7 @@ public sealed class Parser
             }
             else if (AtFunction)
             {
-                functions.Add(ParseFunction(memberVisibility, memberStart));
+                functions.Add(ParseFunction(memberVisibility, memberStart) with { Attributes = memberAttributes });
             }
             else if (At(TokenKind.Identifier))
             {
@@ -541,11 +546,12 @@ public sealed class Parser
         var forType = ParseType();
         var functions = ImmutableArray.CreateBuilder<FunctionDecl>();
         Expect(TokenKind.OpenBrace);
-        while (AtFunction || At(TokenKind.PublicKeyword))
+        while (AtFunction || At(TokenKind.PublicKeyword) || At(TokenKind.At))
         {
             var functionStart = Current.Span.Start;
+            var attributes = ParseAttributes(); // @effects, @context (type-system.md §32)
             var functionVisibility = ParseVisibility();
-            functions.Add(ParseFunction(functionVisibility, functionStart));
+            functions.Add(ParseFunction(functionVisibility, functionStart) with { Attributes = attributes });
         }
         Expect(TokenKind.CloseBrace);
         var name = interfaceType is NamedType { Name.Parts: [var first, ..] } ? first

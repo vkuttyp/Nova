@@ -288,6 +288,17 @@ internal sealed class TypeChecker
         }
 
         CheckMain();
+        foreach (var function in _functions)
+        {
+            if (_effectAttributes.TryGetValue(function.Syntax, out var effects))
+            {
+                (function.DeclaredEffects, function.Context) = effects;
+            }
+        }
+        foreach (var entry in _structs.Where(s => _atomicStructs.Contains(s.Decl)))
+        {
+            entry.Type.Struct!.IsAtomicContext = true;
+        }
         // Built-in items are emitted only if the program uses them.
         bool Emitted(object entry) => !_builtinItems.Contains(entry) || _usedBuiltins.Contains(entry);
         // Generic types (with type parameters unsubstituted) are checked but never emitted (§20.3).
@@ -958,6 +969,7 @@ internal sealed class TypeChecker
                     $"'{bound}' has no method '{Name(function.Name.Name)}'; an impl block holds only the interface's methods");
                 continue;
             }
+            ReadEffectAttributes(function, KnownAttributes(function.Attributes, "a method", "effects", "context"));
             var hir = DeclareFunction(function, forType);
             if (!methods.TryAdd(function.Name.Name, hir) || !implemented.TryAdd(function.Name.Name, hir))
             {
@@ -2844,7 +2856,7 @@ internal sealed class TypeChecker
             }
             else if (!known.Contains(name))
             {
-                AttributeError(attribute, name is "export" or "repr" or "effects"
+                AttributeError(attribute, name is "export" or "repr" or "effects" or "context" or "header" or "ctype" or "align" or "noncopy"
                     ? $"'@{name}' cannot be used on {where}"
                     : $"unknown attribute '@{name}'");
             }
@@ -2867,7 +2879,18 @@ internal sealed class TypeChecker
                 switch (item)
                 {
                     case StructDecl s:
-                        var structAttributes = KnownAttributes(s.Attributes, "a struct", "repr", "align", "noncopy");
+                        var structAttributes = KnownAttributes(s.Attributes, "a struct", "repr", "align", "noncopy", "context");
+                        foreach (var context in structAttributes.Where(a => Name(a.Name.Name) == "context"))
+                        {
+                            if (context.Arguments is not [NameExpr { Name: var c }] || Name(c.Name) != "atomic")
+                            {
+                                Error(DiagnosticCodes.InvalidAttribute, context.Span, "a struct takes '@context(atomic)': holding a value of it is an atomic context (type-system.md §32.3)");
+                            }
+                            else
+                            {
+                                _atomicStructs.Add(s);
+                            }
+                        }
                         foreach (var noncopy in structAttributes.Where(a => Name(a.Name.Name) == "noncopy"))
                         {
                             if (noncopy.HasParentheses)
@@ -2980,7 +3003,7 @@ internal sealed class TypeChecker
         }
         foreach (var fn in block.Functions)
         {
-            KnownAttributes(fn.Attributes, "a C function", "effects");
+            ReadEffectAttributes(fn, KnownAttributes(fn.Attributes, "a C function", "effects"));
             var problem = fn.Body is not null || fn.ExpressionBody is not null ? "cannot have a body; it is defined in C"
                 : fn.Receiver is not null ? "cannot have a 'this' parameter"
                 : !fn.TypeParameters.IsEmpty || !fn.RegionParameters.IsEmpty ? "cannot be generic"
@@ -3003,7 +3026,9 @@ internal sealed class TypeChecker
             _source = unit.Source;
             foreach (var fn in unit.Items.OfType<FunctionDecl>())
             {
-                foreach (var export in KnownAttributes(fn.Attributes, "a function", "export", "effects").Where(a => Name(a.Name.Name) == "export"))
+                var functionAttributes = KnownAttributes(fn.Attributes, "a function", "export", "effects", "context");
+                ReadEffectAttributes(fn, functionAttributes);
+                foreach (var export in functionAttributes.Where(a => Name(a.Name.Name) == "export"))
                 {
                     var symbol = export.Arguments switch
                     {
@@ -3033,9 +3058,57 @@ internal sealed class TypeChecker
             {
                 foreach (var member in s.Functions)
                 {
-                    KnownAttributes(member.Attributes, "a method");
+                    ReadEffectAttributes(member, KnownAttributes(member.Attributes, "a method", "effects", "context"));
                 }
             }
+        }
+    }
+
+    /// <summary>`@effects` and `@context` of each function declaration (§32.2–§32.3), copied to its HIR functions in <see cref="Check"/>.</summary>
+    private readonly Dictionary<FunctionDecl, (Effects? Declared, EffectContext Context)> _effectAttributes = [];
+
+    /// <summary>Structs declared `@context(atomic)` (§32.3); their instantiations inherit it.</summary>
+    private readonly HashSet<StructDecl> _atomicStructs = [];
+
+    private void ReadEffectAttributes(FunctionDecl fn, List<AttributeSyntax> attributes)
+    {
+        Effects? declared = null;
+        var context = EffectContext.None;
+        foreach (var attribute in attributes)
+        {
+            switch (Name(attribute.Name.Name))
+            {
+                case "effects":
+                {
+                    var effects = Effects.None;
+                    var valid = attribute.HasParentheses;
+                    foreach (var argument in attribute.Arguments)
+                    {
+                        var effect = argument is NameExpr name ? Name(name.Name.Name) switch { "sleep" => Effects.Sleep, "alloc" => Effects.Alloc, _ => (Effects?)null } : null;
+                        valid &= effect is not null;
+                        effects |= effect ?? Effects.None;
+                    }
+                    if (!valid)
+                    {
+                        Error(DiagnosticCodes.InvalidAttribute, attribute.Span, "'@effects' takes the effects as names, 'sleep' and 'alloc', or none: '@effects(sleep)', '@effects()' (type-system.md §32.2)");
+                    }
+                    declared = effects;
+                    break;
+                }
+                case "context":
+                {
+                    context = attribute.Arguments is [NameExpr { Name: var c }] ? Name(c.Name) switch { "atomic" => EffectContext.Atomic, "irq" => EffectContext.Irq, _ => EffectContext.None } : EffectContext.None;
+                    if (context == EffectContext.None)
+                    {
+                        Error(DiagnosticCodes.InvalidAttribute, attribute.Span, "'@context' takes 'atomic' or 'irq': '@context(atomic)' (type-system.md §32.3)");
+                    }
+                    break;
+                }
+            }
+        }
+        if (declared is not null || context != EffectContext.None)
+        {
+            _effectAttributes[fn] = (declared, context);
         }
     }
 

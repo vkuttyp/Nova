@@ -1,0 +1,132 @@
+// Context effects (type-system.md §32): every operation whose effect its context forbids is N0295.
+extern "C" {
+    @effects(sleep)
+    fn c_block(x: i32) -> i32;
+    @effects(alloc)
+    fn c_alloc(n: usize) -> *mut u8;
+    @effects()
+    fn c_quick(x: i32) -> i32;
+    fn c_unknown(x: i32) -> i32;
+}
+
+/// Holding one is atomic, like a spin-lock guard.
+@context(atomic)
+struct Guard { n: i32; drop { } }
+
+/// Its drop may sleep, like a counted reference whose release blocks.
+struct Sleepy { n: i32; drop { slow(this.n); } }
+
+/// Holds a guard by value, so it is atomic while live too.
+struct Holder { guard: Guard; tag: i32; }
+
+fn take() -> Guard => Guard { n: 1 };
+
+/// Safety: c_block has no preconditions.
+fn slow(x: i32) -> i32 => unsafe { c_block(x) };
+
+fn slower(x: i32) -> i32 => slow(x) + 1;
+
+/// Safety: c_quick and c_alloc have no preconditions.
+fn quick(x: i32) -> i32 => unsafe { c_quick(x) } + truncate<i32>(unsafe { c_alloc(1) } as usize);
+
+// ---- @context on functions ----
+
+@context(atomic)
+fn atomicBody(x: i32) -> i32 {
+    let a = quick(x); // allocating is fine in an atomic context
+    return a + slower(x); // error[N0295]
+}
+
+/// Safety: test bindings.
+@context(irq)
+fn interrupt(x: i32) -> i32 {
+    let a = unsafe { c_quick(x) };
+    let b = quick(x); // error[N0295]
+    let c = Box.create(x)!; // error[N0295]
+    return a + b + unsafe { c_unknown(x) }; // error[N0295]
+}
+
+// ---- atomic values ----
+
+fn underGuard() -> i32 {
+    let before = slower(1); // no guard yet
+    let g = take();
+    let fine = quick(2);
+    let bad = slower(3); // error[N0295]
+    return before + fine + bad + g.n;
+}
+
+fn afterScope() -> i32 {
+    {
+        let g = take();
+        let inside = quick(g.n);
+    }
+    return slower(4); // the guard is gone
+}
+
+fn maybeLive(flag: bool) -> i32 {
+    var total = 0;
+    if (flag) {
+        let g = take();
+        total += g.n;
+    }
+    total += slower(total); // fine: the guard ends with its block either way
+    let h = take();
+    if (flag) {
+        total += slower(5); // error[N0295]
+    }
+    return total + h.n;
+}
+
+fn consume(g: Guard) -> i32 {
+    return slower(g.n); // error[N0295]
+}
+
+fn handOff() -> i32 {
+    let g = take();
+    return consume(g); // the guard moved into consume, which answers for it
+}
+
+fn nested() -> i32 {
+    let h = Holder { guard: take(), tag: 2 };
+    return slower(h.tag); // error[N0295]
+}
+
+fn dropsUnderGuard() -> i32 {
+    let s = Sleepy { n: 1 };
+    let g = take();
+    {
+        let t = Sleepy { n: 2 };
+    } // error[N0295]
+    return g.n;
+}
+
+// ---- @effects bounds ----
+
+@effects(alloc)
+fn bounded(x: i32) -> i32 {
+    let a = quick(x);
+    return a + slower(x); // error[N0295]
+}
+
+@effects()
+fn pure(x: i32) -> i32 {
+    Console.writeLine(x); // error[N0295]
+    return x;
+}
+
+fn recursive(n: i32) -> i32 {
+    if (n == 0) { return slow(0); }
+    return recursive(n - 1);
+}
+
+@context(atomic)
+fn callsRecursive() -> i32 => recursive(3); // error[N0295]
+
+@context(atomic)
+fn generic<T>(value: T, n: i32) -> i32 => slower(n); // error[N0295]
+
+fn instances() -> i32 => generic(1u8, 1) + generic(true, 2) + generic(3i64, 3);
+
+fn main() -> i32 => instances() + atomicBody(1) + interrupt(1) + underGuard() + afterScope() + maybeLive(true) + handOff() + nested()
+    + dropsUnderGuard() + bounded(1) + pure(1) + callsRecursive();

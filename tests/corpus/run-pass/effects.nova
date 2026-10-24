@@ -1,0 +1,58 @@
+// Context effects (type-system.md §32) in a program that respects them: atomic and irq functions that only
+// compute, a guard whose scope is atomic, and effects declared and inferred across calls and drops.
+
+/// Holding one is an atomic context; dropping it "unlocks" (prints nothing: printing would sleep).
+@context(atomic)
+struct Guard { counter: i32; drop { } }
+
+/// A counter that never sleeps or allocates.
+struct Counter {
+    value: u64;
+    @context(irq)
+    fn tick(borrow mut this) { this.value += 1; }
+}
+
+@context(irq)
+fn checksum(data: Slice<u8>) -> u32 {
+    var sum: u32 = 0;
+    for (b in data) { sum = (sum << 1 | sum >> 31) ^ b as u32; }
+    return sum;
+}
+
+@context(atomic)
+fn record(values: borrow mut Vector<u64>, v: u64) -> bool {
+    values.push(v)!; // allocating is allowed in an atomic context (KQ-4)
+    return values.length > 0;
+}
+
+@effects(alloc)
+fn collect(n: u64) -> Vector<u64> {
+    var values = Vector<u64>.create();
+    for (i in 0..n) { record(mut values, i * i); }
+    return values;
+}
+
+fn lock(counter: i32) -> Guard => Guard { counter: counter };
+
+fn underGuard(c: borrow mut Counter) -> i32 {
+    let g = lock(7);
+    c.tick();
+    c.tick();
+    let data = [1u8, 2, 3, 250];
+    let sum = checksum(data[..]);
+    return g.counter + truncate<i32>(sum & 255);
+}
+
+fn main() -> i32 {
+    var c = Counter { value: 0 };
+    let result = underGuard(mut c);
+    Console.writeLine(result); // the guard has been dropped: printing is fine here
+    Console.writeLine(c.value);
+    let squares = collect(5);
+    Console.writeLine(squares[4]);
+    return 0;
+}
+
+// expect-stdout: 259
+// expect-stdout: 2
+// expect-stdout: 16

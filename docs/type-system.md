@@ -1528,7 +1528,8 @@ An item may be preceded by attributes `@name` or `@name(arguments)` (grammar §2
 | `@export`, `@export("symbol")` | a top-level, non-generic function | callable from C under `symbol` (default: the function's name), §28.4 |
 | `@repr(C)` | a non-generic struct | a C-compatible struct, §28.5 |
 | `@repr(u8)` … `@repr(i64)` | a non-generic enum without payloads | passed to and from C as that integer type, §28.5 |
-| `@effects(…)` | a function or an `extern` function | context effects; accepted and ignored until C7 (`cosmoos/profiles.md` §1: ignored outside the kernel profile) |
+| `@effects(…)` | a function, method or `extern` function | the effects it may have (§32.2) |
+| `@context(atomic)`, `@context(irq)` | a function or method; `atomic` also a struct | a context that forbids effects (§32.3) |
 | `@align(n)` | a non-generic struct | at least `n`-byte alignment (M8d, §29.4) |
 | `@noncopy` | a struct | a move type even if every field is Copy (OD-7; M8d) |
 
@@ -1834,3 +1835,73 @@ The same declarations work with CosmoOS's, Linux's or a C library's headers.
 Diagnostics: N0290 (a misplaced attribute, a block without `@header`, a bad header string, a member
 an imported struct cannot have), N0291 (a field type C and Nova do not both spell), N0292 (a C name),
 N0294 (an imported type used where Nova would need its size, or a borrow of a pointer or size field).
+
+## 32. Context effects (C7a; ADR 0009)
+
+```nova
+extern "C" {
+    @effects(sleep)
+    fn mutex_lock(m: *mut mutex);
+    @effects()
+    fn spin_unlock(l: *mut spinlock_t);
+}
+
+/// Holding one is an atomic context: nothing may sleep while it is live.
+@context(atomic)
+struct SpinGuard { lock: *mut spinlock_t; drop { unsafe { spin_unlock(this.lock); } } }
+
+@context(irq)
+fn onInterrupt(count: borrow mut u64) { count += 1; }   // may neither sleep nor allocate
+```
+
+### 32.1 Effects
+- There are two effects: **`sleep`** (the code may block) and **`alloc`** (it may allocate memory from a heap).
+- The effects of a function are those of every operation its body may perform, including everything it
+  calls and every value it drops (drop glue, `drop` blocks, a box's deallocation). They are inferred over the
+  whole package. Recursion is handled by iterating to a fixed point.
+- Operations have these effects:
+
+| Operation | Effects |
+|---|---|
+| a call of a Nova function | that function's effects |
+| a call of an `extern` function | its `@effects` if declared; otherwise `sleep` and `alloc` |
+| a call through a C function pointer (§29.5) | `sleep` and `alloc` |
+| `Box.create`, and `Box.createIn` with a built-in allocator | `alloc` |
+| `Box.createIn` with a user allocator (§30), dropping such a box | the effects of its `allocate`, or of its `deallocate` |
+| allocating from an `Arena`, a `Scratch` frame or a `Pool`, making one; `Vector.withCapacity`, `push`; `String.append`, `withCapacity`; `StableVector.push`; `SlotMap.insert` | `alloc` |
+| allocating from a `FixedBufferAllocator`; every other built-in operation on values, pointers and collections | none |
+| console, file, socket and process operations (§26) | `sleep` (and `alloc` for `Process.run`) |
+| dropping a value | the effects of its drop glue: `drop` blocks, the contents' drops, deallocations |
+
+### 32.2 Declaring effects
+- `@effects(e, …)`, with each `e` either `sleep` or `alloc`, and `@effects()` for none:
+  - on an `extern` function, it **declares** what the C function may do. Nova trusts it, as it trusts a
+    prototype: a wrong declaration is a wrong binding (R-2);
+  - on a Nova function or method, it is an **upper bound**. The inferred effects must be among those
+    declared (N0295, reported at an operation that has the extra effect).
+- An unknown effect name, or `@effects` twice, is N0290.
+
+### 32.3 Contexts
+- `@context(atomic)` on a function forbids `sleep` in its body. `@context(irq)`, code that may run in a
+  hardware interrupt, forbids `sleep` and `alloc` (`cosmoos/kernel-memory-and-lifetimes.md` KQ-1: IRQ
+  handlers do not allocate). An operation with a forbidden effect is N0295.
+- `@context(atomic)` on a struct makes holding a value of it an atomic context. At every point of a function
+  where a local that holds such a value (the struct itself, or a type containing it by value) may be live,
+  `sleep` is forbidden (N0295). A local is live from its initialisation until it is dropped, moved away or
+  its storage ends, and a parameter from the function's entry. "May be live" joins over the control-flow
+  paths. Dropping the holder itself is checked as if it were no longer live.
+- A context restricts the body it is declared on, not callers: any code may call an `@context(irq)` function.
+  A function called from an atomic context is checked through its inferred effects.
+- Generic functions and structs are checked in each instantiation. An error is reported once.
+
+### 32.4 What this proves
+The checker proves that Nova code performs no operation whose declared or inferred effects its context
+forbids. It relies on the `@effects` of extern functions being right, and proves nothing about C code. It
+does not prove freedom from deadlock or lock-order inversions. In CosmoOS, `might_sleep()` and lockdep remain
+the runtime check behind it (ADR 0009).
+
+Effects are checked in every profile. Only `@context`, `@effects` bounds on Nova functions, and
+`@context(atomic)` types create obligations, so code that uses none is unaffected.
+
+Diagnostics: N0295 (an operation with an effect its context or `@effects` bound forbids; the message names the
+chain of calls that leads to the operation), N0290 (misused `@effects` or `@context`).
