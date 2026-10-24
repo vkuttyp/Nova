@@ -1,0 +1,40 @@
+// @callback and raw boxes (type-system.md §34): misuse.
+extern "C" {
+    fn c_register(f: extern "C" fn(*mut void));
+}
+
+@callback
+fn fine(p: *mut void) {}
+
+@callback // error[N0290]
+@export("exported_cb")
+fn both(p: *mut void) {}
+
+@callback(now) // error[N0290]
+fn withArgument(p: *mut void) {}
+
+@callback
+fn dependsOnT<T>(p: *mut T) {} // error[N0291]
+
+@callback
+fn notFfiSafe(s: Slice<u8>) {} // error[N0291]
+
+fn plain(p: *mut void) {}
+
+/// Safety: test.
+fn uses() {
+    unsafe {
+        c_register(fine);
+        c_register(plain); // error[N0291]
+    }
+}
+
+/// Safety: test.
+fn raw() -> i32 {
+    let b = Box.create(5)!;
+    let p = Box.intoRaw(b);
+    let unknown = unsafe { Box.fromRaw(p) }; // error[N0205]
+    let notUnsafe: Box<i32> = Box.fromRaw(p); // error[N0280]
+    let notABox = Box.intoRaw(p); // error[N0205]
+    return 0;
+}

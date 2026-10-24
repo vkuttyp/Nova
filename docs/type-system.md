@@ -1540,6 +1540,7 @@ An item may be preceded by attributes `@name` or `@name(arguments)` (grammar §2
 | `@effects(…)` | a function, method or `extern` function | the effects it may have (§32.2) |
 | `@context(atomic)`, `@context(irq)` | a function or method; `atomic` also a struct | a context that forbids effects (§32.3) |
 | `@placed` | a method `fn m(borrow mut this)` | the type's placement initialiser (§33.3) |
+| `@callback` | a top-level function | a C address without a symbol, for C callbacks (§34.1) |
 | `@align(n)` | a non-generic struct | at least `n`-byte alignment (M8d, §29.4) |
 | `@noncopy` | a struct | a move type even if every field is Copy (OD-7; M8d) |
 
@@ -1680,15 +1681,15 @@ alignment to at least `n` (its size is rounded up to it). In C, the first member
   parameter and result types must be FFI-safe (§28.3) and not `@repr` enums (N0291). It is one
   address, Copy, holds no loans, and is FFI-safe itself, so C callbacks can be passed to and
   returned from C.
-- **Values.** The name of an `extern "C"` function or of an `@export` function is a value of that
+- **Values.** The name of an `extern "C"` function, an `@export` function or a `@callback` function (§34.1) is a value of that
   type where such a type is expected (a typed `let`, an argument, a field, a return value) and the
   signatures are equal. Only those functions have a C address; naming another function there is
   N0291. `0 as extern "C" fn(…) -> R` is the null pointer, `f.isNull()` tests for it, and `f as usize`
   is its address.
 - **Calls.** `f(args)`, with `f` a local, parameter or field of such a type, calls through the
   pointer. It is unsafe (N0280): the pointer may be null or point to anything.
-- Nova functions that are not exported have no C address; Nova-level function values and closures
-  are OD-9.
+- Nova functions that are neither exported nor `@callback` (§34.1, C7d) have no C address; Nova-level
+  function values and closures are OD-9.
 
 ### 29.6 Entry points
 A hosted program's entry point is `main`, called by the generated C `main` (§11). A freestanding
@@ -1981,3 +1982,56 @@ fault (exit status 70), as for imported types (§31.4).
 
 Diagnostics: N0294 (a C-laid-out type by value outside a field or a box; a move of one; a literal of one
 outside `Box.create`/`createIn`; an imported field in a literal), N0290 (a misused `@placed`).
+
+## 34. Callbacks into Nova, and raw boxes (C7d)
+
+```nova
+@header("kernel/object.h")
+extern "C" {
+    struct kobject;
+    struct kobject_type { name: *CChar; release: extern "C" fn(*mut kobject); }
+}
+
+/// The kernel calls this when the last reference goes; one C function per instance.
+/// Safety: `obj` is the first field of a `KObject<T>` made by `KRef<T>.create`, and this runs once.
+@callback
+unsafe fn release<T>(obj: *mut kobject) {
+    let object: Box<KObject<T>, KernelHeap> = Box.fromRaw(obj as *mut KObject<T>);
+}   // dropping `object` drops the data and frees it
+
+// … this.ktype.release = release<T>;   in KObject<T>'s @placed method
+```
+
+### 34.1 `@callback`: C addresses of Nova functions
+- `@callback` on a top-level function gives it a C address, as `@export` does (§29.5), without a
+  symbol. Where an `extern "C" fn` type is expected, its name is a value of that type if the
+  signatures are equal. A generic function is named with its type arguments (`release<T>` inside
+  generic code, `release<u64>` outside), and each instance has its own C function.
+- Its parameter and result types must be FFI-safe (§28.3) and must not mention its type parameters,
+  so every instance has the same C signature (N0291). It may be an `unsafe fn`: its `Safety:` line
+  states what the C caller guarantees. `@callback` with `@export` is N0290.
+- Generated C gives each instance used as a value a `static` function with the C types, which
+  converts its arguments and result as an export does (c-backend.md §2.3). Calling through the pointer
+  is unsafe and has the `sleep` and `alloc` effects (§32.1). The callback's own body is checked like any
+  other function's.
+
+### 34.2 `Box.intoRaw` and `Box.fromRaw`
+- `Box.intoRaw(b)` consumes the box `b: Box<T, A>` and returns `*mut T`, the address of its contents.
+  Nothing is dropped or freed: the caller owns the memory, and leaks it unless it gives it back. It is
+  safe (a leak is not undefined behaviour). It is for handing ownership to C: a kernel object, a deferred
+  free.
+- `Box.fromRaw(p)` (unsafe, §27.3) turns `p: *mut T` back into a box. The box type, and with it the
+  allocator, comes from the expected type (`let b: Box<T, KernelHeap> = unsafe { Box.fromRaw(p) }`);
+  without one it is N0205. Contract: `p` came from `Box.intoRaw` of a box of exactly that type, and is
+  given back once.
+- Neither applies to pool boxes (N0205). Neither has an effect. In the interpreter both work as in C.
+
+### 34.3 A struct's first field
+The fields of a struct, including a C-laid-out one (§33), are laid out in declaration order, so the
+address of a struct is the address of its first field (C11 6.7.2.1p15). A pointer to the first field
+converted with `as` is a pointer to the struct, which is how a kernel callback that receives the
+embedded `struct kobject *` or `struct quiesce_head *` finds its object. Since C7d, a field of an
+imported struct may also have a C function pointer type (§29.5), such as `kobject_type.release`.
+
+Diagnostics: N0291 (a callback whose C signature is not FFI-safe or depends on its type
+parameters), N0290 (`@callback` misused), N0205 (`Box.fromRaw` without a box type).

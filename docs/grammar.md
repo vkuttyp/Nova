@@ -202,8 +202,10 @@ Arg     = 'mut' Expr | Expr                (* `mut x` for a `borrow mut` paramet
 **Generic arguments in expressions** (`truncate<i64>(x)`, and since M6a `id<i32>(x)`,
 `Pair<u8>.make()` and `Pair<u8> { … }`): after an identifier, `<` starts generic arguments if the
 tokens up to the matching `>` can only form types (identifiers, `.`, `,`, `;`, `*` (M8a), integer literals,
-`borrow`, `mut`, and balanced `<…>` and `[…]`) and the `>` is followed by `(`, `.` or `{`.
-Otherwise `<` is the less-than operator. Write `(f < T) > (x)` to mean the comparison.
+`borrow`, `mut`, and balanced `<…>` and `[…]`) and the `>` is followed by `(`, `.` or `{`, or (since
+C7d, for a generic function's instance as a value, `release<T>`, type-system §34.1) by `)`, `,`, `;`
+or `]`, which cannot follow a comparison's `>` (it needs an operand). Otherwise `<` is the less-than
+operator. Write `(f < T) > (x)` to mean the comparison.
 
 **Struct literals** (M2a): in expression position, an identifier *immediately followed by `{`* is
 a struct literal. This is unambiguous in Nova because every `{` that opens a block follows a

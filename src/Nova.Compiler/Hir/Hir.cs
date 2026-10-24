@@ -144,6 +144,9 @@ public sealed class HirFunction
     /// <summary>Its <c>@effects</c> (type-system.md §32.2): an extern's declaration, a Nova function's bound; null without.</summary>
     public Effects? DeclaredEffects { get; internal set; }
 
+    /// <summary><c>@callback</c> (type-system.md §34.1): it has a C address, without a symbol.</summary>
+    public bool IsCallback { get; internal set; }
+
     /// <summary>Its <c>@context</c> (type-system.md §32.3).</summary>
     public EffectContext Context { get; internal set; }
 
@@ -415,6 +418,10 @@ public enum BuiltinFunction
     TargetPointerBits,
     /// <summary><c>f(args)</c> through a C function pointer (§29.5): the pointer, then the arguments.</summary>
     CallPointer,
+    /// <summary><c>Box.intoRaw(b)</c> (§34.2): the box, consumed; its contents' address.</summary>
+    BoxIntoRaw,
+    /// <summary><c>Box.fromRaw(p)</c> (§34.2): the pointer; a box of the expected type.</summary>
+    BoxFromRaw,
 }
 
 public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<HirExpr> Arguments, NovaType Type, TextSpan Span) : HirExpr(Type, Span);

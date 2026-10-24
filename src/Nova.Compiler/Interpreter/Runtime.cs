@@ -961,6 +961,8 @@ public sealed partial class NirInterpreter
             }
             case BuiltinFunction.PtrIsNull:
                 return Value.Of(Argument(0).Bits(0, 8) == 0 ? 1u : 0u, 1);
+            case BuiltinFunction.BoxIntoRaw or BuiltinFunction.BoxFromRaw:
+                return Value.Of(Argument(0).Bits(0, 8), 8); // a box is its contents' address (type-system.md §34.2)
             case BuiltinFunction.SlicePtr:
                 return Value.Of(Argument(0).Bits(0, 8), 8);
             case BuiltinFunction.SliceFromRaw:

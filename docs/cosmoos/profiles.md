@@ -155,6 +155,9 @@ named (a type, a call, a struct literal):
 | `SystemHeap`, `FailingAllocator` | there is no system heap; `FailingAllocator` wraps it |
 | `Box`, `PoolBox`, `Pool`, `Arena`, `Scratch`, `Vector`, `String`, `SlotMap`, `StableVector` | each allocates from one of the two allocators above (`Scratch` from the runtime's heap-backed stack) |
 
+Exempt, since they need no runtime: `Box.createIn` with a user allocator (C5, type-system §30) and `Box.intoRaw` / `Box.fromRaw`
+(C7d, type-system §34.2).
+
 A `main` function is N0293 too: there is no C `main` to call it. A freestanding package is entered
 through its `@export` functions (§28.4; custom entry points are M8d). Allocators that a freestanding
 environment provides (CosmoOS's `KernelHeap`, C5) will come with user-defined allocators.

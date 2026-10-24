@@ -295,6 +295,7 @@ internal sealed class TypeChecker
         CheckMain();
         foreach (var function in _functions)
         {
+            function.IsCallback = _callbacks.Contains(function.Syntax);
             if (_effectAttributes.TryGetValue(function.Syntax, out var effects))
             {
                 (function.DeclaredEffects, function.Context) = effects;
@@ -797,6 +798,9 @@ internal sealed class TypeChecker
                 $"'{type}' holds C state, which the C compiler lays out and which never moves: it can only be a field or a box's contents, made in place by 'Box.createIn' (type-system.md §33.1)");
         }
     }
+
+    /// <summary>`@callback` functions (§34.1).</summary>
+    private readonly HashSet<FunctionDecl> _callbacks = [];
 
     /// <summary>`@placed` methods (§33.3).</summary>
     private readonly HashSet<FunctionDecl> _placedMethods = [];
@@ -1897,6 +1901,45 @@ internal sealed class TypeChecker
     private NovaType BoxOf(NovaType contents, NovaType allocator) =>
         _types.BoxOf(contents, allocator, allocator == _systemHeap.Type);
 
+    /// <summary><c>Box.intoRaw(b)</c> and <c>Box.fromRaw(p)</c> (§34.2): ownership to and from a raw pointer.</summary>
+    private HirExpr CheckBoxRaw(CallExpr call, bool fromRaw, NovaType? expected)
+    {
+        if (call.Arguments.Length != 1)
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, fromRaw ? "'Box.fromRaw' takes one pointer: 'Box.fromRaw(p)'" : "'Box.intoRaw' takes one box: 'Box.intoRaw(b)'");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        if (!fromRaw)
+        {
+            var box = Synth(call.Arguments[0], null);
+            if (box.Type.IsBottom)
+            {
+                return box;
+            }
+            if (box.Type is not { IsBox: true, IsPoolBox: false })
+            {
+                Error(DiagnosticCodes.TypeMismatch, call.Arguments[0].Span, $"'Box.intoRaw' takes a box, not a '{box.Type}' (type-system.md §34.2)");
+                return ErrorResult(call.Span);
+            }
+            return new HirBuiltinCall(BuiltinFunction.BoxIntoRaw, [box], _types.PointerTo(box.Type.Pointee!, isMutable: true), call.Span);
+        }
+        var unsafeOk = RequireUnsafe(call.Span, "'Box.fromRaw'");
+        if (expected is not { IsBox: true, IsPoolBox: false })
+        {
+            Error(DiagnosticCodes.TypeMismatch, call.Span,
+                "'Box.fromRaw' needs to know the box type, allocator included: write it, as in 'let b: Box<T, A> = unsafe { Box.fromRaw(p) };' (type-system.md §34.2)");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var pointer = CheckExpr(call.Arguments[0], _types.PointerTo(expected.Pointee!, isMutable: true));
+        if (pointer.Type.IsBottom || !unsafeOk)
+        {
+            return ErrorResult(call.Span);
+        }
+        return new HirBuiltinCall(BuiltinFunction.BoxFromRaw, [pointer], expected, call.Span);
+    }
+
     /// <summary>
     /// <c>Box.create(v)</c> / <c>Box.createIn(a, v)</c> (type-system.md §18.2): a <c>Result&lt;Box&lt;T, A&gt;, AllocError&gt;</c>.
     /// The expected type, if it is such a result, gives the type hint for <c>v</c>.
@@ -1905,9 +1948,13 @@ internal sealed class TypeChecker
     {
         var text = Name(member.Member.Name);
         var withAllocator = text == "createIn";
+        if (text is "intoRaw" or "fromRaw")
+        {
+            return CheckBoxRaw(call, text == "fromRaw", expected);
+        }
         if (text is not ("create" or "createIn"))
         {
-            Error(DiagnosticCodes.UndefinedName, member.Member.Span, $"'Box' has no function '{text}'; use 'Box.create(v)' or 'Box.createIn(allocator, v)'");
+            Error(DiagnosticCodes.UndefinedName, member.Member.Span, $"'Box' has no function '{text}'; use 'Box.create(v)', 'Box.createIn(allocator, v)', 'Box.intoRaw(b)' or 'Box.fromRaw(p)'");
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
         }
@@ -2745,10 +2792,10 @@ internal sealed class TypeChecker
     /// <summary>The C address of an extern or exported function, where a function pointer type is expected (§29.5).</summary>
     private HirExpr FunctionAddress(NameExpr name, HirFunction function, NovaType expected)
     {
-        if (!function.IsExtern && function.ExportName is null)
+        if (!function.IsExtern && function.ExportName is null && !_callbacks.Contains(function.Syntax))
         {
             Error(DiagnosticCodes.NotFfiSafe, name.Span,
-                $"function '{Name(function.Name)}' has no C address: only extern \"C\" and @export functions can be C function pointers (type-system.md §29.5)");
+                $"function '{Name(function.Name)}' has no C address: only extern \"C\", @export and @callback functions can be C function pointers (type-system.md §29.5, §34.1)");
             return ErrorResult(name.Span);
         }
         var actual = _types.FunctionPointerTo([.. function.Parameters.Select(p => p.Type)], function.ReturnType);
@@ -2907,7 +2954,7 @@ internal sealed class TypeChecker
             }
             else if (!known.Contains(name))
             {
-                AttributeError(attribute, name is "export" or "repr" or "effects" or "context" or "header" or "ctype" or "align" or "noncopy" or "placed"
+                AttributeError(attribute, name is "export" or "repr" or "effects" or "context" or "header" or "ctype" or "align" or "noncopy" or "placed" or "callback"
                     ? $"'@{name}' cannot be used on {where}"
                     : $"unknown attribute '@{name}'");
             }
@@ -3077,8 +3124,23 @@ internal sealed class TypeChecker
             _source = unit.Source;
             foreach (var fn in unit.Items.OfType<FunctionDecl>())
             {
-                var functionAttributes = KnownAttributes(fn.Attributes, "a function", "export", "effects", "context");
+                var functionAttributes = KnownAttributes(fn.Attributes, "a function", "export", "effects", "context", "callback");
                 ReadEffectAttributes(fn, functionAttributes);
+                foreach (var callback in functionAttributes.Where(a => Name(a.Name.Name) == "callback"))
+                {
+                    if (callback.HasParentheses)
+                    {
+                        Error(DiagnosticCodes.InvalidAttribute, callback.Span, "'@callback' takes no arguments (type-system.md §34.1)");
+                    }
+                    else if (functionAttributes.Any(a => Name(a.Name.Name) == "export"))
+                    {
+                        Error(DiagnosticCodes.InvalidAttribute, callback.Span, "an exported function has a C address already: leave out '@callback' (type-system.md §34.1)");
+                    }
+                    else
+                    {
+                        _callbacks.Add(fn);
+                    }
+                }
                 foreach (var export in functionAttributes.Where(a => Name(a.Name.Name) == "export"))
                 {
                     var symbol = export.Arguments switch
@@ -3271,12 +3333,25 @@ internal sealed class TypeChecker
                 field.HasNovaCName = true;
                 CheckCName(Name(field.Name), syntax.Name.Span, "the C member name");
                 if (field.Type.Kind is not (TypeKind.Integer or TypeKind.Bool or TypeKind.Error) && !(field.Type.IsRawPointer && IsCPointee(field.Type.Pointee!))
-                    && field.Type.Struct is not { IsImported: true }) // an embedded member (§33.1)
+                    && field.Type.Struct is not { IsImported: true } // an embedded member (§33.1)
+                    && field.Type.Kind != TypeKind.FunctionPointer) // a C function pointer (§34.3)
                 {
                     Error(DiagnosticCodes.NotFfiSafe, syntax.Type.Span,
                         $"a field of an imported C type cannot be a '{field.Type}': only integers, bool, raw pointers to C types and embedded imported types are spelled alike in C and Nova (type-system.md §31.1)");
                 }
             }
+        }
+        foreach (var function in _functions.Where(f => _callbacks.Contains(f.Syntax) && !f.IsInstantiation))
+        {
+            _source = function.Source;
+            var what = $"callback '{Name(function.Name)}'";
+            if (function.Parameters.Any(p => p.Type.IsGeneric) || function.ReturnType.IsGeneric)
+            {
+                Error(DiagnosticCodes.NotFfiSafe, function.Syntax.Name.Span,
+                    $"{what} has a C signature that depends on its type parameters; every instance must have the same one (type-system.md §34.1)");
+                continue;
+            }
+            CheckSignatureIsFfiSafe(function, what);
         }
         foreach (var function in _functions.Where(f => f.IsExtern || f.ExportName is not null))
         {
@@ -4341,7 +4416,17 @@ internal sealed class TypeChecker
 
     /// <summary>Checks <paramref name="expr"/> against an optional expected type (type-system.md §5).</summary>
     private HirExpr CheckExpr(Expr expr, NovaType? expected) =>
-        Coerce(Synth(expr, expected is { IsVector: true } or { IsStableVector: true } ? expected : expected?.Pointee ?? expected), expected, expr.Span);
+        Coerce(Synth(expr, expected is { IsVector: true } or { IsStableVector: true } || (expected is { IsBox: true } && IsBoxFromRaw(expr))
+            ? expected : expected?.Pointee ?? expected), expected, expr.Span);
+
+    /// <summary>`Box.fromRaw(p)`, possibly in `unsafe { }`: its expected type is the box itself, not the contents (§34.2).</summary>
+    private bool IsBoxFromRaw(Expr expr) => expr switch
+    {
+        UnsafeExpr inner => IsBoxFromRaw(inner.Inner),
+        CallExpr { Callee: MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member }
+            => Lookup(target.Name.Name) is Builtin.Box && Name(member.Member.Name) == "fromRaw",
+        _ => false,
+    };
 
     /// <summary>
     /// The <c>StringView</c> an auto-dereferenced value reads, if it is the text of one: auto-deref goes
@@ -4365,7 +4450,8 @@ internal sealed class TypeChecker
         {
             case CallExpr { Callee: MemberExpr { Target: NameExpr hostedName } hostedMember } hostedCall when _profile == Profile.Freestanding
                 && Lookup(hostedName.Name.Name) is Builtin hosted && IsHostedOnly(hosted)
-                && !(hosted == Builtin.Box && Name(hostedMember.Member.Name) == "createIn"): // a user allocator needs no runtime (§30.3)
+                // A user allocator needs no runtime (§30.3), and neither do raw box conversions (§34.2).
+                && !(hosted == Builtin.Box && Name(hostedMember.Member.Name) is "createIn" or "intoRaw" or "fromRaw"):
                 // Box.create, Vector<T>.create, Console.write, … (cosmoos/profiles.md §4.1).
                 HostedOnly(hostedName.Span, $"'{Name(hostedName.Name.Name)}'");
                 CheckArgumentsLoosely(hostedCall);
@@ -4485,6 +4571,15 @@ internal sealed class TypeChecker
             case NameExpr name when expected is { IsFunctionPointer: true } && name.TypeArguments.IsEmpty
                 && Lookup(name.Name.Name) is HirFunction function:
                 return FunctionAddress(name, function, expected);
+            case NameExpr name when expected is { IsFunctionPointer: true } && !name.TypeArguments.IsEmpty
+                && Lookup(name.Name.Name) is GenericFunctionEntry generic:
+            {
+                // An instance of a generic callback, named with its type arguments (§34.1).
+                var arguments = TypeArgumentsFor(Name(generic.Decl.Name.Name), generic.Parameters, name.TypeArguments, null, [], name.Span);
+                return arguments.IsDefault || InstantiateFunction(generic, arguments, name.Span) is not { } instance
+                    ? ErrorResult(name.Span)
+                    : FunctionAddress(name, instance, expected);
+            }
             case NameExpr name:
                 return SynthName(name);
             case UnaryExpr unary:

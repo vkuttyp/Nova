@@ -212,6 +212,7 @@ public sealed class CEmitter
         EmitPoolTake();
 
         EmitExports();
+        EmitCallbacks();
         EmitMainWrapper();
     }
 
@@ -520,6 +521,31 @@ public sealed class CEmitter
 
     private IEnumerable<HirFunction> Exports => CompiledFunctions.Select(f => f.Source).Where(f => f.ExportName is not null);
 
+    /// <summary>The <c>@callback</c> functions whose address the program takes (type-system.md §34.1), in a stable order.</summary>
+    private List<HirFunction> Callbacks => CompiledFunctions
+        .SelectMany(f => f.Blocks.SelectMany(b => b.Statements))
+        .Select(s => s switch { NirAssign { Value: NirFunctionAddress a } => a.Function, NirEval { Value: NirFunctionAddress a } => a.Function, _ => null })
+        .OfType<HirFunction>().Where(f => f.IsCallback).Distinct().ToList();
+
+    /// <summary>A callback's C function: <c>nvW_</c> and the Nova function's own name (§34.1).</summary>
+    private string CallbackName(HirFunction function) => "nvW_" + FunctionName(function)["nvF_".Length..];
+
+    private string CallbackSignature(HirFunction function) =>
+        $"static {BoundaryType(function.ReturnType)} {CallbackName(function)}({CParameters(function, t => BoundaryType(t), withNames: true)})";
+
+    /// <summary>Each callback in use: a static C function with the C types that converts and calls the Nova function.</summary>
+    private void EmitCallbacks()
+    {
+        foreach (var function in Callbacks)
+        {
+            Line($"{CallbackSignature(function)} {{");
+            var call = $"{FunctionName(function)}({string.Join(", ", function.Parameters.Select((p, i) => FromBoundary(p.Type, $"a{i}")))})";
+            Line(function.ReturnType.Kind == TypeKind.Void ? $"    {call};" : $"    return {ToBoundary(function.ReturnType, call)};");
+            Line("}");
+            Line();
+        }
+    }
+
     private string ExportSignature(HirFunction function) =>
         $"{BoundaryType(function.ReturnType)} {function.ExportName}({CParameters(function, t => BoundaryType(t), withNames: true)})";
 
@@ -529,6 +555,10 @@ public sealed class CEmitter
         foreach (var function in Exports)
         {
             Line($"{ExportSignature(function)};");
+        }
+        foreach (var function in Callbacks)
+        {
+            Line($"{CallbackSignature(function)};");
         }
     }
 
@@ -1944,6 +1974,8 @@ public sealed class CEmitter
         NirBuiltin { Function: BuiltinFunction.ArgumentCount } => "nova_arg_count()",
         NirBuiltin { Function: BuiltinFunction.PtrAdd or BuiltinFunction.PtrSub or BuiltinFunction.PtrOffset } step => PointerStep(step),
         NirBuiltin { Function: BuiltinFunction.PtrIsNull } test => $"({Operand(test.Arguments[0])} == NULL)",
+        // A box is a pointer to its contents in C (c-backend.md §2), so these are casts (type-system.md §34.2).
+        NirBuiltin { Function: BuiltinFunction.BoxIntoRaw or BuiltinFunction.BoxFromRaw } raw => $"(({CType(raw.Type)}){Operand(raw.Arguments[0])})",
         // Volatile accesses (type-system.md §29.1): adding the qualifier needs no cast through uintptr_t.
         NirBuiltin { Function: BuiltinFunction.PtrReadVolatile } read => $"(*(volatile {CType(read.Type)} *){Operand(read.Arguments[0])})",
         NirBuiltin { Function: BuiltinFunction.PtrWriteVolatile } write =>
@@ -1952,7 +1984,8 @@ public sealed class CEmitter
         // A call through a C function pointer converts like an extern wrapper (c-backend §2.3); no @repr enums cross (§29.5).
         NirBuiltin { Function: BuiltinFunction.CallPointer } call => FromBoundary(call.Type,
             $"{Operand(call.Arguments[0])}({string.Join(", ", call.Arguments.Skip(1).Select(a => ToBoundary(a.Type, Operand(a))))})"),
-        NirFunctionAddress address => address.Function.IsExtern ? _symbols.GetName(address.Function.Name) : address.Function.ExportName!,
+        NirFunctionAddress address => address.Function.IsExtern ? _symbols.GetName(address.Function.Name)
+            : address.Function.ExportName ?? CallbackName(address.Function),
         NirBuiltin { Function: BuiltinFunction.TargetIsX8664 } => "nv_target_is_x86_64()",
         NirBuiltin { Function: BuiltinFunction.TargetIsAArch64 } => "nv_target_is_aarch64()",
         NirBuiltin { Function: BuiltinFunction.SlicePtr } address => $"(({CType(address.Type)})(uintptr_t){Operand(address.Arguments[0])}.ptr)",

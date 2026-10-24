@@ -1424,9 +1424,11 @@ public sealed class Parser
                     depth--;
                     if (depth == 0)
                     {
-                        // Then a call, a member (`Pair<i32>.make`) or a literal (`Pair<u8> { … }`).
+                        // Then a call, a member (`Pair<i32>.make`) or a literal (`Pair<u8> { … }`); or a generic
+                        // function's instance as a value (`release<T>`, grammar.md §2), which a comparison cannot be.
                         return Peek(i).Kind == TokenKind.Greater
-                               && Peek(i + 1).Kind is TokenKind.OpenParen or TokenKind.Dot or TokenKind.OpenBrace;
+                               && Peek(i + 1).Kind is TokenKind.OpenParen or TokenKind.Dot or TokenKind.OpenBrace
+                                   or TokenKind.CloseParen or TokenKind.Comma or TokenKind.Semicolon or TokenKind.CloseBracket;
                     }
                     break;
                 case TokenKind.Identifier or TokenKind.Dot or TokenKind.Comma or TokenKind.Semicolon or TokenKind.IntLiteral

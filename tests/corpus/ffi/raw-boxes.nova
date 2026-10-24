@@ -1,0 +1,52 @@
+// Callbacks into Nova and raw boxes (type-system.md §34): a box handed to C with Box.intoRaw, and given back by a
+// generic @callback (one C function per instance) that rebuilds it with Box.fromRaw and drops it.
+
+extern "C" {
+    fn rb_hold(object: *mut void, release: extern "C" fn(*mut void));
+    fn rb_release_all();
+    fn rb_note(tag: i32);
+}
+
+struct Tracked<T> {
+    tag: i32;
+    value: T;
+
+    /// Safety: rb_note only prints.
+    drop {
+        unsafe { rb_note(this.tag); }
+    }
+}
+
+/// Safety: `object` came from Box.intoRaw of a Box<Tracked<T>> in `hand`, and C calls this once for it.
+@callback
+unsafe fn reclaim<T>(object: *mut void) {
+    let boxed: Box<Tracked<T>> = Box.fromRaw(object as *mut Tracked<T>);
+    Console.writeLine(boxed.tag * 10);
+}
+
+/// Safety: rb_hold keeps the pointer and the callback until rb_release_all gives the box back.
+fn hand<T>(tag: i32, value: T) -> bool {
+    match (Box.create(Tracked { tag: tag, value: value })) {
+        Ok(boxed) => {
+            unsafe { rb_hold(Box.intoRaw(boxed) as *mut void, reclaim<T>); }
+            return true;
+        }
+        Err(e) => { return false; }
+    }
+}
+
+/// Safety: every box handed to C is given back by its callback.
+fn main() -> i32 {
+    if (!hand(1, 5u8) || !hand(2, 7u64) || !hand(3, [1u16, 2, 3])) { return 1; }
+    Console.writeLine(0);
+    unsafe { rb_release_all(); }
+    return 0;
+}
+
+// expect-stdout: 0
+// expect-stdout: 30
+// expect-stdout: dropped 3
+// expect-stdout: 20
+// expect-stdout: dropped 2
+// expect-stdout: 10
+// expect-stdout: dropped 1
