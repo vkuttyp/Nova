@@ -33,7 +33,9 @@ Start every session with `docs/README.md` (index and status), `docs/roadmap.md`
   `docs/milestone-8.md`, ADR 0007) is complete: `unsafe` and raw pointers (`docs/unsafe.md`), the C FFI, the freestanding profile
   (`docs/cosmoos/profiles.md` §4), and `lib/core` with MMIO and C function pointers. C4 (a freestanding object meeting
   CosmoOS's module-loader rules; `docs/cosmoos/c4-report.md`, `integrations/cosmoos/c4.py`) is complete, and so is C5 (user-defined allocators, `KernelHeap`, an in-kernel selftest module;
-  `docs/cosmoos/c5-report.md`, `integrations/cosmoos/c5.py`). C6 is next; its component is chosen with the owner. `lib/core/*.nova` is part of every
+  `docs/cosmoos/c5-report.md`, `integrations/cosmoos/c5.py`). C6a (CosmoOS's LZ4 codec in Nova, held to
+  CosmoOS's own tests; `docs/cosmoos/c6-report.md`, `integrations/cosmoos/c6.py`, `benchmarks/lz4/`) is complete; C6b
+  (fbvalid, with ADR 0008's imported C structs) is next. `lib/core/*.nova` is part of every
   package. M5 (escape and placement
   analysis; `docs/milestone-5.md`) is complete (`--placement`, `--explain-allocations`).
 - Guest checks: `python3 integrations/cosmoos/c2.py --arch x86_64` (QEMU), and for aarch64 either

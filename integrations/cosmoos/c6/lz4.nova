@@ -1,0 +1,189 @@
+// profile: freestanding
+// C6a: CosmoOS's LZ4 block codec in Nova (docs/cosmoos/c6-report.md), beside its C original kernel/core/lz4.c,
+// with the same API (kernel/include/kernel/lz4.h) and the same output byte for byte. The codec is safe Nova over
+// slices: every index is bounds-checked and every length computation overflow-checked, so no input can make it
+// read or write outside its buffers. `unsafe` appears only where the C API's raw pointers become slices.
+//
+// The format (from lz4.c): a token byte (high nibble literal length, low nibble match length - 4; 15 means
+// "more", continued in bytes while each is 255), the literals, a two-byte little-endian offset back into the
+// output (1..65535), and a match of at least 4 bytes copied from there, possibly overlapping. The last sequence
+// has literals and no match, and the last five bytes of a block are literals.
+
+/// lz4.h: LZ4_WORK_BYTES, the compressor's match table, is 4096 u32 entries.
+const HASH_SIZE: usize = 4096;
+const MIN_MATCH: usize = 4;
+const LAST_LITERALS: usize = 5;
+/// No match may start this near the end.
+const MF_LIMIT: usize = 12;
+const USIZE_MAX: usize = 18446744073709551615;
+
+fn load32(s: Slice<u8>, i: usize) -> u32 =>
+    (s[i] as u32) | ((s[i + 1] as u32) << 8) | ((s[i + 2] as u32) << 16) | ((s[i + 3] as u32) << 24);
+
+/// Knuth's multiplicative hash over four bytes, to 12 bits (lz4.c's hash4: v * 2654435761 mod 2^32, >> 20).
+fn hash4(v: u32) -> usize => (truncate<u32>(v as u64 * 2654435761) >> 20) as usize;
+
+fn smaller(a: usize, b: usize) -> usize {
+    if (a < b) { return a; }
+    return b;
+}
+
+/// Writes a length continuation (bytes of 255, then the rest) at `op`; the new position, or null if it does not fit.
+fn emitLength(out: SliceMut<u8>, at: usize, length: usize) -> usize? {
+    var op = at;
+    var len = length;
+    while (len >= 255) {
+        if (op >= out.length) { return null; }
+        out[op] = 255;
+        op += 1;
+        len -= 255;
+    }
+    if (op >= out.length) { return null; }
+    out[op] = truncate<u8>(len);
+    return op + 1;
+}
+
+/// Copies `n` bytes from `src[from..]` to `out[to..]`; both ranges are in bounds (checked by the caller and the indexing).
+fn copy(out: SliceMut<u8>, to: usize, src: Slice<u8>, from: usize, n: usize) {
+    for (i in 0..n) { out[to + i] = src[from + i]; }
+}
+
+/// Writes one sequence's token and literals at `op`: the position after them, or null if they do not fit.
+fn emitLiterals(out: SliceMut<u8>, at: usize, src: Slice<u8>, anchor: usize, lit: usize) -> usize? {
+    var op = at;
+    if (op >= out.length) { return null; }
+    out[op] = truncate<u8>(smaller(lit, 15) << 4);
+    op += 1;
+    if (lit >= 15) {
+        match (emitLength(out, op, lit - 15)) {
+            null => { return null; }
+            Some(next) => { op = next; }
+        }
+    }
+    if (out.length - op < lit) { return null; }
+    copy(out, op, src, anchor, lit);
+    return op + lit;
+}
+
+/// lz4_compress: the compressed length, or 0 when it does not fit in `out`.
+public fn compress(src: Slice<u8>, out: SliceMut<u8>, table: SliceMut<u32>) -> usize {
+    let slen = src.length;
+    for (i in 0..HASH_SIZE) { table[i] = 0; }
+    var anchor: usize = 0;
+    var op: usize = 0;
+    if (slen >= MF_LIMIT + MIN_MATCH) {
+        let mflimit = slen - MF_LIMIT;
+        var ip: usize = 1; // position 0 is never a match target: 0 means "empty" in the table
+        while (ip < mflimit) {
+            let h = hash4(load32(src, ip));
+            let candidate = table[h] as usize;
+            table[h] = truncate<u32>(ip);
+            if (candidate == 0 || ip - candidate > 65535 || load32(src, candidate) != load32(src, ip)) {
+                ip += 1;
+                continue;
+            }
+            // How far the match runs, never past where literals must be.
+            let limit = slen - LAST_LITERALS;
+            var mlen = MIN_MATCH;
+            while (ip + mlen < limit && src[ip + mlen] == src[candidate + mlen]) { mlen += 1; }
+
+            let token = op;
+            match (emitLiterals(out, op, src, anchor, ip - anchor)) {
+                null => { return 0; }
+                Some(next) => { op = next; }
+            }
+            if (out.length - op < 2) { return 0; }
+            let offset = ip - candidate;
+            out[op] = truncate<u8>(offset & 255);
+            out[op + 1] = truncate<u8>(offset >> 8);
+            op += 2;
+            let code = mlen - MIN_MATCH;
+            out[token] = out[token] | truncate<u8>(smaller(code, 15));
+            if (code >= 15) {
+                match (emitLength(out, op, code - 15)) {
+                    null => { return 0; }
+                    Some(next) => { op = next; }
+                }
+            }
+            ip += mlen;
+            anchor = ip;
+        }
+    }
+    match (emitLiterals(out, op, src, anchor, slen - anchor)) {
+        null => { return 0; }
+        Some(end) => { return end; }
+    }
+}
+
+/// Reads a length continuation at `*ip`, adding it to `length`; null if the input ends or the length would wrap.
+fn readLength(src: Slice<u8>, ip: borrow mut usize, length: usize) -> usize? {
+    var total = length;
+    loop {
+        if (ip >= src.length) { return null; }
+        let b = src[ip] as usize;
+        ip += 1;
+        if (b > USIZE_MAX - total) { return null; } // a length that wraps is not a length
+        total += b;
+        if (b != 255) { return total; }
+    }
+}
+
+/// lz4_decompress: the decompressed length, or 0 for input that is malformed or would write past the end.
+public fn decompress(src: Slice<u8>, out: SliceMut<u8>) -> usize {
+    let slen = src.length;
+    let dcap = out.length;
+    var ip: usize = 0;
+    var op: usize = 0;
+    while (op < dcap && ip < slen) {
+        let token = src[ip] as usize;
+        ip += 1;
+        var lit = token >> 4;
+        if (lit == 15) {
+            match (readLength(src, mut ip, lit)) {
+                null => { return 0; }
+                Some(total) => { lit = total; }
+            }
+        }
+        if (lit > slen - ip || lit > dcap - op) { return 0; }
+        copy(out, op, src, ip, lit);
+        ip += lit;
+        op += lit;
+        if (op == dcap) { return op; } // the output is complete
+        if (ip == slen) { return op; } // the last sequence has no match
+        if (slen - ip < 2) { return 0; }
+
+        let offset = (src[ip] as usize) | ((src[ip + 1] as usize) << 8);
+        ip += 2;
+        if (offset == 0 || offset > op) { return 0; } // a match before the start of the output
+        var mlen = token & 15;
+        if (mlen == 15) {
+            match (readLength(src, mut ip, mlen)) {
+                null => { return 0; }
+                Some(total) => { mlen = total; }
+            }
+        }
+        if (mlen > USIZE_MAX - MIN_MATCH) { return 0; }
+        mlen += MIN_MATCH;
+        if (mlen > dcap - op) { return 0; }
+        // Byte by byte, and deliberately: a match may overlap the position being written (that codes a run).
+        let from = op - offset;
+        for (i in 0..mlen) { out[op + i] = out[from + i]; }
+        op += mlen;
+    }
+    return op;
+}
+
+// ---- The C API of kernel/include/kernel/lz4.h ----
+
+/// Safety: lz4.h's contract: `src` has `slen` readable bytes, `dst` has `dcap` writable bytes, `work` has
+/// LZ4_WORK_BYTES writable bytes aligned to 4, and none of them overlap.
+@export("lz4_compress")
+unsafe fn compressC(src: *void, slen: usize, dst: *mut void, dcap: usize, work: *mut void) -> usize {
+    return compress(Slice.fromRaw(src as *u8, slen), SliceMut.fromRaw(dst as *mut u8, dcap), SliceMut.fromRaw(work as *mut u32, HASH_SIZE));
+}
+
+/// Safety: lz4.h's contract: `src` has `slen` readable bytes and `dst` has `dcap` writable bytes, not overlapping.
+@export("lz4_decompress")
+unsafe fn decompressC(src: *void, slen: usize, dst: *mut void, dcap: usize) -> usize {
+    return decompress(Slice.fromRaw(src as *u8, slen), SliceMut.fromRaw(dst as *mut u8, dcap));
+}
