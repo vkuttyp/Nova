@@ -28,7 +28,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **C3** ✅ 2026-10-23 Collections & syscalls ([report](cosmoos/c3-report.md)) | Files, sockets, processes in Profile A; a useful utility (candidate: a `wc`/`sha256sum`-class tool or a hexdump) | The utility runs in QEMU on both arches, with output compared to the C/BusyBox equivalent on a test corpus |
 | **M7** ✅ 2026-10-24 Production C backend ([plan](milestone-7.md)) | Source maps, structured C, Csmith-style fuzzer, NIR reference interpreter, MSVC best-effort | 24 h fuzz campaign with no miscompile across clang/gcc × O0/O2. Interpreter agrees with native output |
 | **M8** ✅ 2026-10-24 Systems/freestanding ([plan](milestone-8.md)) | core library split, FFI, raw pointers, MMIO types, custom entry points, `freestanding` profile | Freestanding object with no libc: verified by `llvm-nm -u` allowlist |
-| **C4** Freestanding in CosmoOS | Nova kernel-profile object built with kernel flags | Symbols, relocations and sections checked against the module loader allowlist. Frame sizes ≤ 2 KiB. No FP registers (disassembly check) |
+| **C4** ✅ 2026-10-24 Freestanding in CosmoOS ([report](cosmoos/c4-report.md)) | Nova kernel-profile object built with kernel flags | Symbols, relocations and sections checked against the module loader allowlist. Frame sizes ≤ 2 KiB. No FP registers (disassembly check) |
 | **C5** Kernel memory adapter | `KernelHeap`, `ObjectCache<T>` bindings; isolated test component | In-kernel selftest: allocation, exhaustion (fault-injected), ownership transfer, cleanup. No allocator modifications |
 | **C6** Controlled kernel component | One small, non-critical component reimplemented beside its C original (candidate chosen with the owner) | Same test suite passes for both. Performance compared (measured, reproducible) |
 | **C7** Kernel concurrency | Effects, `SpinLock<T>`/`Mutex<T>` guards, `KRef`, `QuiesceGuard`, `PerCpu`, deferred reclamation | Negative effect tests. Lockdep clean under QEMU stress. Real concurrency rules exercised |
@@ -126,6 +126,11 @@ queries; Ex18 runs, and builds as a freestanding object.
 allowlisted undefined symbols and no constructor, TLS or unwind sections, mutable globals or COMMON
 symbols.
 
-Next: **C4**, freestanding compilation in CosmoOS: a Nova object built with CosmoOS's own kernel
-flags, its symbols and relocations checked against the module loader's rules. **M9** (performance)
+**C4 is done** (2026-10-24; `cosmoos/c4-report.md`): a freestanding Nova object built with
+CosmoOS's own module flags meets every structural rule of its module loader (ELF, relocations,
+exported symbols), keeps frames under 2 KiB and touches no FP register, on both arches; eight
+negative controls are rejected.
+
+Next: **C5**, kernel memory integration: user-defined allocators, then a `KernelHeap` adapter over
+the kernel's allocation APIs, tested for allocation, exhaustion and cleanup. **M9** (performance)
 may start in parallel once its benchmarks exist. In parallel, when the owner wants it: propose the S1 in-tree port for C1 (OD-20).

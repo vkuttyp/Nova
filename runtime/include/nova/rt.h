@@ -63,8 +63,12 @@ typedef struct nv_loc {
 
 #define NV_LOC(file, line, column) ((nv_loc){(file), (line), (column)})
 
-/* Reports the panic and aborts; never returns (docs/ownership.md §0: panic = abort). */
+/* Reports the panic and aborts; never returns (docs/ownership.md §0: panic = abort). Defined by the hosted
+   runtime, or by the environment of a freestanding package (cosmoos/profiles.md §4.2). */
 NV_COLD _Noreturn void nova_panic(nv_panic_kind kind, nv_loc loc);
+
+/* The text of a panic kind ("integer overflow", ...), for any nova_panic; in the freestanding core too. */
+const char *nova_panic_reason(nv_panic_kind kind);
 
 /* ---- Checked arithmetic: + - * ---------------------------------------------------------- */
 

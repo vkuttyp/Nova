@@ -8,6 +8,23 @@
  */
 #include "nova/rt.h"
 
+const char *nova_panic_reason(nv_panic_kind kind) {
+    switch (kind) {
+    case NV_PANIC_OVERFLOW: return "integer overflow";
+    case NV_PANIC_DIVIDE_BY_ZERO: return "division by zero";
+    case NV_PANIC_SHIFT: return "shift amount out of range";
+    case NV_PANIC_UNREACHABLE: return "entered unreachable code";
+    case NV_PANIC_INDEX: return "index out of bounds";
+    case NV_PANIC_SLICE: return "slice range out of bounds";
+    case NV_PANIC_UNWRAP: return "unwrapped an Err value";
+    case NV_PANIC_SCRATCH: return "a scratch frame is already active; nest with frame.enter()";
+    case NV_PANIC_UNWRAP_NULL: return "unwrapped null";
+    case NV_PANIC_STR_BOUNDARY: return "string slice not on a character boundary";
+    case NV_PANIC_FFI_ENUM: return "invalid enum value from C";
+    default: return "unknown panic";
+    }
+}
+
 nv_str nova_io_message(uint32_t kind) {
     static const char *const messages[] = {
         "No such file or directory", "Permission denied", "File exists", "Is a directory",
@@ -185,21 +202,7 @@ static void write_err_u32(uint32_t value) {
 
 /* Message format (relied on by run-fail tests): "nova panic: <reason> at <file>:<line>:<column>\n" */
 _Noreturn void nova_panic(nv_panic_kind kind, nv_loc loc) {
-    const char *reason;
-    switch (kind) {
-    case NV_PANIC_OVERFLOW: reason = "integer overflow"; break;
-    case NV_PANIC_DIVIDE_BY_ZERO: reason = "division by zero"; break;
-    case NV_PANIC_SHIFT: reason = "shift amount out of range"; break;
-    case NV_PANIC_UNREACHABLE: reason = "entered unreachable code"; break;
-    case NV_PANIC_INDEX: reason = "index out of bounds"; break;
-    case NV_PANIC_SLICE: reason = "slice range out of bounds"; break;
-    case NV_PANIC_UNWRAP: reason = "unwrapped an Err value"; break;
-    case NV_PANIC_SCRATCH: reason = "a scratch frame is already active; nest with frame.enter()"; break;
-    case NV_PANIC_UNWRAP_NULL: reason = "unwrapped null"; break;
-    case NV_PANIC_STR_BOUNDARY: reason = "string slice not on a character boundary"; break;
-    case NV_PANIC_FFI_ENUM: reason = "invalid enum value from C"; break;
-    default: reason = "unknown panic"; break;
-    }
+    const char *reason = nova_panic_reason(kind);
     write_err_cstr("nova panic: ");
     write_err_cstr(reason);
     write_err_cstr(" at ");

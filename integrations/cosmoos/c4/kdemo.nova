@@ -1,0 +1,89 @@
+// profile: freestanding
+// C4's kernel-style package (docs/cosmoos/c4-report.md): the shapes of generated code a kernel component would
+// have, built with CosmoOS's own module flags and checked against its module loader's rules. Nothing here
+// needs the hosted runtime; panics go to nova_rt_kernel.c, which calls the kernel's panic().
+
+/// CRC-32C (Castagnoli) of `n` bytes, bit by bit: loops, shifts, checked arithmetic, a slice from raw parts.
+/// Safety: `data` points to `n` readable bytes (the C caller's contract).
+@export("kdemo_crc32c")
+unsafe fn crc32c(data: *u8, n: usize) -> u32 {
+    let bytes = Slice.fromRaw(data, n);
+    var crc: u32 = 0xFFFFFFFF;
+    for (b in bytes) {
+        crc = crc ^ (b as u32);
+        for (bit in 0u32..8) {
+            if ((crc & 1) != 0) { crc = (crc >> 1) ^ 0x82F63B78; } else { crc = crc >> 1; }
+        }
+    }
+    return crc ^ 0xFFFFFFFF;
+}
+
+@repr(C)
+struct DeviceRegs { control: Volatile<u32>; status: Volatile<u32>; data: Volatile<u32>; }
+
+/// Resets a device and returns its status: volatile register accesses through lib/core's MmioPtr.
+/// Safety: `base` is the mapped register block of a device that nothing else uses during the call.
+@export("kdemo_device_reset")
+unsafe fn deviceReset(base: usize) -> u32 {
+    var regs = MmioPtr<DeviceRegs>.at(base);
+    regs.getMut().control.write(1);
+    var spins: u32 = 0;
+    while ((regs.get().status.read() & 1) == 0 && spins < 1000) {
+        Cpu.spinHint();
+        spins += 1;
+    }
+    regs.getMut().control.write(0);
+    return regs.get().status.read();
+}
+
+enum Command { Read(u32), Write(u32, u32), Flush }
+
+fn decode(op: u32, a: u32, b: u32) -> Command? {
+    match (op) {
+        0 => { return Command.Read(a); }
+        1 => { return Command.Write(a, b); }
+        2 => { return Command.Flush; }
+        _ => { return null; }
+    }
+}
+
+/// Decodes and "executes" a command into a scratch buffer: enums, optionals, a fixed-buffer allocator.
+@export("kdemo_execute")
+fn execute(op: u32, a: u32, b: u32) -> i64 {
+    var storage: [u8; 256] = [0; 256];
+    using fba = FixedBufferAllocator.over(mut storage);
+    match (decode(op, a, b)) {
+        null => { return -1; }
+        Some(command) => {
+            match (command) {
+                Command.Read(address) => { return address as i64; }
+                Command.Write(address, value) => {
+                    match (fba.allocArray(16usize, 0u32)) {
+                        Ok(words) => {
+                            words[(address & 15) as usize] = value;
+                            return words[(address & 15) as usize] as i64 + (address as i64);
+                        }
+                        Err(e) => { return -2; }
+                    }
+                }
+                Command.Flush => { return 0; }
+            }
+        }
+    }
+}
+
+/// Calls a C callback for each of `n` items: a C function pointer, and checked index arithmetic.
+/// Safety: `visit` is a valid callback (the C caller's contract).
+@export("kdemo_each")
+unsafe fn each(n: u32, visit: extern "C" fn(u32) -> bool) -> u32 {
+    var visited: u32 = 0;
+    for (i in 0u32..n) {
+        if (!visit(i)) { break; }
+        visited += 1;
+    }
+    return visited;
+}
+
+/// Adds two counters; overflow panics (here, a kernel panic through nova_panic).
+@export("kdemo_add")
+fn add(a: u32, b: u32) -> u32 => a + b;

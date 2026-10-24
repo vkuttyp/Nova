@@ -9,6 +9,8 @@ and each script checks that CosmoOS's `git status` is unchanged.
 | `c1.py` | Milestone C1: builds CosmoOS's release image, compiles Nova programs with CosmoOS's own `USER_CFLAGS`/`USER_LDFLAGS`, links them against its `crt0.o` and `libc.a`, adds them to a copy of the boot archive, boots QEMU and runs them at the shell. `--corpus` also runs the whole run-pass and run-fail corpus in the guest |
 | `c1/nova-hello.nova` | The C1 program: prints `NOVATEST: PASS` |
 | `c1/nova-panic.nova` | Checks that a Nova panic reports its location and aborts under CosmoOS's libc |
+| `c4.py` | Milestone C4: a freestanding Nova object (`c4/kdemo.nova`) compiled with CosmoOS's own `MODULE_CFLAGS`, joined with its `ld.lld` and `MODULE_LDFLAGS`, and checked against the module loader's ELF, relocation and symbol rules, the frame limit and `scripts/check-fpregs.sh`; eight negative controls. No QEMU needed (`docs/cosmoos/c4-report.md`) |
+| `c4/nova_rt_kernel.c` | The kernel's `nova_panic`: a Nova panic is a kernel `panic()` |
 
 Requirements: a CosmoOS checkout that builds on this host (`gmake check-tools` there), QEMU with
 UEFI firmware, the .NET SDK, and Python 3.

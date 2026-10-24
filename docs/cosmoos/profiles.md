@@ -160,7 +160,8 @@ environment provides (CosmoOS's `KernelHeap`, C5) will come with user-defined al
   overflow, bounds, unwrap, and the rest. The freestanding runtime does not define it; the code that
   links the object must, and it must not return (panic = abort, OD-5). `kind` is an
   `nv_panic_kind`; `loc.file` is the Nova source path (a zero-terminated string), `loc.line` and
-  `loc.column` 1-based.
+  `loc.column` 1-based. The core's `nova_panic_reason(kind)` gives the same text the hosted runtime
+  prints ("integer overflow", …). CosmoOS's kernel binding is `integrations/cosmoos/c4/nova_rt_kernel.c` (C4).
 - The C compiler may itself emit calls to `memcpy`, `memmove`, `memset` and `memcmp` (struct copies,
   zeroing), as it may in any freestanding C (C11 §4 and the compilers' documentation); the
   environment provides them.
