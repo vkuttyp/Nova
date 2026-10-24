@@ -50,6 +50,8 @@ Design records: [od3-design.md](od3-design.md) (lifetime-parameterised aggregate
 
 Unsafe code (M8a): [unsafe.md](unsafe.md), the contract unsafe code must keep and what is checked.
 
+C struct types (ADR [0008](decisions/0008-c-struct-bindings-from-headers.md)): imported from a C codebase's own headers (CosmoOS, Linux, the C library), never re-laid-out in Nova.
+
 ## Still to be written (scheduled)
 
 `lifetimes.md`

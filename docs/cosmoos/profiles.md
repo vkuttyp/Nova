@@ -97,10 +97,19 @@ profile runtime.
 - Flags are taken from CosmoOS's build per **configuration and arch**.
   `CONFIG_*` macros change inline header behaviour, so Nova objects are never shared between debug
   and release builds [KA impl 22].
-- Kernel struct layouts (`spinlock_t`, `struct kobject`, `struct mutex`, …) are
-  **never** re-declared by Nova. Generated C `#include`s the CosmoOS headers of
-  the exact module ABI (currently 11), and Nova sees those types as opaque `@extern`
-  structs with size and alignment queried at build time [KA impl 26].
+- **Kernel struct layouts come from the kernel's own headers** (ADR 0008; [KA impl 26]). Nova never
+  writes down the layout of `spinlock_t`, `struct kobject`, `struct cosmoboot_info` or any other C
+  type. It imports them: an `extern "C"` block with `@header("kernel/bootinfo.h")` declares
+  `struct cosmoboot_info { fb_base: u64; … }` with only the fields Nova uses, by their C names.
+  Generated C `#include`s the headers of the exact module ABI (currently 11) and accesses the real
+  members, compiled with the build's own flags, so the layout is always the one of this
+  configuration and architecture. Each declared field is checked at C compile time (it exists, and
+  has exactly the declared type), so a configuration that changes a field fails to build, naming it,
+  instead of miscompiling. Imported types are used behind pointers and references only, since their
+  size is the C compiler's, not Nova's. `@repr(C)` mirrors remain for types Nova itself defines and
+  exports (type-system §28.5).
+- The mechanism is not CosmoOS-specific (ADR 0008): the same declarations import Linux kernel or C
+  library structs from those platforms' headers (§5).
 
 ### 3.3 Freestanding runtime: `runtime/core/` + `runtime/cosmoos/kernel/`
 
@@ -186,3 +195,21 @@ On the CosmoOS triples the objects also have (`FreestandingTests`, M8e): no cons
 sections (`.init_array`, `.fini_array`, `.ctors`, `.dtors`), which CosmoOS never runs; no TLS
 (`.tdata`, `.tbss`), which the kernel lacks; no unwind tables (`.eh_frame`); no COMMON symbols; and no
 mutable global state (`.data` and `.bss` empty), so nothing needs per-CPU or locking decisions.
+
+## 5. Other C codebases (Linux and others)
+
+Nova is multi-platform: nothing in the language, the C backend or the profiles above is specific to
+CosmoOS. The freestanding profile (§4), the C FFI (type-system §28) and imported C types (ADR 0008)
+work against any C codebase, the Linux kernel included:
+- **Flags** come from the codebase's own build, as they come from CosmoOS's Make here (for Linux,
+  from Kbuild for the configured kernel), never copied by hand.
+- **Types** come from its headers, imported as in §3.2, so a field Nova uses is checked against the
+  configured kernel's real layout.
+- **Symbols** are its exports (for Linux, `EXPORT_SYMBOL`/`EXPORT_SYMBOL_GPL` for modules), checked like
+  CosmoOS's in C4.
+- **Panics** go to the codebase's own reporting (`nova_panic`, §4.2; for Linux, a `BUG()`-style report
+  or a recoverable error path, decided with that integration).
+
+A Linux kernel-module profile is a future integration (not scheduled); it needs only a binding of
+`nova_panic`, the build's flags, and the headers, as C4 and C5 did for CosmoOS.
+

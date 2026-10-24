@@ -13,7 +13,7 @@ Status: C0 (deliverables 1 and 12). Based on read-only audits of CosmoOS HEAD
 |---|---|---|
 | Profile A (native userland) | **Yes, now, with no CosmoOS changes** (S0) | Public libc only (OD-15). No constructors. `crt0.o` always linked. Generated C must need no compiler-rt (AArch64 outline atomics to be verified) |
 | Profile A in-tree (port) | Yes, mechanically: one `ports/` directory, no Makefile edits | Owner must choose it as a unit (AGENTS.md) and accept checked-in generated C (OD-19, OD-20) |
-| Profile B built-in kernel code | Yes, technically | Exact kernel flags. No floats. 2 KiB frames and a 16 KiB stack. Include CosmoOS headers, never re-declare. Kernel-side units need owner approval |
+| Profile B built-in kernel code | Yes, technically | Exact kernel flags. No floats. 2 KiB frames and a 16 KiB stack. Include CosmoOS headers; import their structs, never write layouts (ADR 0008). Kernel-side units need owner approval |
 | Profile B loadable modules | Yes, with known gaps | `preempt_enable` not exported (KQ-2) means no explicit quiesce read sections in modules. No `call_quiesce` barrier (KQ-3). Callbacks not tracked at unload, so Nova must generate teardown |
 | Safety value for CosmoOS | High where it matters | Removes the panic-on-misuse class (double free, wrong cache or order). Adds compile-time checks CosmoOS lacks: typed addresses, `kobject_put` under a spinlock, guard escape |
 

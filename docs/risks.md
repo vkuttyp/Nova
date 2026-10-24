@@ -22,7 +22,7 @@ Status: Milestone 0 / C0 (master prompt §23.J and CosmoOS deliverable 9). Ranke
 |---|---|---|
 | P-1 | The CosmoOS owner does not choose a Nova unit, so nothing integrates in-tree | S0 path (`cosmoos/build-integration.md`) proves C1 with zero tree changes. Present the evidence and a minimal S1 proposal |
 | P-2 | CosmoOS CI budget (AArch64 ~51.7 of 70 min) | S1 adds one tiny port plus one marker line. Measure the added minutes in C1 |
-| P-3 | Module ABI churn (version 11; changes with every exported-struct change) | Never re-declare kernel structs. Build per ABI version. Check the ABI version at build time |
+| P-3 | Module ABI churn (version 11; changes with every exported-struct change) | Import kernel structs from the build's headers (ADR 0008): layouts are the C compiler's, and each field Nova uses is checked at compile time, so a change fails the build instead of miscompiling. Build per ABI version. Check the ABI version at build time |
 | P-4 | .NET in the CosmoOS toolchain | Not required for S0/S1 (checked-in C). S2 uses a pinned NativeAOT binary or a Dockerfile change, only with owner approval |
 | P-5 | Scope creep: implementing many features before safety foundations | Milestone gates (`roadmap.md`). The master prompt's rule 15 is enforced at review |
 | P-6 | Docs/code drift inside CosmoOS (≈18 disagreements found in the audits) | Nova designs cite *code*, not docs. Re-audit the touched interfaces at the start of each C-milestone |
