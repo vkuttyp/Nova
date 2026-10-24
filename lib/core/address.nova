@@ -1,0 +1,20 @@
+// lib/core: address types (type-system.md §29.2, cosmoos/kernel-memory-and-lifetimes.md). Distinct types with
+// no implicit conversions, so a physical address cannot be used where a virtual one is meant.
+
+/// A physical address.
+public struct PhysAddr {
+    raw: u64;
+
+    public fn of(bits: u64) -> PhysAddr => PhysAddr { raw: bits };
+    public fn bits(this) -> u64 => this.raw;
+    public fn offset(this, n: u64) -> PhysAddr => PhysAddr { raw: this.raw + n };
+}
+
+/// A virtual address.
+public struct VirtAddr {
+    raw: u64;
+
+    public fn of(bits: u64) -> VirtAddr => VirtAddr { raw: bits };
+    public fn bits(this) -> u64 => this.raw;
+    public fn offset(this, n: u64) -> VirtAddr => VirtAddr { raw: this.raw + n };
+}

@@ -14,7 +14,7 @@ public static class NirPrinter
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(symbols);
         var sb = new StringBuilder();
-        foreach (var function in program.Functions)
+        foreach (var function in program.Functions.Where(f => !CoreLibrary.Contains(f.Source.Source))) // lib/core is left out (§29.2)
         {
             var parameters = string.Join(", ", function.Locals.Take(function.ParameterCount).Select(l => $"{Local(l, symbols)}: {l.Type}"));
             sb.Append(CultureInfo.InvariantCulture, $"fn {symbols.GetName(function.Name)}({parameters}) -> {function.ReturnType} {{\n");
@@ -80,6 +80,7 @@ public static class NirPrinter
         NirSlice s => $"&{(s.IsMutable ? "mut " : "")}{Place(s.Base, symbols)}[{Operand(s.Low, symbols)}..{Operand(s.High, symbols)}]",
         NirLength l => $"length({Place(l.Slice, symbols)})",
         NirBuiltin b => $"{b.Function}({string.Join(", ", b.Arguments.Select(a => Operand(a, symbols)))})",
+        NirFunctionAddress f => $"address({symbols.GetName(f.Function.Name)})",
         _ => rvalue.ToString(),
     };
 

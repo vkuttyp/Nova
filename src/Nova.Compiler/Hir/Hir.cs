@@ -375,6 +375,20 @@ public enum BuiltinFunction
     SlicePtr,
     /// <summary><c>Slice.fromRaw(p, n)</c> / <c>SliceMut.fromRaw(p, n)</c> (§27.3): the pointer and a <c>usize</c>.</summary>
     SliceFromRaw,
+    /// <summary><c>p.readVolatile()</c> (§29.1).</summary>
+    PtrReadVolatile,
+    /// <summary><c>p.writeVolatile(v)</c> (§29.1): the pointer, then the value.</summary>
+    PtrWriteVolatile,
+    /// <summary><c>Cpu.spinHint()</c> (§29.3).</summary>
+    SpinHint,
+    /// <summary><c>Target.isX86_64()</c> (§29.3): decided by the C compiler.</summary>
+    TargetIsX8664,
+    /// <summary><c>Target.isAArch64()</c> (§29.3).</summary>
+    TargetIsAArch64,
+    /// <summary><c>Target.pointerBits()</c> (§29.3): a constant from <c>TargetInfo</c>, never emitted.</summary>
+    TargetPointerBits,
+    /// <summary><c>f(args)</c> through a C function pointer (§29.5): the pointer, then the arguments.</summary>
+    CallPointer,
 }
 
 public sealed record HirBuiltinCall(BuiltinFunction Function, ImmutableArray<HirExpr> Arguments, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
@@ -393,6 +407,16 @@ public sealed record HirBorrow(bool IsMutable, HirPlace Place, NovaType Type, Te
 
 /// <summary>An implicit call-site borrow of a value: the value lives in a temporary until the end of the statement.</summary>
 public sealed record HirBorrowTemp(bool IsMutable, HirExpr Value, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary>The C address of an extern or exported function, as a C function pointer (type-system.md §29.5).</summary>
+public sealed record HirFunctionAddress(HirFunction Function, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
+
+/// <summary>
+/// <c>borrow</c> of a place reached through a reference that is not itself a place, such as a call's result:
+/// <c>regs.getMut().data</c> (type-system.md §13.2). <see cref="Path"/> is a chain of fields, elements and derefs
+/// ending in a deref of that reference, which lives in a temporary until the end of the statement.
+/// </summary>
+public sealed record HirBorrowPath(bool IsMutable, HirExpr Path, NovaType Type, TextSpan Span) : HirExpr(Type, Span);
 
 /// <summary>A new reference to the referent of <see cref="Reference"/>: a reborrow, or a mut-to-shared coercion.</summary>
 public sealed record HirReborrow(bool IsMutable, HirExpr Reference, NovaType Type, TextSpan Span) : HirExpr(Type, Span);

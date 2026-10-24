@@ -282,6 +282,10 @@ expected shape (integers, `bool` or pointers of the right widths):
 newline to standard output, returns 0), `abs`, `memcmp`, `memcpy` and `memset` (checked accesses;
 `memcpy` with overlapping ranges is a fault, as it is undefined in C). Any other extern call is the
 fault `unsupported: call to C function '<name>'`. Exported functions are ordinary Nova functions.
+**Function pointers (M8d).** The C address of an extern or exported function is a value in a range
+no allocation uses (from `0xFFFF000000000000`); a call through it runs the exported function, or
+the C model for an extern. A call through null or any other value is a fault. Volatile accesses
+are performed like other accesses (the interpreter does every access once, in order).
 
 ### 5.5a Placement and the drop trace (M5)
 

@@ -286,16 +286,8 @@ public sealed partial class NirInterpreter
                 case ProjectionKind.Deref when type.IsStableVector || type.IsSlice || type.IsVector:
                     break;
                 case ProjectionKind.Deref when type.IsRawPointer:
-                {
-                    // Unsafe code's accesses are checked like any other, and for alignment too (unsafe.md §5).
-                    address = Pointer(address);
-                    var align = (ulong)AlignOf(type.Pointee!);
-                    if (address != 0 && address % align != 0)
-                    {
-                        throw new InterpreterFault($"misaligned access: a '{type.Pointee}' at 0x{address:x} needs alignment {align}");
-                    }
+                    address = CheckAligned(Pointer(address), type.Pointee!);
                     break;
-                }
                 case ProjectionKind.Deref:
                     address = Pointer(address); // a reference, a box, or a pool box's first field
                     break;
@@ -317,6 +309,52 @@ public sealed partial class NirInterpreter
     }
 
     private ulong Pointer(ulong address) => _memory.LoadBits(address, 8);
+
+    /// <summary>C function addresses (type-system.md §29.5): far above every allocation's address ((id + 1) &lt;&lt; 32).</summary>
+    private const ulong FunctionAddressBase = 0xFFFF_0000_0000_0000;
+
+    private readonly List<HirFunction> _addressed = [];
+
+    private ulong FunctionAddress(HirFunction function)
+    {
+        var index = _addressed.IndexOf(function);
+        if (index < 0)
+        {
+            index = _addressed.Count;
+            _addressed.Add(function);
+        }
+        return FunctionAddressBase + (ulong)index * 16u;
+    }
+
+    /// <summary>A call through a C function pointer: to the exported function, or to the C library model for an extern.</summary>
+    private Value? CallThrough(ulong address, Value[] arguments)
+    {
+        if (address == 0)
+        {
+            throw new InterpreterFault("call through a null function pointer");
+        }
+        var index = (address - FunctionAddressBase) / 16u;
+        if (address < FunctionAddressBase || (address - FunctionAddressBase) % 16u != 0 || index >= (ulong)_addressed.Count)
+        {
+            throw new InterpreterFault($"call through an invalid function pointer 0x{address:x}");
+        }
+        var function = _addressed[(int)index];
+        return function.IsExtern ? CallC(function, arguments) : Call(_functions[function], arguments);
+    }
+
+    /// <summary>Unsafe code's accesses are checked like any other, and for alignment too (unsafe.md §5).</summary>
+    private static ulong CheckAligned(ulong address, NovaType pointee)
+    {
+        var align = (ulong)AlignOf(pointee);
+        if (address != 0 && address % align != 0)
+        {
+            throw new InterpreterFault($"misaligned access: a '{pointee}' at 0x{address:x} needs alignment {align}");
+        }
+        return address;
+    }
+
+    /// <summary>The address a raw pointer value holds, checked for alignment (null and bounds are checked by the access).</summary>
+    private static ulong RawAddress(Value pointer, NovaType pointee) => CheckAligned(pointer.Bits(0, 8), pointee);
 
     private readonly Dictionary<NirPlace, NovaType> _placeTypes = new(ReferenceEqualityComparer.Instance);
 
@@ -538,6 +576,8 @@ public sealed partial class NirInterpreter
             }
             case NirBuiltin builtin:
                 return Builtin(frame, builtin);
+            case NirFunctionAddress address:
+                return Value.Of(FunctionAddress(address.Function), 8);
             default:
                 throw new InvalidOperationException($"cannot interpret rvalue {rvalue}");
         }

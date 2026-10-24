@@ -1,0 +1,38 @@
+// profile: freestanding
+// language-spec Ex18 as a freestanding object: a UART driver over memory-mapped registers (type-system.md §29).
+// uart.c is the environment: its "registers" are ordinary memory, and it supplies nova_panic.
+
+@repr(C)
+struct UartRegs { data: Volatile<u32>; status: Volatile<u32>; }
+
+struct Uart {
+    regs: MmioPtr<UartRegs>;
+
+    /// Safety: `base` is the mapped address of a UART that no other `Uart` aliases.
+    public unsafe fn attach(base: usize) -> Uart => Uart { regs: MmioPtr<UartRegs>.at(base) };
+
+    public fn putByte(borrow mut this, b: u8) {
+        while ((this.regs.get().status.read() & 0x20) != 0) { Cpu.spinHint(); }
+        this.regs.getMut().data.write(b as u32);
+    }
+}
+
+/// Writes `n` bytes from `text`; returns how many were written.
+/// Safety: `base` is the UART's register block and `text` points to `n` readable bytes (the C caller's contract).
+@export("uart_write")
+unsafe fn write(base: usize, text: *u8, n: usize) -> u32 {
+    var uart = Uart.attach(base);
+    let bytes = Slice.fromRaw(text, n);
+    var count: u32 = 0;
+    for (b in bytes) {
+        uart.putByte(b);
+        count += 1;
+    }
+    return count;
+}
+
+/// The entry point a boot stub would call: a platform-style symbol (type-system.md §29.6).
+@export("_uart_selftest")
+fn selftest() -> bool => Target.pointerBits() == 64;
+// expect-stdout: written 5, last 'o'
+// expect-stdout: selftest 1

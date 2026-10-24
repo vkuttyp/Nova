@@ -6,6 +6,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct Point;
+struct Segment;
+
 struct Point {
     int32_t x;
     int32_t y;

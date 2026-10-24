@@ -1,0 +1,53 @@
+// C function pointers (type-system.md §29.5): the addresses of extern and exported functions, called unsafely.
+
+extern "C" {
+    fn abs(v: i32) -> i32;
+}
+
+@export("demo_twice")
+fn twice(v: i32) -> i32 => v * 2;
+
+@export("demo_square")
+fn square(v: i32) -> i32 => v * v;
+
+struct Step {
+    apply: extern "C" fn(i32) -> i32;
+    times: u32;
+}
+
+/// Safety: every pointer passed in is a C function of this signature (they come from `pick`).
+unsafe fn run(step: Step, start: i32) -> i32 {
+    var value = start;
+    for (i in 0u32..step.times) { value = step.apply(value); }
+    return value;
+}
+
+fn pick(which: u32) -> extern "C" fn(i32) -> i32 {
+    if (which == 0) { return twice; }
+    if (which == 1) { return square; }
+    return abs;
+}
+
+/// Safety: the pointers come from `pick`, so each is a live function of the right type.
+fn main() -> i32 {
+    let f = pick(0);
+    Console.writeLine(unsafe { f(21) });
+    let g: extern "C" fn(i32) -> i32 = abs;
+    Console.writeLine(unsafe { g(-5) });
+    Console.writeLine(unsafe { run(Step { apply: pick(1), times: 2 }, 3) });
+    Console.writeLine(unsafe { run(Step { apply: pick(2), times: 1 }, -9) });
+    let none = 0 as extern "C" fn(i32) -> i32;
+    Console.writeLine(none.isNull());
+    Console.writeLine(f.isNull());
+    Console.writeLine(f == pick(0));
+    Console.writeLine(f != g);
+    return 0;
+}
+// expect-stdout: 42
+// expect-stdout: 5
+// expect-stdout: 81
+// expect-stdout: 9
+// expect-stdout: true
+// expect-stdout: false
+// expect-stdout: true
+// expect-stdout: true

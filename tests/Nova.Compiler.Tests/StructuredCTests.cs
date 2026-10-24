@@ -86,7 +86,7 @@ public class StructuredCTests
     [Fact]
     public void Irreducible_graph_falls_back_to_flat()
     {
-        var source = Nir("fn main() -> i32 { var b = true; if (b) { return 1; } return 0; }").Functions.Single();
+        var source = Nir("fn main() -> i32 { var b = true; if (b) { return 1; } return 0; }").Functions.Single(f => !CoreLibrary.Contains(f.Source.Source));
         var boolean = source.Locals.First(l => l.Type.Kind == TypeKind.Bool).Type;
         NirBlock entry = new(0), a = new(1), b = new(2);
         entry.Terminator = new NirBranch(new NirConst(1, boolean), a, b);
@@ -100,7 +100,7 @@ public class StructuredCTests
     [Fact]
     public void Diamond_becomes_if_else()
     {
-        var source = Nir("fn main() -> i32 { var b = true; if (b) { return 1; } return 0; }").Functions.Single();
+        var source = Nir("fn main() -> i32 { var b = true; if (b) { return 1; } return 0; }").Functions.Single(f => !CoreLibrary.Contains(f.Source.Source));
         var boolean = source.Locals.First(l => l.Type.Kind == TypeKind.Bool).Type;
         NirBlock entry = new(0), a = new(1), b = new(2), join = new(3);
         entry.Terminator = new NirBranch(new NirConst(1, boolean), a, b);

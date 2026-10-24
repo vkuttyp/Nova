@@ -1,0 +1,15 @@
+// Volatile<T> and MmioPtr<T> are not Copy (type-system.md §29.2): a copy would read a register with an ordinary
+// access, or give two owners to one register block.
+struct Regs { status: Volatile<u32>; }
+
+fn volatileIsNotCopy(regs: borrow Regs) -> u32 {
+    let copy = regs.status; // error[N0251]
+    return 0;
+}
+
+fn mmioIsNotCopy(p: MmioPtr<Regs>) -> usize {
+    let first = p;
+    return p.address(); // error[N0250]
+}
+
+fn main() {}

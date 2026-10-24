@@ -450,7 +450,7 @@ safe Nova caller could pass any pointer. `IoError.fromErrno()`, `checkedCast` an
 not built in yet. `run-pass/ffi-libc.nova` is the running form of this example, with `puts`, `strlen`
 and `memcpy` in place of `write`, which is not in every C library (MSVC calls it `_write`).
 
-### Ex18 — Unsafe systems operations: MMIO [MVP-M8, kernel profile]
+### Ex18 — Unsafe systems operations: MMIO [M8d; `type-system.md` §29]
 
 ```nova
 @repr(C)
@@ -459,22 +459,26 @@ struct UartRegs {
     status: Volatile<u32>;
 }
 
-struct Uart { regs: MmioPtr<UartRegs>; }
+struct Uart {
+    regs: MmioPtr<UartRegs>;
 
-impl Uart {
-    /// Safety: `base` must be the physical address of a mapped PL011-compatible
-    /// UART that no other `Uart` value aliases.
-    public unsafe fn attach(base: MmioPtr<UartRegs>) -> Uart => Uart { regs: base };
+    /// Safety: `base` must be the mapped address of a PL011-compatible UART that no other `Uart`
+    /// value aliases.
+    public unsafe fn attach(base: usize) -> Uart => Uart { regs: MmioPtr<UartRegs>.at(base) };
 
     public fn putByte(borrow mut this, b: u8) -> void {
-        while ((this.regs.status.read() & 0x20) != 0) { Cpu.spinHint(); }
-        this.regs.data.write(b as u32);
+        while ((this.regs.get().status.read() & 0x20) != 0) { Cpu.spinHint(); }
+        this.regs.getMut().data.write(b as u32);
     }
 }
 ```
 
-`MmioPtr<T>`, `PhysAddr`, `VirtAddr` and `DmaAddr` are distinct types with no
-implicit conversions (`cosmoos/kernel-memory-and-lifetimes.md`).
+`Volatile<T>`, `MmioPtr<T>`, `PhysAddr` and `VirtAddr` come from `lib/core`, Nova sources bundled
+with the compiler (§29.2). The address types are distinct, with no implicit conversions
+(`cosmoos/kernel-memory-and-lifetimes.md`); `DmaAddr` comes with the kernel profile. M8d changed
+this example from its M0 form: `attach` takes the address as a `usize`, and register access goes
+through `get()` / `getMut()`, whose results borrow the `MmioPtr`. It runs as
+`run-pass/mmio.nova` and, freestanding, as `freestanding/uart.nova`.
 
 ### Ex19 — Kernel-context effects [FUTURE, C7]
 

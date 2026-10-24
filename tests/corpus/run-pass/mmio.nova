@@ -1,0 +1,67 @@
+// Memory-mapped I/O with lib/core's MmioPtr and Volatile (type-system.md §29, language-spec Ex18). A local
+// register block stands in for the device, so the program runs anywhere, natively and in the interpreter.
+
+@repr(C)
+struct UartRegs { data: Volatile<u32>; status: Volatile<u32>; sent: Volatile<u32>; }
+
+struct Uart {
+    regs: MmioPtr<UartRegs>;
+
+    /// Safety: `base` is the mapped address of a UART register block that no other `Uart` aliases.
+    public unsafe fn attach(base: usize) -> Uart => Uart { regs: MmioPtr<UartRegs>.at(base) };
+
+    public fn putByte(borrow mut this, b: u8) {
+        while ((this.regs.get().status.read() & 0x20) != 0) { Cpu.spinHint(); }
+        this.regs.getMut().data.write(b as u32);
+        let sent = this.regs.get().sent.read();
+        this.regs.getMut().sent.write(sent + 1);
+    }
+
+    public fn sent(borrow this) -> u32 => this.regs.get().sent.read();
+}
+
+@align(64)
+struct CacheLine { bytes: [u8; 16]; }
+
+@align(16)
+@repr(C)
+struct Descriptor { address: u64; length: u32; }
+
+fn describe(p: PhysAddr, v: VirtAddr) -> u64 => p.bits() + v.bits();
+
+/// Safety: the register block is a local that outlives the Uart and is reached only through it.
+fn main() -> i32 {
+    var device = UartRegs {
+        data: Volatile<u32> { value: 0 },
+        status: Volatile<u32> { value: 0 },
+        sent: Volatile<u32> { value: 0 },
+    };
+    var uart = unsafe { Uart.attach(borrow mut device as *mut UartRegs as usize) };
+    uart.putByte(72);
+    uart.putByte(105);
+    Console.writeLine(uart.sent());
+    Console.writeLine(uart.regs.get().data.read());
+    Console.writeLine(uart.regs.address() == (borrow device as *UartRegs as usize));
+
+    let page = PhysAddr.of(4096);
+    Console.writeLine(page.offset(64).bits());
+    Console.writeLine(describe(page, VirtAddr.of(1)));
+
+    let line = CacheLine { bytes: [0; 16] };
+    Console.writeLine((borrow line as *CacheLine as usize) % 64);
+    var descriptors = [Descriptor { address: 1, length: 2 }, Descriptor { address: 3, length: 4 }];
+    Console.writeLine((borrow descriptors[1] as *Descriptor as usize) - (borrow descriptors[0] as *Descriptor as usize));
+
+    Console.writeLine(Target.pointerBits());
+    Console.writeLine(Target.isX86_64() != Target.isAArch64());
+    return 0;
+}
+// expect-stdout: 2
+// expect-stdout: 105
+// expect-stdout: true
+// expect-stdout: 4160
+// expect-stdout: 4097
+// expect-stdout: 0
+// expect-stdout: 16
+// expect-stdout: 64
+// expect-stdout: true

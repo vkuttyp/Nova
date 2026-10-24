@@ -121,6 +121,7 @@ internal sealed class FlowAnalysis
         HirDeref deref => Diverges(deref.Reference),
         HirReborrow reborrow => Diverges(reborrow.Reference),
         HirBorrowTemp temp => Diverges(temp.Value),
+        HirBorrowPath path => Diverges(path.Path),
         HirArrayLiteral array => array.Elements.Any(Diverges),
         HirArrayRepeat repeat => Diverges(repeat.Value),
         HirIndex index => Diverges(index.Target) || Diverges(index.Index),

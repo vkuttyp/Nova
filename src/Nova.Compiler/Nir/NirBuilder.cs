@@ -911,6 +911,11 @@ public sealed class NirBuilder
                 var value = LowerOperand(repeat.Value);
                 return value is null ? null : new NirArrayRepeat(value, repeat.Type);
             }
+            case HirFunctionAddress address:
+                return new NirFunctionAddress(address.Function, address.Type);
+            case HirBorrowPath path:
+                // The reference at the root is spilled to a temporary by LowerPlace; the loan is a reborrow through it.
+                return LowerPlace(path.Path) is { } through ? new NirRef(path.IsMutable, through, path.Type) : null;
             case HirBorrowTemp temp:
             {
                 // The value lives in a temporary until the end of the statement (lifetimes.md §6).
@@ -1084,6 +1089,7 @@ public sealed class NirBuilder
         HirDeref d => ContainsCall(d.Reference),
         HirReborrow r => ContainsCall(r.Reference),
         HirBorrowTemp t => ContainsCall(t.Value),
+        HirBorrowPath p => ContainsCall(p.Path),
         HirStructLiteral s => s.Fields.Any(f => ContainsCall(f.Value)),
         HirEnumValue e => e.Payload.Any(ContainsCall),
         HirArrayLiteral a => a.Elements.Any(ContainsCall),

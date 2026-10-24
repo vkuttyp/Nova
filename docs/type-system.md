@@ -1422,7 +1422,8 @@ fn main() -> i32 {
 ### 27.1 Types
 - `*T` (read-only) and `*mut T` (writable) are **raw pointers** to `T`. `T` is any value type, or
   `void` for an untyped pointer (`*void`, C's `void *`). It may not be a reference, slice,
-  `StringView` or other scoped type (§19.1, §25.3), `never`, or a type parameter (N0281).
+  `StringView` or other scoped type (§19.1, §25.3), or `never` (N0281). Since M8d it may be a type
+  parameter: an instantiation with a scoped type argument is then N0274, as for a box of `T`.
 - A raw pointer is one machine address: 8 bytes, aligned to 8 on LP64. It is **Copy**, needs no
   drop, holds no loans and is not scoped (U3). So it may appear anywhere a Copy value may: locals,
   parameters, results, fields, payloads and array elements. Constants of pointer type are not
@@ -1528,6 +1529,8 @@ An item may be preceded by attributes `@name` or `@name(arguments)` (grammar §2
 | `@repr(C)` | a non-generic struct | a C-compatible struct, §28.5 |
 | `@repr(u8)` … `@repr(i64)` | a non-generic enum without payloads | passed to and from C as that integer type, §28.5 |
 | `@effects(…)` | a function or an `extern` function | context effects; accepted and ignored until C7 (`cosmoos/profiles.md` §1: ignored outside the kernel profile) |
+| `@align(n)` | a non-generic struct | at least `n`-byte alignment (M8d, §29.4) |
+| `@noncopy` | a struct | a move type even if every field is Copy (OD-7; M8d) |
 
 An unknown attribute, a known one in the wrong place or with the wrong arguments, or the same
 attribute twice is N0290.
@@ -1602,3 +1605,86 @@ declarations of C library functions match the C library's own prototypes exactly
 Diagnostics: N0290 (attribute or extern declaration misuse), N0291 (a type that is not FFI-safe),
 N0292 (a C name that is invalid, a C keyword, or reserved). Calls to extern functions outside an
 unsafe context are N0280.
+
+## 29. Systems capabilities (M8d)
+
+```nova
+@repr(C)
+struct UartRegs { data: Volatile<u32>; status: Volatile<u32>; }
+
+struct Uart {
+    regs: MmioPtr<UartRegs>;
+
+    /// Safety: `base` is the mapped address of a PL011-compatible UART that no other `Uart` aliases.
+    public unsafe fn attach(base: usize) -> Uart => Uart { regs: MmioPtr<UartRegs>.at(base) };
+
+    public fn putByte(borrow mut this, b: u8) {
+        while ((this.regs.get().status.read() & 0x20) != 0) { Cpu.spinHint(); }
+        this.regs.getMut().data.write(b as u32);
+    }
+}
+```
+
+### 29.1 Volatile accesses (unsafe)
+`p.readVolatile()` and `p.writeVolatile(v)` are `read` and `write` (§27.3, same rules: unsafe, Copy
+pointee, `*mut T` to write) as **volatile** accesses: each is performed exactly once, in program
+order with every other volatile access and call, with the access width of `T`, never merged,
+split, cached or removed. In C they are `*(volatile T *)p`. They are for memory-mapped registers
+and memory shared with hardware; they do not order accesses between processors (that needs
+atomics, C7).
+
+### 29.2 `lib/core`: Nova sources bundled with the compiler
+Some core types are written in Nova itself, over raw pointers and `unsafe` (ADR 0007 decision 1).
+Their sources live in `lib/core/*.nova`, are embedded in `novac`, and are part of every package, in
+both profiles. Their names are reserved like built-in names (N0201). Code from `lib/core` is
+type-, move- and borrow-checked like user code; functions and types the package does not use are
+not emitted, and `--dump-hir`/`--dump-nir` leave them out.
+
+| Type | What it is |
+|---|---|
+| `Volatile<T: Copy>` | A cell whose value is read and written only by volatile accesses: `v.read()` (`borrow this`), `v.write(x)` (`borrow mut this`). One field of type `T`, so it has `T`'s layout and may be a `@repr(C)` field |
+| `MmioPtr<T>` | The address of a memory-mapped `T` (typically a `@repr(C)` struct of `Volatile` registers). `unsafe MmioPtr<T>.at(address: usize)` makes one; `p.get()` is a `borrow T` and `p.getMut()` (`borrow mut this`) a `borrow mut T`, tied to `p` by their signatures (§13.5), so register access needs no `unsafe`; `p.address()` is the `usize` |
+| `PhysAddr`, `VirtAddr` | Distinct address types (`cosmoos/kernel-memory-and-lifetimes.md`): `PhysAddr.of(bits: u64)`, `a.bits()`, `a.offset(n: u64)` (checked). No conversion between them, or to and from integers, except through `of` and `bits` |
+
+The contract of `MmioPtr<T>.at` (its `Safety:` line): the address is mapped, aligned for `T`, and no
+other `MmioPtr` or reference aliases the registers; the program then reaches them only through this
+value.
+
+### 29.3 CPU and target queries
+- `Cpu.spinHint()`: a hint inside a busy-wait loop (`pause` on x86-64, `yield` on AArch64, nothing
+  elsewhere). `void`, safe, allowed in both profiles.
+- `Target.pointerBits()`: `u32`, the target's pointer width (64 on every target Nova supports).
+  `Target.isX86_64()` and `Target.isAArch64()`: `bool`, the architecture the generated C is
+  compiled for. They are decided by the C compiler, not by `novac` (the generated C is the same for
+  every LP64 target), so they are not constants: use them in ordinary conditions. The interpreter
+  answers for the machine it runs on.
+
+### 29.4 `@align(n)`
+`@align(n)` on a non-generic struct, with `n` a power of two from 1 to 4096, raises the struct's
+alignment to at least `n` (its size is rounded up to it). In C, the first member is declared
+`_Alignas(n)`. It may be combined with `@repr(C)`. N0290 for other `n` or places.
+
+### 29.5 C function pointers
+- `extern "C" fn(T1, …, Tn) -> R` is the type of a pointer to a C function (grammar §2). Its
+  parameter and result types must be FFI-safe (§28.3) and not `@repr` enums (N0291). It is one
+  address, Copy, holds no loans, and is FFI-safe itself, so C callbacks can be passed to and
+  returned from C.
+- **Values.** The name of an `extern "C"` function or of an `@export` function is a value of that
+  type where such a type is expected (a typed `let`, an argument, a field, a return value) and the
+  signatures are equal. Only those functions have a C address; naming another function there is
+  N0291. `0 as extern "C" fn(…) -> R` is the null pointer, `f.isNull()` tests for it, and `f as usize`
+  is its address.
+- **Calls.** `f(args)`, with `f` a local, parameter or field of such a type, calls through the
+  pointer. It is unsafe (N0280): the pointer may be null or point to anything.
+- Nova functions that are not exported have no C address; Nova-level function values and closures
+  are OD-9.
+
+### 29.6 Entry points
+A hosted program's entry point is `main`, called by the generated C `main` (§11). A freestanding
+package has no `main` (`cosmoos/profiles.md` §4.1): its entry points are its `@export` functions,
+which the environment calls (a kernel's `init`, a boot stub's `kmain`, a callback). An export's
+symbol may start with one `_` and a lowercase letter (`_start`), the names platforms use for entry
+symbols (§28.2 reserves only `__` and `_` with an uppercase letter); other reserved C names stay N0292.
+
+Diagnostics: no new codes. Volatile accesses outside an unsafe context are N0280; a function pointer
+type or value that cannot cross to C is N0291; a misused `@align` is N0290.

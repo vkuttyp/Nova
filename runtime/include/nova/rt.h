@@ -239,6 +239,34 @@ static inline void nv_check_index(uint64_t index, uint64_t length, nv_loc loc) {
     if (index >= length) nova_panic(NV_PANIC_INDEX, loc);
 }
 
+/* ---- CPU and target queries (type-system.md §29.3) ----------------------------------------- */
+
+/* A hint inside a busy-wait loop: no effect on the program's meaning. */
+static inline void nv_spin_hint(void) {
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+    __builtin_ia32_pause();
+#elif defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
+    __asm__ __volatile__("yield");
+#endif
+}
+
+/* The architecture the generated C is compiled for: one generated file serves every LP64 target. */
+static inline bool nv_target_is_x86_64(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+    return true;
+#else
+    return false;
+#endif
+}
+
+static inline bool nv_target_is_aarch64(void) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return true;
+#else
+    return false;
+#endif
+}
+
 /* A constant index that its preceding check rejects: hides the constant from -Warray-bounds (c-backend.md §5). */
 static inline uint64_t nv_opaque_index(uint64_t index) { return index; }
 

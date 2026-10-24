@@ -53,6 +53,15 @@ Result, Box, Vector, Console, File, …) is built into the compiler and the C ru
      struct type. Arrays and other non-FFI-safe types are not allowed in them yet.
    - The interpreter models a few C library functions and faults on any other C call.
    - Function pointers move to 8d: a C callback needs a C-typed wrapper, which exports provide.
+7. **Systems capabilities (8d)**:
+   - `lib/core` is Nova source embedded in `novac` and part of every package; unused parts are
+     not emitted, so programs that do not use it compile to the same C as before.
+   - `Volatile<T>` is a cell written through `borrow mut this`, not an interior-mutable cell: writing a
+     register needs exclusive access to the register block, which `MmioPtr<T>.getMut()` gives.
+   - Only C function pointers exist (`extern "C" fn(…)`); their values are extern and exported
+     functions, whose C addresses already exist. Calling one is unsafe.
+   - `Target.isX86_64()` and friends are decided by the C compiler, because one generated C file
+     serves every LP64 target; there is no conditional compilation in Nova yet.
 
 ## Consequences
 
@@ -62,5 +71,5 @@ Result, Box, Vector, Console, File, …) is built into the compiler and the C ru
   misaligned, uninitialised accesses), but it does not track loans.
 - M5's rule 1c (address exposed to unsafe) is met conservatively: a function that turns references
   into pointers keeps its boxes on the heap.
-- Pointee types exclude type parameters in v0, so generic code cannot make raw pointers to `T`.
-  Generic allocators (memory-model §3.2) will need this lifted.
+- Pointee types excluded type parameters in 8a. 8d lifts this (`lib/core`'s `Volatile<T>` needs
+  `*T`); a scoped type argument for such a `T` is N0274, as for boxes.

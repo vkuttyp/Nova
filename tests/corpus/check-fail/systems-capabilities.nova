@@ -1,0 +1,73 @@
+// Systems capabilities (type-system.md §29): volatile accesses, lib/core types, @align, C function pointers.
+
+extern "C" {
+    fn c_callback(x: i32) -> i32;
+}
+
+@export("sys_exported")
+fn exported(x: i32) -> i32 => x;
+
+fn plain(x: i32) -> i32 => x;
+
+fn volatileOutsideUnsafe(p: *mut u32) -> u32 {
+    p.writeVolatile(1); // error[N0280]
+    return p.readVolatile(); // error[N0280]
+}
+
+/// Safety: nothing here runs.
+fn volatileRules(p: *u32, r: *mut Box<i32>) {
+    unsafe {
+        p.writeVolatile(1); // error[N0282]
+        let b = r.readVolatile(); // error[N0282]
+    }
+}
+
+struct Regs { status: Volatile<u32>; }
+
+/// Safety: nothing here runs.
+fn mmioNeedsUnsafe() -> usize {
+    let p = MmioPtr<Regs>.at(4096); // error[N0280]
+    return 0;
+}
+
+fn addressesDoNotMix(p: PhysAddr) -> VirtAddr => p; // error[N0205]
+
+struct PhysAddr { x: u8; } // error[N0201]
+
+@align(3) // error[N0290]
+struct OddAlign { a: u8; }
+
+@align(8192) // error[N0290]
+struct HugeAlign { a: u8; }
+
+@align(8) // error[N0290]
+fn alignedFunction() {}
+
+fn takesSlices(f: extern "C" fn(Slice<u8>) -> i32) {} // error[N0291]
+
+@repr(u8)
+enum Mode { A, B }
+
+fn takesEnums(f: extern "C" fn(Mode)) {} // error[N0291]
+
+fn wrongAbi(f: extern "Rust" fn()) {} // error[N0290]
+
+fn values() {
+    let a: extern "C" fn(i32) -> i32 = c_callback;
+    let b: extern "C" fn(i32) -> i32 = exported;
+    let c: extern "C" fn(i32) -> i32 = plain; // error[N0291]
+    let d: extern "C" fn(i64) -> i32 = exported; // error[N0205]
+    let e = exported(1);
+    let n = a(1); // error[N0280]
+    let p = a as *void; // error[N0208]
+    let q = a as usize;
+    let r = a.call(); // error[N0234]
+}
+
+struct Holder<T> { p: *T; }
+
+fn scopedPointee(x: borrow i32) {
+    let h = Holder<borrow i32> { p: 0 as *borrow i32 }; // error[N0281] // error[N0274]
+}
+
+fn main() {}

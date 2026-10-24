@@ -1,0 +1,36 @@
+// Callbacks across the C boundary (type-system.md §29.5): C calls Nova through a function pointer, and Nova calls
+// C through one. The C half is callbacks.c.
+
+extern "C" {
+    fn c_apply(f: extern "C" fn(i32) -> i32, x: i32) -> i32;
+    fn c_pick(negate: bool) -> extern "C" fn(i32) -> i32;
+    fn c_handler(out: *mut Handler);
+}
+
+@repr(C)
+struct Handler { run: extern "C" fn(i32) -> i32; base: i32; }
+
+@export("cb_triple")
+fn triple(v: i32) -> i32 => v * 3;
+
+@export("cb_plus_one")
+fn plusOne(v: i32) -> i32 => v + 1;
+
+/// Safety: the pointers come from C functions that return valid callbacks of this type.
+fn main() -> i32 {
+    Console.writeLine(unsafe { c_apply(triple, 14) });
+    let negate = unsafe { c_pick(true) };
+    Console.writeLine(unsafe { negate(8) });
+    let ours = unsafe { c_pick(false) };
+    Console.writeLine(unsafe { ours(8) });
+    var handler = Handler { run: 0 as extern "C" fn(i32) -> i32, base: 0 };
+    Console.writeLine(handler.run.isNull());
+    unsafe { c_handler(borrow mut handler as *mut Handler); }
+    Console.writeLine(unsafe { handler.run(handler.base) });
+    return 0;
+}
+// expect-stdout: 42
+// expect-stdout: -8
+// expect-stdout: 9
+// expect-stdout: true
+// expect-stdout: 30

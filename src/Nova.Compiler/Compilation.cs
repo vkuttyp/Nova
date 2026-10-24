@@ -58,7 +58,8 @@ public sealed class Compilation
         var symbols = new SymbolTable();
         var diagnostics = new DiagnosticBag();
         var types = new TypeTable(target);
-        var units = sources.Select(source => Parser.ParseText(source, symbols, diagnostics)).ToImmutableArray();
+        // lib/core comes first, so a package that redeclares one of its names gets the error (type-system.md §29.2).
+        var units = CoreLibrary.Sources.Concat(sources).Select(source => Parser.ParseText(source, symbols, diagnostics)).ToImmutableArray();
 
         HirProgram? hir = null;
         NirProgram? nir = null;

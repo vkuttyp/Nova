@@ -342,6 +342,7 @@ public sealed class AstPrinter
         ArrayType a => $"[{Type(a.Element)}; {Expr(a.Length)}]",
         GenericType g => $"({Name(g.Name)} {string.Join(" ", g.Arguments.Select(Type))})",
         PointerType p => $"({(p.IsMutable ? "ptr-mut" : "ptr")} {Type(p.Pointee)})",
+        FunctionPointerType f => $"(fn-ptr {Quote(f.Abi, '"')} ({string.Join(" ", f.Parameters.Select(Type))}){(f.Result is null ? "" : " " + Type(f.Result))})",
         ReferenceType r => $"({(r.IsMutable ? "borrow-mut" : "borrow")}{(r.HasSources ? "(" + string.Join(" ", r.Sources.Select(Name)) + ")" : "")} {Type(r.Pointee)})",
         _ => throw new InvalidOperationException($"unknown type syntax {type.GetType().Name}"),
     };

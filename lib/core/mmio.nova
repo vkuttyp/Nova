@@ -1,0 +1,38 @@
+// lib/core: memory-mapped I/O (type-system.md §29.2). Bundled with novac and part of every package.
+
+/// A cell read and written only by volatile accesses: a hardware register, or memory shared with a device.
+/// Not Copy: a copy would read the register with an ordinary access, once, instead of each time it is used.
+@noncopy
+public struct Volatile<T: Copy> {
+    value: T;
+
+    /// Safety: `this.value` is a live, aligned `T` (it is a field), and the read is a single volatile access.
+    public fn read(borrow this) -> T {
+        let p = borrow this.value as *T;
+        return unsafe { p.readVolatile() };
+    }
+
+    /// Safety: as `read`; `borrow mut this` makes the write exclusive.
+    public fn write(borrow mut this, v: T) {
+        let p = borrow mut this.value as *mut T;
+        unsafe { p.writeVolatile(v); }
+    }
+}
+
+/// The address of a memory-mapped `T`, typically a `@repr(C)` struct of `Volatile` registers. Not Copy: two
+/// copies would be two owners of the same registers.
+@noncopy
+public struct MmioPtr<T> {
+    base: *mut T;
+
+    /// Safety: `address` is mapped, aligned for `T`, and no other `MmioPtr` or reference aliases the registers.
+    public unsafe fn at(address: usize) -> MmioPtr<T> => MmioPtr<T> { base: address as *mut T };
+
+    /// Safety: `at`'s contract makes `base` a live `T` reached only through this value; the result borrows `this`.
+    public fn get(borrow this) -> borrow T => unsafe { Ptr.toBorrow(this.base) };
+
+    /// Safety: as `get`; `borrow mut this` makes the access exclusive.
+    public fn getMut(borrow mut this) -> borrow mut T => unsafe { Ptr.toBorrowMut(this.base) };
+
+    public fn address(borrow this) -> usize => this.base as usize;
+}

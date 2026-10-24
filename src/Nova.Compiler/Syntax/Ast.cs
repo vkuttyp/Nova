@@ -167,6 +167,9 @@ public sealed record NamedType(QualifiedName Name, TextSpan Span) : TypeSyntax(S
 
 public sealed record MissingType(TextSpan Span) : TypeSyntax(Span);
 
+/// <summary><c>extern "C" fn(T1, …) -> R</c>: a C function pointer (type-system.md §29.5); <see cref="Result"/> is null for void.</summary>
+public sealed record FunctionPointerType(string Abi, ImmutableArray<TypeSyntax> Parameters, TypeSyntax? Result, TextSpan Span) : TypeSyntax(Span);
+
 /// <summary><c>*T</c> or <c>*mut T</c>: a raw pointer (type-system.md §27.1).</summary>
 public sealed record PointerType(bool IsMutable, TypeSyntax Pointee, TextSpan Span) : TypeSyntax(Span);
 

@@ -75,7 +75,7 @@ public static class CBackend
         var hasMain = compilation.Hir.Functions.Any(f => f.Owner is null && compilation.Symbols.GetName(f.Name) == "main");
         if (requireMain && !hasMain)
         {
-            var source = compilation.Units[0].Source;
+            var source = compilation.Units.First(u => !CoreLibrary.Contains(u.Source)).Source;
             compilation.Diagnostics.Error(DiagnosticCodes.MissingMain, source, new TextSpan(0, 0),
                 "an executable needs a 'main' function: fn main() -> i32 { ... }");
             return null;

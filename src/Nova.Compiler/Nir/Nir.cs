@@ -212,6 +212,9 @@ public sealed record NirCall(HirFunction Callee, ImmutableArray<NirOperand> Argu
 
 public sealed record NirBuiltin(BuiltinFunction Function, ImmutableArray<NirOperand> Arguments, NovaType Type) : NirRvalue(Type);
 
+/// <summary>The C address of an extern or exported function (type-system.md §29.5).</summary>
+public sealed record NirFunctionAddress(HirFunction Function, NovaType Type) : NirRvalue(Type);
+
 // ---- Statements and terminators ----
 
 /// <summary>A statement. <see cref="Span"/> is the source construct it came from (for diagnostics).</summary>

@@ -49,11 +49,46 @@ public sealed class CEmitter
         _types = types;
         _options = options;
         _placement = options.Placement ? Analysis.PlacementAnalysis.Analyze(program, symbols) : null;
-        foreach (var source in sources)
+        _usedLibrary = UsedLibraryFunctions(program);
+        _usedTypes = UsedTypes();
+        // A library file is named only if code from it is emitted (type-system.md §29.2).
+        foreach (var source in sources.Where(s => !CoreLibrary.Contains(s) || _usedLibrary.Any(f => f.Source == s)))
         {
             _fileIds.TryAdd(source, _fileIds.Count);
         }
     }
+
+    /// <summary>The lib/core functions that compiled code calls, directly or through other library functions (§29.2).</summary>
+    private readonly HashSet<HirFunction> _usedLibrary;
+
+    /// <summary>The types emitted code mentions: a lib/core type is emitted only if it is one (§29.2).</summary>
+    private readonly HashSet<NovaType> _usedTypes;
+
+    private static HashSet<HirFunction> UsedLibraryFunctions(NirProgram program)
+    {
+        var byHir = program.Functions.ToDictionary(f => f.Source);
+        var used = new HashSet<HirFunction>();
+        var work = new Stack<NirFunction>(program.Functions.Where(f => !f.Source.IsGeneric && !CoreLibrary.Contains(f.Source.Source)));
+        while (work.TryPop(out var function))
+        {
+            foreach (var callee in Callees(function))
+            {
+                if (CoreLibrary.Contains(callee.Source) && used.Add(callee) && byHir.TryGetValue(callee, out var body))
+                {
+                    work.Push(body);
+                }
+            }
+        }
+        return used;
+    }
+
+    private static IEnumerable<HirFunction> Callees(NirFunction function) =>
+        function.Blocks.SelectMany(b => b.Statements).SelectMany(s => s switch
+        {
+            NirAssign { Value: NirCall call } => [call.Callee],
+            NirEval { Value: NirCall call } => [call.Callee],
+            _ => Array.Empty<HirFunction>(),
+        });
 
     public static string Emit(NirProgram program, SymbolTable symbols, TypeTable types, IEnumerable<SourceText> sources,
         CEmitOptions? options = null)
@@ -138,6 +173,7 @@ public sealed class CEmitter
 
         EmitStructs();
         EmitExterns();
+        EmitExportPrototypes();
 
         foreach (var function in CompiledFunctions)
         {
@@ -182,12 +218,14 @@ public sealed class CEmitter
         var aggregates = Aggregates.Where(t => !t.IsBox || t.IsPoolBox).ToList();
         if (aggregates.Count == 0)
         {
+            EmitFunctionPointerTypedefs();
             return;
         }
         foreach (var type in aggregates)
         {
             Line($"typedef struct {StructTag(type)} {CTypeName(type)};");
         }
+        EmitFunctionPointerTypedefs(); // after the struct names, before the structs that may hold them
         Line();
 
         var emitted = new HashSet<NovaType>();
@@ -218,11 +256,11 @@ public sealed class CEmitter
             Line($"struct {StructTag(type)} {{");
             if (definition.Fields.Count == 0)
             {
-                Line("    uint8_t nv_empty; /* C has no empty structs */");
+                Line($"    {AlignPrefix(definition, 0)}uint8_t nv_empty; /* C has no empty structs */");
             }
             foreach (var field in definition.Fields)
             {
-                Line($"    {CType(field.Type)} {FieldName(field)};");
+                Line($"    {AlignPrefix(definition, field.Index)}{CType(field.Type)} {FieldName(field)};");
             }
             Line("};");
             Line($"_Static_assert(sizeof({name}) == {size}, \"novac layout: sizeof({type})\");");
@@ -334,6 +372,10 @@ public sealed class CEmitter
 
     private string FieldName(StructField field) => (field.HasNovaCName ? "" : "f_") + _symbols.GetName(field.Name);
 
+    /// <summary><c>_Alignas(n) </c> on the first member of an <c>@align(n)</c> struct (type-system.md §29.4).</summary>
+    private static string AlignPrefix(StructDefinition definition, int index) =>
+        index == 0 && definition.ExplicitAlign > 1 ? $"_Alignas({definition.ExplicitAlign}) " : "";
+
     /// <summary>The C tag of a struct type: its Nova name for <c>@repr(C)</c> (type-system.md §28.5), else its C type name.</summary>
     private static string StructTag(NovaType type) => type.Struct is { IsReprC: true } ? type.Name : CTypeName(type);
 
@@ -353,7 +395,8 @@ public sealed class CEmitter
     /// <summary>A member of a @repr(C) struct in <c>nova_exports.h</c>: the types the generated code uses (§28.5).</summary>
     private static string HeaderMemberType(NovaType type) => type.Kind switch
     {
-        TypeKind.Struct => $"struct {type.Name}",
+        TypeKind.Struct => $"struct {StructTag(type)}", // a @repr(C) struct, or lib/core's Volatile<T> (§29.2)
+        TypeKind.FunctionPointer => CTypeName(type), // declared by a typedef earlier in the header
         TypeKind.RawPointer => $"{type.Pointee!.Kind switch { TypeKind.CChar => "char", TypeKind.Void => "void", _ => HeaderMemberType(type.Pointee!) }} *",
         _ => CTypeName(type),
     };
@@ -433,14 +476,41 @@ public sealed class CEmitter
         }
     }
 
+    private IEnumerable<HirFunction> Exports => CompiledFunctions.Select(f => f.Source).Where(f => f.ExportName is not null);
+
+    private string ExportSignature(HirFunction function) =>
+        $"{BoundaryType(function.ReturnType)} {function.ExportName}({CParameters(function, t => BoundaryType(t), withNames: true)})";
+
+    /// <summary>The exports' prototypes come before every function, so their addresses can be taken anywhere (§29.5).</summary>
+    private void EmitExportPrototypes()
+    {
+        foreach (var function in Exports)
+        {
+            Line($"{ExportSignature(function)};");
+        }
+    }
+
+    /// <summary>
+    /// <c>typedef R (*nvP_…)(A, …);</c> for each C function pointer type, with the C types of §28.3. Struct names are
+    /// declared already (forward typedefs), and a function declarator may name an incomplete struct type.
+    /// </summary>
+    private void EmitFunctionPointerTypedefs()
+    {
+        foreach (var type in _types.FunctionPointers.Where(t => !t.IsGeneric))
+        {
+            Line($"typedef {BoundaryType(type.ResultType!)} (*{CTypeName(type)})({FunctionPointerParameters(type, header: false)});");
+        }
+    }
+
+    private string FunctionPointerParameters(NovaType type, bool header) =>
+        type.ParameterTypes.IsEmpty ? "void" : string.Join(", ", type.ParameterTypes.Select(p => BoundaryType(p, header)));
+
     /// <summary>A C-callable wrapper for each <c>@export</c> function, with the C types of §28.3 (c-backend §2.3).</summary>
     private void EmitExports()
     {
-        foreach (var function in CompiledFunctions.Select(f => f.Source).Where(f => f.ExportName is not null))
+        foreach (var function in Exports)
         {
-            var signature = $"{BoundaryType(function.ReturnType)} {function.ExportName}({CParameters(function, t => BoundaryType(t), withNames: true)})";
-            Line($"{signature};");
-            Line($"{signature} {{");
+            Line($"{ExportSignature(function)} {{");
             for (var i = 0; i < function.Parameters.Length; i++)
             {
                 CheckEnumFromC(function.Parameters[i].Type, $"a{i}", function);
@@ -480,6 +550,11 @@ public sealed class CEmitter
             "#include <stdint.h>",
             "",
         };
+        // Struct names first: function pointer types may name them, and structs may hold function pointers.
+        lines.AddRange(structs.Select(t => $"struct {StructTag(t)};"));
+        lines.AddRange(types.FunctionPointers.Where(t => !t.IsGeneric).Select(t =>
+            $"typedef {emitter.BoundaryType(t.ResultType!, header: true)} (*{CTypeName(t)})({emitter.FunctionPointerParameters(t, header: true)});"));
+        lines.Add("");
         var written = new HashSet<NovaType>();
         void Struct(NovaType type)
         {
@@ -491,8 +566,9 @@ public sealed class CEmitter
             {
                 Struct(field.Type);
             }
-            lines.Add($"struct {type.Name} {{");
-            lines.AddRange(type.Struct.Fields.Select(f => $"    {HeaderMemberType(f.Type)} {symbols.GetName(f.Name)};"));
+            lines.Add($"struct {StructTag(type)} {{");
+            lines.AddRange(type.Struct.Fields.Select(f =>
+                $"    {AlignPrefix(type.Struct, f.Index)}{HeaderMemberType(f.Type)} {(f.HasNovaCName ? "" : "f_")}{symbols.GetName(f.Name)};"));
             lines.Add("};");
             lines.Add("");
         }
@@ -1055,7 +1131,50 @@ public sealed class CEmitter
     }
 
     /// <summary>User structs and enums, then the built-in instantiations, in a deterministic order.</summary>
-    private IEnumerable<NovaType> Aggregates => _program.Structs.Concat(Composites);
+    private IEnumerable<NovaType> Aggregates => _program.Structs.Where(t => !IsLibraryType(t) || _usedTypes.Contains(t)).Concat(Composites);
+
+    private static bool IsLibraryType(NovaType type) =>
+        (type.Struct?.Source is { } s && CoreLibrary.Contains(s)) || (type.Enum?.Source is { } e && CoreLibrary.Contains(e));
+
+    /// <summary>Every type the emitted functions' locals, parameters and results mention, through fields, payloads and pointees.</summary>
+    private HashSet<NovaType> UsedTypes()
+    {
+        var used = new HashSet<NovaType>();
+        void Add(NovaType? type)
+        {
+            if (type is null || !used.Add(type))
+            {
+                return;
+            }
+            Add(type.Pointee);
+            Add(type.Element);
+            foreach (var field in type.Struct?.Fields ?? [])
+            {
+                Add(field.Type);
+            }
+            foreach (var payload in type.Enum?.Variants.SelectMany(v => v.Payload) ?? [])
+            {
+                Add(payload.Type);
+            }
+        }
+        foreach (var function in CompiledFunctions)
+        {
+            Add(function.ReturnType);
+            foreach (var local in function.Locals)
+            {
+                Add(local.Type);
+            }
+        }
+        foreach (var function in _program.Externs)
+        {
+            Add(function.ReturnType);
+            foreach (var parameter in function.Parameters)
+            {
+                Add(parameter.Type);
+            }
+        }
+        return used;
+    }
 
     /// <summary>The built-in instantiations (arrays, slices, results, boxes) that generic code does not mention.</summary>
     // `nv_str` (StringView) is defined by the runtime header.
@@ -1220,7 +1339,8 @@ public sealed class CEmitter
             : $"nvG_{_symbols.GetName(function.Name).Length}{_symbols.GetName(function.Name)}{MangledArguments(function.TypeArguments)}";
 
     /// <summary>The functions compiled to C: everything but generic versions (§20.3).</summary>
-    private IEnumerable<NirFunction> CompiledFunctions => _program.Functions.Where(f => !f.Source.IsGeneric);
+    private IEnumerable<NirFunction> CompiledFunctions =>
+        _program.Functions.Where(f => !f.Source.IsGeneric && (!CoreLibrary.Contains(f.Source.Source) || _usedLibrary.Contains(f.Source)));
 
     private string Signature(NirFunction function, bool withNames)
     {
@@ -1523,7 +1643,9 @@ public sealed class CEmitter
                 or BuiltinFunction.TcpListen or BuiltinFunction.TcpConnect or BuiltinFunction.TcpPort or BuiltinFunction.TcpAccept
                 or BuiltinFunction.TcpShutdownWrite or BuiltinFunction.Argument or BuiltinFunction.ArgumentCount or BuiltinFunction.ProcessRun
                 or BuiltinFunction.IoErrorMessage or BuiltinFunction.PtrAdd or BuiltinFunction.PtrSub or BuiltinFunction.PtrOffset
-                or BuiltinFunction.PtrIsNull or BuiltinFunction.SlicePtr or BuiltinFunction.SliceFromRaw:
+                or BuiltinFunction.PtrIsNull or BuiltinFunction.SlicePtr or BuiltinFunction.SliceFromRaw or BuiltinFunction.PtrReadVolatile
+                or BuiltinFunction.PtrWriteVolatile or BuiltinFunction.SpinHint or BuiltinFunction.TargetIsX8664 or BuiltinFunction.TargetIsAArch64
+                or BuiltinFunction.CallPointer:
                 Line(builtin.Type.Kind == TypeKind.Void ? $"    {Rvalue(builtin)};" : $"    (void){Rvalue(builtin)};");
                 return;
             case BuiltinFunction.FailAfter:
@@ -1630,6 +1752,8 @@ public sealed class CEmitter
         // Pointers convert through uintptr_t: no pointer-to-pointer cast, so no -Wcast-qual or -Wcast-align (unsafe.md §4).
         NirCast { Type.IsRawPointer: true } cast => $"(({CType(cast.Type)})(uintptr_t){Operand(cast.Operand)})",
         NirCast { Operand.Type.IsRawPointer: true, Type.IsInteger: true } cast => $"((uint64_t)(uintptr_t){Operand(cast.Operand)})",
+        NirCast { Type.IsFunctionPointer: true } cast => $"(({CType(cast.Type)})(uintptr_t){Operand(cast.Operand)})",
+        NirCast { Operand.Type.IsFunctionPointer: true } cast => $"((uint64_t)(uintptr_t){Operand(cast.Operand)})",
         NirCast cast => $"({CType(cast.Type)}){Operand(cast.Operand)}",
         NirTruncate truncate => Truncate(truncate),
         NirCall call => $"{FunctionName(call.Callee)}({string.Join(", ", call.Arguments.Select(Operand))})",
@@ -1671,6 +1795,17 @@ public sealed class CEmitter
         NirBuiltin { Function: BuiltinFunction.ArgumentCount } => "nova_arg_count()",
         NirBuiltin { Function: BuiltinFunction.PtrAdd or BuiltinFunction.PtrSub or BuiltinFunction.PtrOffset } step => PointerStep(step),
         NirBuiltin { Function: BuiltinFunction.PtrIsNull } test => $"({Operand(test.Arguments[0])} == NULL)",
+        // Volatile accesses (type-system.md §29.1): adding the qualifier needs no cast through uintptr_t.
+        NirBuiltin { Function: BuiltinFunction.PtrReadVolatile } read => $"(*(volatile {CType(read.Type)} *){Operand(read.Arguments[0])})",
+        NirBuiltin { Function: BuiltinFunction.PtrWriteVolatile } write =>
+            $"(*(volatile {CType(write.Arguments[0].Type.Pointee!)} *){Operand(write.Arguments[0])} = {Operand(write.Arguments[1])})",
+        NirBuiltin { Function: BuiltinFunction.SpinHint } => "nv_spin_hint()",
+        // A call through a C function pointer converts like an extern wrapper (c-backend §2.3); no @repr enums cross (§29.5).
+        NirBuiltin { Function: BuiltinFunction.CallPointer } call => FromBoundary(call.Type,
+            $"{Operand(call.Arguments[0])}({string.Join(", ", call.Arguments.Skip(1).Select(a => ToBoundary(a.Type, Operand(a))))})"),
+        NirFunctionAddress address => address.Function.IsExtern ? _symbols.GetName(address.Function.Name) : address.Function.ExportName!,
+        NirBuiltin { Function: BuiltinFunction.TargetIsX8664 } => "nv_target_is_x86_64()",
+        NirBuiltin { Function: BuiltinFunction.TargetIsAArch64 } => "nv_target_is_aarch64()",
         NirBuiltin { Function: BuiltinFunction.SlicePtr } address => $"(({CType(address.Type)})(uintptr_t){Operand(address.Arguments[0])}.ptr)",
         NirBuiltin { Function: BuiltinFunction.SliceFromRaw } raw =>
             $"(({CTypeName(raw.Type)}){{ .ptr = {Operand(raw.Arguments[0])}, .len = {Operand(raw.Arguments[1])} }})",
@@ -1932,6 +2067,7 @@ public sealed class CEmitter
         TypeKind.Box => $"{CTypeName(type.Pointee!)} *",
         TypeKind.RawPointer => $"{CTypeName(type.Pointee!)} *", // no const (unsafe.md §4); `*void` is `void *`
         TypeKind.CChar => "char", // only behind a pointer, for C library prototypes (type-system.md §28.3)
+        TypeKind.FunctionPointer => $"nvP_{Mangle(type)}", // a typedef of the C function pointer type (§29.5)
         TypeKind.Vector => $"nvV_{Mangle(type)[1..]}",
         TypeKind.StableVector => $"nvSV_{Mangle(type)[1..]}",
         TypeKind.SlotMap => $"nvK_{Mangle(type)[1..]}",
@@ -1973,6 +2109,7 @@ public sealed class CEmitter
         TypeKind.Resource => type.Resource switch { ResourceKind.File => "IF", ResourceKind.TcpListener => "IL", _ => "IS" },
         TypeKind.Reference => $"{(type.IsMutableReference ? "Q" : "P")}{Mangle(type.Pointee!)}",
         TypeKind.RawPointer => $"{(type.IsMutablePointer ? "M" : "N")}{Mangle(type.Pointee!)}",
+        TypeKind.FunctionPointer => $"F{type.ParameterTypes.Length}{string.Concat(type.ParameterTypes.Select(Mangle))}{Mangle(type.ResultType!)}",
         TypeKind.Region when type.Region == RegionKind.Pool => $"G4Pool{Mangle(type.Element!)}",
         TypeKind.Region => $"G{type.Name.Length}{type.Name}",
         TypeKind.Void => "v",

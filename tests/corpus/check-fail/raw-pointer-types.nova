@@ -5,7 +5,7 @@ struct Wrapper<T> { value: T; }
 fn badPointees(a: *borrow i32) {} // error[N0281]
 fn badSlices(a: *Slice<u8>) {} // error[N0281]
 fn badViews(a: *StringView) {} // error[N0281]
-fn generic<T>(a: *T) {} // error[N0281]
+fn generic<T>(a: *T) {} // fine since M8d: a scoped argument for T is N0274 (type-system.md §27.1)
 
 /// Safety: these calls are rejected before they could run.
 fn operations(p: *i32, v: *void, r: *mut Res, m: *mut i32) {

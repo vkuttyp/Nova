@@ -191,6 +191,16 @@ Everything else is unchanged. Heap boxes, and every other site, use the drop glu
   `E_Variant`; each export's prototype. It is generated only when there is something to declare.
 - **C sources** given to `novac build` are copied unchanged to `c/<file>` beside `main.c` and
   compiled with it (`-I` names the directory, so `#include "nova_exports.h"` works).
+- **Function pointers (M8d, §29.5)** are `typedef R (*nvP_<code>)(A, …);` with the C types of
+  §28.3 (element code `F<n><parameters><result>`), declared after the struct names and before the
+  structs. A value is the extern function's name or the export's symbol (exports are declared
+  before every function); a call converts its arguments and result like an extern wrapper.
+  `nova_exports.h` declares the struct names first, then the function pointer types.
+- **`lib/core` (M8d, §29.2)** is compiled with every package, but only the functions that emitted
+  code calls, the types it mentions, and their files' names are emitted, so a program that uses
+  none of it gets the same C as before.
+- **Volatile accesses** (§29.1) are `(*(volatile T *)p)`; `@align(n)` (§29.4) is `_Alignas(n)` on a
+  struct's first member; `Cpu.spinHint()` and the target queries are `nova/rt.h` inlines.
 
 ## 3. Lowering of control flow and cleanup
 

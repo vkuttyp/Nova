@@ -1,0 +1,11 @@
+// Systems syntax (grammar.md §2, type-system.md §29): C function pointer types, @align, @noncopy.
+@align(64)
+@noncopy
+struct Line { bytes: [u8; 64]; }
+
+struct Table {
+    handlers: [extern "C" fn(i32, *u8) -> bool; 4];
+    fallback: extern "C" fn();
+}
+
+fn call(f: extern "C" fn(usize) -> extern "C" fn()) {}

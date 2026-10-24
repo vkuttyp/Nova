@@ -37,7 +37,7 @@ public sealed class HirPrinter
         {
             Line($"(const {_symbols.GetName(constant.Name)}: {constant.Type} = {(constant.Value is null ? "?" : Expr(constant.Value))})");
         }
-        foreach (var function in program.Functions)
+        foreach (var function in program.Functions.Where(f => !CoreLibrary.Contains(f.Source))) // lib/core is left out (§29.2)
         {
             var parameters = string.Join(" ", function.Parameters.Select(p => $"({Local(p)}: {p.Type})"));
             var owner = function.Owner is null ? "" : $"{function.Owner}.";
@@ -183,6 +183,8 @@ public sealed class HirPrinter
             : $"(new {s.Type} {string.Join(" ", s.Fields.Select(f => $"({_symbols.GetName(f.Field.Name)} {Expr(f.Value)})"))})",
         HirBorrow b => $"({(b.IsMutable ? "borrow-mut" : "borrow")} {Place(b.Place)})",
         HirBorrowTemp b => $"({(b.IsMutable ? "borrow-mut-temp" : "borrow-temp")} {Expr(b.Value)})",
+        HirFunctionAddress f => $"(address {_symbols.GetName(f.Function.Name)})",
+        HirBorrowPath b => $"({(b.IsMutable ? "borrow-mut-path" : "borrow-path")} {Expr(b.Path)})",
         HirReborrow r => $"({(r.IsMutable ? "reborrow-mut" : "reborrow")} {Expr(r.Reference)})",
         HirDeref d => $"(deref {Expr(d.Reference)}):{d.Type}",
         HirMove m => $"(move {Place(m.Place)})",

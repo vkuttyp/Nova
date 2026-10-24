@@ -1,0 +1,14 @@
+// Volatile accesses lower to volatile lvalues (type-system.md §29.1); only the lib/core code used is emitted.
+/// Safety: `p` is a live, aligned u32 that only this function uses.
+unsafe fn poke(p: *mut u32) -> u32 {
+    p.writeVolatile(1);
+    return p.readVolatile();
+}
+
+/// Safety: the pointer is made from a live local.
+fn main() -> i32 {
+    var x = 0u32;
+    let r = unsafe { poke(borrow mut x as *mut u32) };
+    Cpu.spinHint();
+    return truncate<i32>(r);
+}

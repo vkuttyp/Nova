@@ -1,0 +1,14 @@
+(unit
+  (@align 64)
+  (@noncopy)
+  (struct default Line
+    (field default bytes [u8; 64])
+  )
+  (struct default Table
+    (field default handlers [(fn-ptr "C" (i32 (ptr u8)) bool); 4])
+    (field default fallback (fn-ptr "C" ()))
+  )
+  (fn default call (params (f (fn-ptr "C" (usize) (fn-ptr "C" ()))))
+    (block)
+  )
+)

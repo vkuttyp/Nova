@@ -665,6 +665,30 @@ public sealed class Parser
 
     private TypeSyntax ParseTypeCore()
     {
+        if (At(TokenKind.ExternKeyword))
+        {
+            // A C function pointer `extern "C" fn(T, U) -> R` (type-system.md §29.5).
+            var start = Advance().Span.Start;
+            var abi = At(TokenKind.StringLiteral) ? _stream.Strings[Advance().Data] : "";
+            if (abi.Length == 0)
+            {
+                Expect(TokenKind.StringLiteral);
+            }
+            Expect(TokenKind.FnKeyword);
+            Expect(TokenKind.OpenParen);
+            var parameters = ImmutableArray.CreateBuilder<TypeSyntax>();
+            while (!At(TokenKind.CloseParen) && !At(TokenKind.EndOfFile))
+            {
+                parameters.Add(ParseType());
+                if (!Eat(TokenKind.Comma))
+                {
+                    break;
+                }
+            }
+            Expect(TokenKind.CloseParen);
+            var result = Eat(TokenKind.Arrow) ? ParseType() : null;
+            return new FunctionPointerType(abi, parameters.ToImmutable(), result, SpanFrom(start));
+        }
         if (At(TokenKind.Star))
         {
             // A raw pointer `*T` / `*mut T` (type-system.md §27.1).

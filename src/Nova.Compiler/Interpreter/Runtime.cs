@@ -918,6 +918,26 @@ public sealed partial class NirInterpreter
                 return Value.Of(Argument(0).Bits(0, 8), 8);
             case BuiltinFunction.SliceFromRaw:
                 return View(Argument(0).Bits(0, 8), (ulong)Integer(Argument(1), arguments[1].Type));
+            case BuiltinFunction.PtrReadVolatile:
+            {
+                // The interpreter performs every access once, in order: volatile adds nothing to check (§29.1).
+                var pointee = arguments[0].Type.Pointee!;
+                return _memory.Load(RawAddress(Argument(0), pointee), SizeOf(pointee));
+            }
+            case BuiltinFunction.PtrWriteVolatile:
+                _memory.Store(RawAddress(Argument(0), arguments[0].Type.Pointee!), Argument(1));
+                return null;
+            case BuiltinFunction.SpinHint:
+                return null;
+            case BuiltinFunction.CallPointer:
+                // The C types of the pointer's signature have the same bits as Nova's (§28.3): nothing converts.
+                return CallThrough(Argument(0).Bits(0, 8), [.. arguments.Skip(1).Select(a => Operand(frame, a))]);
+            case BuiltinFunction.TargetIsX8664:
+                return Value.Of(System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
+                    == System.Runtime.InteropServices.Architecture.X64 ? 1u : 0u, 1);
+            case BuiltinFunction.TargetIsAArch64:
+                return Value.Of(System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
+                    == System.Runtime.InteropServices.Architecture.Arm64 ? 1u : 0u, 1);
             default:
                 return IoBuiltin(frame, builtin);
         }

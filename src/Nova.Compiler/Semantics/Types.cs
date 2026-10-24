@@ -79,6 +79,11 @@ public enum TypeKind
     RawPointer,
     /// <summary><c>CChar</c> (type-system.md §28.3): C's <c>char</c>, only ever a pointee.</summary>
     CChar,
+    /// <summary>
+    /// <c>extern "C" fn(…) -> R</c> (type-system.md §29.5): the address of a C function, with
+    /// <see cref="NovaType.ParameterTypes"/> and <see cref="NovaType.ResultType"/>.
+    /// </summary>
+    FunctionPointer,
 }
 
 /// <summary>
@@ -278,6 +283,12 @@ public sealed class StructDefinition
     /// <summary><c>@repr(C)</c> (type-system.md §28.5): in C it is <c>struct Name</c> with members named as in Nova.</summary>
     public bool IsReprC { get; internal set; }
 
+    /// <summary><c>@noncopy</c> (OD-7, type-system.md §29.2): a move type even if every field is Copy.</summary>
+    public bool IsNonCopy { get; internal set; }
+
+    /// <summary>The <c>n</c> of <c>@align(n)</c> (type-system.md §29.4), or 1.</summary>
+    public int ExplicitAlign { get; internal set; } = 1;
+
     /// <summary>The body of the struct's <c>drop</c> block as a <c>borrow mut this</c> method, if any.</summary>
     public HirFunction? DropFunction { get; internal set; }
 
@@ -327,6 +338,23 @@ public sealed class NovaType
 
     /// <summary>True for <c>*mut T</c>.</summary>
     public bool IsMutablePointer { get; }
+
+    /// <summary>A C function pointer type (§29.5).</summary>
+    internal NovaType(ImmutableArray<NovaType> parameters, NovaType result)
+        : this(TypeKind.FunctionPointer,
+            $"extern \"C\" fn({string.Join(", ", parameters.Select(p => p.Name))}){(result.Kind == TypeKind.Void ? "" : " -> " + result.Name)}")
+    {
+        ParameterTypes = parameters;
+        ResultType = result;
+    }
+
+    /// <summary>For a function pointer type: its parameter types; empty otherwise.</summary>
+    public ImmutableArray<NovaType> ParameterTypes { get; } = [];
+
+    /// <summary>For a function pointer type: its result type; null otherwise.</summary>
+    public NovaType? ResultType { get; }
+
+    public bool IsFunctionPointer => Kind == TypeKind.FunctionPointer;
 
     public bool IsRawPointer => Kind == TypeKind.RawPointer;
 
@@ -604,6 +632,27 @@ public sealed class TypeTable
         return array;
     }
 
+    private readonly Dictionary<string, NovaType> _functionPointers = [];
+
+    /// <summary>The unique <c>extern "C" fn(…) -> R</c> with these types (§29.5), keyed by the types' identities.</summary>
+    public NovaType FunctionPointerTo(ImmutableArray<NovaType> parameters, NovaType result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        var key = string.Join(",", parameters.Select(p => p.Id)) + "->" + result.Id;
+        if (!_functionPointers.TryGetValue(key, out var type))
+        {
+            type = new NovaType(parameters, result);
+            _functionPointers.Add(key, type);
+            _functionPointerList.Add(type);
+        }
+        return type;
+    }
+
+    private readonly List<NovaType> _functionPointerList = [];
+
+    /// <summary>Function pointer types in creation order (deterministic), for the C typedefs.</summary>
+    public IReadOnlyList<NovaType> FunctionPointers => _functionPointerList;
+
     private readonly Dictionary<(NovaType, bool), NovaType> _pointers = [];
 
     /// <summary>The unique <c>*T</c> or <c>*mut T</c> (§27.1).</summary>
@@ -790,6 +839,8 @@ public sealed class TypeTable
                 return (8, 8); // one address (§27.1)
             case TypeKind.CChar:
                 return (1, 1); // C's char (§28.3)
+            case TypeKind.FunctionPointer:
+                return (8, 8); // one code address (§29.5)
             case TypeKind.Box:
                 return type.IsPoolBox ? (16, 8) : (8, 8); // a pool box also points to its pool
             case TypeKind.Vector:
@@ -832,7 +883,7 @@ public sealed class TypeTable
                 {
                     throw new InvalidOperationException($"recursive struct '{type}' has no layout");
                 }
-                int offset = 0, align = 1;
+                int offset = 0, align = definition.ExplicitAlign; // `@align(n)` (§29.4), else 1
                 foreach (var field in definition.Fields)
                 {
                     var (fieldSize, fieldAlign) = LayoutOf(field.Type);
@@ -841,7 +892,7 @@ public sealed class TypeTable
                     offset += fieldSize;
                     align = Math.Max(align, fieldAlign);
                 }
-                var size = definition.Fields.Count == 0 ? 1 : (offset + align - 1) / align * align;
+                var size = ((definition.Fields.Count == 0 ? 1 : offset) + align - 1) / align * align;
                 definition.Layout = (size, align);
                 return (size, align);
             }

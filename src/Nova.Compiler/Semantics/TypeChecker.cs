@@ -93,6 +93,8 @@ internal sealed class TypeChecker
         Ptr,
         Slice,
         SliceMut,
+        Cpu,
+        Target,
     }
 
     private readonly IReadOnlyList<CompilationUnit> _units;
@@ -148,7 +150,7 @@ internal sealed class TypeChecker
     /// <summary>Built-in items (AllocError, the allocators): emitted only if the program uses them.</summary>
     private readonly HashSet<object> _builtinItems = [];
     private readonly HashSet<object> _usedBuiltins = [];
-    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch", "Pool", "PoolBox", "Vector", "String", "SlotMap", "StableVector", "Handle", "File", "TcpListener", "TcpStream", "Ptr", "Slice", "SliceMut"];
+    private static readonly string[] s_reservedNames = ["Result", "Ok", "Err", "Box", "Scratch", "Pool", "PoolBox", "Vector", "String", "SlotMap", "StableVector", "Handle", "File", "TcpListener", "TcpStream", "Ptr", "Slice", "SliceMut", "Cpu", "Target"];
 
     public TypeChecker(IReadOnlyList<CompilationUnit> units, SymbolTable symbols, TypeTable types, DiagnosticBag diagnostics,
         Profile profile = Profile.Hosted)
@@ -178,6 +180,8 @@ internal sealed class TypeChecker
             [symbols.Intern("Ptr")] = Builtin.Ptr,
             [symbols.Intern("Slice")] = Builtin.Slice,
             [symbols.Intern("SliceMut")] = Builtin.SliceMut,
+            [symbols.Intern("Cpu")] = Builtin.Cpu,
+            [symbols.Intern("Target")] = Builtin.Target,
         };
         _thisSymbol = symbols.Intern("this");
         _frameMemory = new StructField(symbols.Intern("memory"), types.ScratchFrame, 0, default) { IsRegionPart = true };
@@ -1025,6 +1029,8 @@ internal sealed class TypeChecker
         {
             case TypeKind.Reference:
                 return _types.ReferenceTo(Substitute(type.Pointee!, map), type.IsMutableReference);
+            case TypeKind.RawPointer:
+                return _types.PointerTo(Substitute(type.Pointee!, map), type.IsMutablePointer);
             case TypeKind.Array:
                 return _types.ArrayOf(Substitute(type.Element!, map), type.ArrayLength);
             case TypeKind.Box:
@@ -1452,7 +1458,8 @@ internal sealed class TypeChecker
             if (type.Struct is { } definition)
             {
                 definition.NeedsDrop = definition.DropFunction is not null || contained.Any(TypeTable.NeedsDrop);
-                definition.IsCopy = definition.DropFunction is null && contained.All(TypeTable.IsCopy);
+                // `@noncopy` opts out (OD-7; type-system.md §29.2); instances inherit it from their template's declaration.
+                definition.IsCopy = definition.DropFunction is null && contained.All(TypeTable.IsCopy) && !IsNonCopy(definition);
             }
             else if (type.Enum is { } enumDefinition)
             {
@@ -1510,6 +1517,10 @@ internal sealed class TypeChecker
             }
             return pointee.IsBottom ? _types.Error : _types.ReferenceTo(pointee, reference.IsMutable);
         }
+        if (syntax is FunctionPointerType function)
+        {
+            return ResolveFunctionPointerType(function);
+        }
         if (syntax is PointerType pointer)
         {
             var pointee = ResolveType(pointer.Pointee, allowVoid: true, allowCChar: true);
@@ -1517,11 +1528,10 @@ internal sealed class TypeChecker
             {
                 return _types.Error;
             }
-            if (TypeTable.IsScoped(pointee) || pointee.IsGeneric || pointee.IsUnsized)
+            if (TypeTable.IsScoped(pointee) || pointee.IsUnsized)
             {
-                Error(DiagnosticCodes.InvalidPointee, pointer.Pointee.Span, pointee.IsGeneric
-                    ? $"a raw pointer cannot point to '{pointee}': pointers to type parameters are not supported in v0 (type-system.md §27.1)"
-                    : $"a raw pointer cannot point to '{pointee}', which holds loans; point to the referenced type instead (type-system.md §27.1)");
+                Error(DiagnosticCodes.InvalidPointee, pointer.Pointee.Span,
+                    $"a raw pointer cannot point to '{pointee}', which holds loans; point to the referenced type instead (type-system.md §27.1)");
                 return _types.Error;
             }
             return _types.PointerTo(pointee, pointer.IsMutable);
@@ -2582,6 +2592,84 @@ internal sealed class TypeChecker
         }
     }
 
+    // ---- C function pointers (type-system.md §29.5) ----
+
+    private NovaType ResolveFunctionPointerType(FunctionPointerType syntax)
+    {
+        if (syntax.Abi != "C")
+        {
+            Error(DiagnosticCodes.InvalidAttribute, syntax.Span, $"unsupported ABI \"{syntax.Abi}\": only extern \"C\" function pointers exist (type-system.md §29.5)");
+            return _types.Error;
+        }
+        var ok = true;
+        var parameters = ImmutableArray.CreateBuilder<NovaType>(syntax.Parameters.Length);
+        foreach (var parameterSyntax in syntax.Parameters)
+        {
+            var parameter = ResolveType(parameterSyntax, allowVoid: false);
+            ok &= CheckFunctionPointerPart(parameter, parameterSyntax.Span, isResult: false);
+            parameters.Add(parameter);
+        }
+        var result = syntax.Result is null ? _types.Void : ResolveType(syntax.Result, allowVoid: true);
+        ok &= CheckFunctionPointerPart(result, syntax.Result?.Span ?? syntax.Span, isResult: true);
+        return ok ? _types.FunctionPointerTo(parameters.MoveToImmutable(), result) : _types.Error;
+    }
+
+    private bool CheckFunctionPointerPart(NovaType type, TextSpan span, bool isResult)
+    {
+        if (type.IsBottom)
+        {
+            return false;
+        }
+        if (type.Kind == TypeKind.Enum || !IsFfiSafe(type, isResult))
+        {
+            Error(DiagnosticCodes.NotFfiSafe, span, type.Kind == TypeKind.Enum
+                ? $"a C function pointer cannot take or return the @repr enum '{type}': a value from C could not be checked (type-system.md §29.5)"
+                : $"a C function pointer cannot take or return a '{type}' (type-system.md §28.3)");
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>The C address of an extern or exported function, where a function pointer type is expected (§29.5).</summary>
+    private HirExpr FunctionAddress(NameExpr name, HirFunction function, NovaType expected)
+    {
+        if (!function.IsExtern && function.ExportName is null)
+        {
+            Error(DiagnosticCodes.NotFfiSafe, name.Span,
+                $"function '{Name(function.Name)}' has no C address: only extern \"C\" and @export functions can be C function pointers (type-system.md §29.5)");
+            return ErrorResult(name.Span);
+        }
+        var actual = _types.FunctionPointerTo([.. function.Parameters.Select(p => p.Type)], function.ReturnType);
+        if (!ReferenceEquals(actual, expected))
+        {
+            Error(DiagnosticCodes.TypeMismatch, name.Span, $"expected '{expected}', found '{actual}'");
+            return ErrorResult(name.Span);
+        }
+        return new HirFunctionAddress(function, expected, name.Span);
+    }
+
+    /// <summary>A call through a C function pointer: unsafe (§29.5).</summary>
+    private HirExpr CheckPointerCall(CallExpr call, HirExpr callee)
+    {
+        var type = callee.Type;
+        var unsafeOk = RequireUnsafe(call.Span, "calling through a C function pointer");
+        if (call.Arguments.Length != type.ParameterTypes.Length)
+        {
+            Error(DiagnosticCodes.ArgumentCount, call.Span, $"'{type}' takes {type.ParameterTypes.Length} argument(s) but {call.Arguments.Length} were supplied");
+            CheckArgumentsLoosely(call);
+            return ErrorResult(call.Span);
+        }
+        var arguments = ImmutableArray.CreateBuilder<HirExpr>(call.Arguments.Length + 1);
+        arguments.Add(callee);
+        for (var i = 0; i < call.Arguments.Length; i++)
+        {
+            arguments.Add(CheckArgument(call.Arguments[i], type.ParameterTypes[i]));
+        }
+        return !unsafeOk || arguments.Any(a => a.Type.IsBottom)
+            ? ErrorResult(call.Span)
+            : new HirBuiltinCall(BuiltinFunction.CallPointer, arguments.MoveToImmutable(), type.ResultType!, call.Span);
+    }
+
     // ---- Profiles (cosmoos/profiles.md §4) ----
 
     /// <summary>A type that needs the hosted runtime (§4.1): a heap allocator, or anything allocating from one; I/O.</summary>
@@ -2592,7 +2680,7 @@ internal sealed class TypeChecker
 
     /// <summary>Built-in names whose every use needs the hosted runtime (§4.1).</summary>
     private static bool IsHostedOnly(Builtin builtin) => builtin is not (Builtin.Truncate or Builtin.FixedBufferAllocator
-        or Builtin.Ptr or Builtin.Slice or Builtin.SliceMut);
+        or Builtin.Ptr or Builtin.Slice or Builtin.SliceMut or Builtin.Cpu or Builtin.Target);
 
     /// <summary>Reports N0293 once per place: <paramref name="what"/> is not available in the freestanding profile.</summary>
     private void HostedOnly(TextSpan span, string what)
@@ -2680,7 +2768,34 @@ internal sealed class TypeChecker
                 switch (item)
                 {
                     case StructDecl s:
-                        foreach (var repr in KnownAttributes(s.Attributes, "a struct", "repr"))
+                        var structAttributes = KnownAttributes(s.Attributes, "a struct", "repr", "align", "noncopy");
+                        foreach (var noncopy in structAttributes.Where(a => Name(a.Name.Name) == "noncopy"))
+                        {
+                            if (noncopy.HasParentheses)
+                            {
+                                AttributeError(noncopy, "'@noncopy' takes no arguments");
+                            }
+                            else if (_items.GetValueOrDefault(s.Name.Name) is StructEntry entry && entry.Decl == s)
+                            {
+                                entry.Type.Struct!.IsNonCopy = true;
+                            }
+                        }
+                        foreach (var align in structAttributes.Where(a => Name(a.Name.Name) == "align"))
+                        {
+                            if (align.Arguments is not [IntLiteralExpr { Value: var n and >= 1 and <= 4096 }] || (n & (n - 1)) != 0)
+                            {
+                                AttributeError(align, "'@align(n)' takes a power of two from 1 to 4096");
+                            }
+                            else if (!s.TypeParameters.IsEmpty || !s.RegionParameters.IsEmpty)
+                            {
+                                AttributeError(align, "a generic struct cannot have '@align'");
+                            }
+                            else if (_items.GetValueOrDefault(s.Name.Name) is StructEntry entry && entry.Decl == s)
+                            {
+                                entry.Type.Struct!.ExplicitAlign = (int)n;
+                            }
+                        }
+                        foreach (var repr in s.Attributes.Where(a => Name(a.Name.Name) == "repr"))
                         {
                             if (repr.Arguments is not [NameExpr { Name: var c }] || Name(c.Name) != "C")
                             {
@@ -2802,12 +2917,23 @@ internal sealed class TypeChecker
         }
     }
 
+    /// <summary>Is this struct (or the generic struct it instantiates) declared `@noncopy`?</summary>
+    private bool IsNonCopy(StructDefinition definition) =>
+        definition.IsNonCopy || (_items.GetValueOrDefault(definition.Syntax.Name.Name) is StructEntry template
+            && template.Decl == definition.Syntax && template.Type.Struct!.IsNonCopy);
+
+    /// <summary>`Volatile<T>` from lib/core (§29.2): its one field has `T`'s layout, so it is C-compatible where `T` is.</summary>
+    private static bool IsVolatileCell(NovaType type) =>
+        type.Struct is { TypeArguments.Length: 1 } definition && CoreLibrary.Contains(definition.Source)
+        && type.Name.StartsWith("Volatile<", StringComparison.Ordinal);
+
     /// <summary>Can a value of this type cross the C boundary? (§28.3) A `@repr` enum only by value, not inside a struct.</summary>
     private static bool IsFfiSafe(NovaType type, bool isResult, bool inStruct = false) => type.Kind switch
     {
-        TypeKind.Integer or TypeKind.Bool or TypeKind.Error => true,
+        TypeKind.Integer or TypeKind.Bool or TypeKind.Error or TypeKind.FunctionPointer => true,
         TypeKind.RawPointer => IsCPointee(type.Pointee!),
         TypeKind.Void => isResult,
+        TypeKind.Struct when inStruct && IsVolatileCell(type) => IsFfiSafe(type.Struct!.Fields[0].Type, isResult: false, inStruct: true),
         TypeKind.Struct => type.Struct!.IsReprC,
         TypeKind.Enum => type.Enum!.Repr is not null && !inStruct,
         _ => false,
@@ -2878,6 +3004,7 @@ internal sealed class TypeChecker
             var name = function.ExportName ?? Name(function.Name);
             var what = function.IsExtern ? $"C function '{name}'" : $"exported function '{Name(function.Name)}'";
             var span = function.IsExtern ? function.Syntax.Name.Span : function.Syntax.Attributes.First(a => Name(a.Name.Name) == "export").Span;
+            // `_` and a lowercase letter is allowed: platforms' entry symbols (`_start`, §29.6) and C library names (`_write`).
             if (CheckCName(name, span, function.IsExtern ? "the C function name" : "the exported symbol"))
             {
                 Claim(name, span, what);
@@ -3607,6 +3734,19 @@ internal sealed class TypeChecker
         _ => null,
     };
 
+    /// <summary>
+    /// Is <paramref name="expr"/> a place reached through a reference that is not a place itself (a call's result)?
+    /// For a mutable borrow every reference on the way must be mutable (§13.2).
+    /// </summary>
+    private static bool IsPathThroughReference(HirExpr expr, bool isMutable) => expr switch
+    {
+        HirFieldAccess field => IsPathThroughReference(field.Target, isMutable),
+        HirIndex index => !index.Target.Type.IsUnsized && IsPathThroughReference(index.Target, isMutable),
+        HirDeref { Reference.Type.IsReference: true } deref when (!isMutable || deref.Reference.Type.IsMutableReference) =>
+            ToPlace(deref.Reference) is null ? deref.Reference is not (HirDeref or HirFieldAccess or HirIndex) : IsPathThroughReference(deref.Reference, isMutable),
+        _ => false,
+    };
+
     private static HirPlace Project(HirPlace place, Projection projection) => new(
         place.Root,
         place.Projections.Add(projection),
@@ -3679,6 +3819,10 @@ internal sealed class TypeChecker
     /// <summary>A `borrow p` / `borrow mut p` of the place a checked expression denotes (N0247, N0248).</summary>
     private HirExpr BorrowPlace(HirExpr value, bool isMutable, TextSpan span)
     {
+        if (ToPlace(value) is null && IsPathThroughReference(value, isMutable))
+        {
+            return new HirBorrowPath(isMutable, value, _types.ReferenceTo(value.Type, isMutable), span);
+        }
         if (ToPlace(value) is not { } place)
         {
             Error(DiagnosticCodes.BorrowOfNonPlace, span,
@@ -4039,6 +4183,9 @@ internal sealed class TypeChecker
                 Error(DiagnosticCodes.MutArgumentMismatch, mutArgument.Span,
                     "'mut' marks an argument for a 'borrow mut' parameter; it is not an expression");
                 return ErrorResult(expr.Span);
+            case NameExpr name when expected is { IsFunctionPointer: true } && name.TypeArguments.IsEmpty
+                && Lookup(name.Name.Name) is HirFunction function:
+                return FunctionAddress(name, function, expected);
             case NameExpr name:
                 return SynthName(name);
             case UnaryExpr unary:
@@ -4510,7 +4657,7 @@ internal sealed class TypeChecker
         {
             _ when IsArithmetic(op) => type.IsInteger,
             _ when IsBitwise(op) || IsShift(op) => type.IsUnsignedInteger,
-            BinaryOp.Equal or BinaryOp.NotEqual => type.IsInteger || type.Kind is TypeKind.Bool or TypeKind.Handle or TypeKind.RawPointer,
+            BinaryOp.Equal or BinaryOp.NotEqual => type.IsInteger || type.Kind is TypeKind.Bool or TypeKind.Handle or TypeKind.RawPointer or TypeKind.FunctionPointer,
             _ when IsComparison(op) => type.IsInteger,
             _ => type.Kind == TypeKind.Bool,
         };
@@ -4532,8 +4679,8 @@ internal sealed class TypeChecker
             Synth(cast.Operand, null);
             return ErrorResult(cast.Span);
         }
-        // `0 as *mut T`: a literal address (§27.2).
-        if (target.IsRawPointer && IsFlexible(cast.Operand))
+        // `0 as *mut T`: a literal address (§27.2, §29.5).
+        if ((target.IsRawPointer || target.IsFunctionPointer) && IsFlexible(cast.Operand))
         {
             var address = CheckExpr(cast.Operand, _types.USize);
             return address.Type.IsBottom ? address : new HirCast(address, target, cast.Span);
@@ -4545,7 +4692,7 @@ internal sealed class TypeChecker
         }
 
         var synthesized = Synth(cast.Operand, null);
-        if (target.IsRawPointer || synthesized.Type.IsRawPointer)
+        if (target.IsRawPointer || synthesized.Type.IsRawPointer || target.IsFunctionPointer || synthesized.Type.IsFunctionPointer)
         {
             return CheckPointerCast(synthesized, target, cast.Span);
         }
@@ -4572,7 +4719,10 @@ internal sealed class TypeChecker
             return operand;
         }
         var from = operand.Type;
-        var ok = target.IsRawPointer
+        var ok = target.IsFunctionPointer || from.IsFunctionPointer
+            // A function pointer converts only to and from usize: it is not a data pointer (§29.5).
+            ? (target.IsFunctionPointer && ReferenceEquals(from, _types.USize)) || (from.IsFunctionPointer && ReferenceEquals(target, _types.USize))
+            : target.IsRawPointer
             ? from.IsRawPointer
               || ReferenceEquals(from, _types.USize)
               || (from.IsReference && !from.IsSlice && !from.IsStringView && ReferenceEquals(from.Pointee, target.Pointee)
@@ -4599,6 +4749,8 @@ internal sealed class TypeChecker
         {
             "read" => (BuiltinFunction.PtrRead, null),
             "write" => (BuiltinFunction.PtrWrite, pointee),
+            "readVolatile" => (BuiltinFunction.PtrReadVolatile, null),
+            "writeVolatile" => (BuiltinFunction.PtrWriteVolatile, pointee),
             "add" => (BuiltinFunction.PtrAdd, _types.USize),
             "sub" => (BuiltinFunction.PtrSub, _types.USize),
             "offset" => (BuiltinFunction.PtrOffset, _types.ISize),
@@ -4608,7 +4760,7 @@ internal sealed class TypeChecker
         if (signature is not var (function, argumentType))
         {
             Error(DiagnosticCodes.NotAStruct, member.Member.Span,
-                $"'{type}' has no method '{name}'; raw pointers have read, write, add, sub, offset and isNull (type-system.md §27)");
+                $"'{type}' has no method '{name}'; raw pointers have read, write, readVolatile, writeVolatile, add, sub, offset and isNull (type-system.md §27, §29.1)");
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
         }
@@ -4630,13 +4782,14 @@ internal sealed class TypeChecker
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
         }
-        if (function is BuiltinFunction.PtrRead or BuiltinFunction.PtrWrite && !TypeTable.IsCopy(pointee))
+        if (function is BuiltinFunction.PtrRead or BuiltinFunction.PtrWrite or BuiltinFunction.PtrReadVolatile or BuiltinFunction.PtrWriteVolatile
+            && !TypeTable.IsCopy(pointee))
         {
             Error(DiagnosticCodes.InvalidPointerOperation, call.Span, $"'{name}' through a raw pointer needs a Copy type, but '{pointee}' is not (type-system.md §27.3)");
             CheckArgumentsLoosely(call);
             return ErrorResult(call.Span);
         }
-        if (function == BuiltinFunction.PtrWrite && !type.IsMutablePointer)
+        if (function is BuiltinFunction.PtrWrite or BuiltinFunction.PtrWriteVolatile && !type.IsMutablePointer)
         {
             Error(DiagnosticCodes.InvalidPointerOperation, call.Span, $"cannot write through '{type}'; writing needs a '*mut {pointee}' (type-system.md §27.3)");
             CheckArgumentsLoosely(call);
@@ -4649,8 +4802,8 @@ internal sealed class TypeChecker
         }
         var result = function switch
         {
-            BuiltinFunction.PtrRead => pointee,
-            BuiltinFunction.PtrWrite => _types.Void,
+            BuiltinFunction.PtrRead or BuiltinFunction.PtrReadVolatile => pointee,
+            BuiltinFunction.PtrWrite or BuiltinFunction.PtrWriteVolatile => _types.Void,
             _ => type,
         };
         return new HirBuiltinCall(function, arguments, result, call.Span);
@@ -4723,6 +4876,8 @@ internal sealed class TypeChecker
             case NameExpr name:
                 switch (Lookup(name.Name.Name))
                 {
+                    case HirLocal { Type.IsFunctionPointer: true } local:
+                        return CheckPointerCall(call, new HirLocalRef(local, name.Span));
                     case HirFunction function when name.TypeArguments.IsEmpty:
                         return CheckUserCall(call, function);
                     case GenericFunctionEntry generic:
@@ -4739,7 +4894,7 @@ internal sealed class TypeChecker
                 }
                 break;
             case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
-                when Lookup(target.Name.Name) is Builtin builtin and (Builtin.Console or Builtin.Process):
+                when Lookup(target.Name.Name) is Builtin builtin and (Builtin.Console or Builtin.Process or Builtin.Cpu or Builtin.Target):
                 return CheckBuiltinMemberCall(call, builtin, target, member);
             case MemberExpr { Target: NameExpr { TypeArguments.IsEmpty: true } target } member
                 when Lookup(target.Name.Name) is Builtin builtin and (Builtin.Ptr or Builtin.Slice or Builtin.SliceMut):
@@ -5250,6 +5405,21 @@ internal sealed class TypeChecker
         {
             return CheckPointerMethod(call, member, pointer);
         }
+        if (AutoDeref(receiver) is { Type.IsFunctionPointer: true } code)
+        {
+            if (Name(member.Member.Name) != "isNull" || !call.Arguments.IsEmpty)
+            {
+                Error(DiagnosticCodes.NotAStruct, member.Member.Span, $"'{code.Type}' has only 'isNull()'; call it as f(…) (type-system.md §29.5)");
+                CheckArgumentsLoosely(call);
+                return ErrorResult(call.Span);
+            }
+            return new HirBuiltinCall(BuiltinFunction.PtrIsNull, [code], _types.Bool, call.Span);
+        }
+        if (AutoDeref(receiver) is { Type.Struct: { } holder } owner && holder.FindField(member.Member.Name) is { Type.IsFunctionPointer: true } callback
+            && FindMethod(owner.Type, member.Member.Name, member.Member.Span) is null)
+        {
+            return CheckPointerCall(call, new HirFieldAccess(owner, callback, member.Span)); // a callback stored in a field
+        }
         var vector = receiver;
         while (vector.Type.IsReference)
         {
@@ -5323,6 +5493,8 @@ internal sealed class TypeChecker
                 ? Coerce(receiver, _types.ReferenceTo(structType, isMutable: false), member.Target.Span)
                 : ToPlace(receiver) is { } place
                     ? new HirBorrow(false, place, _types.ReferenceTo(structType, isMutable: false), member.Target.Span)
+                    : IsPathThroughReference(receiver, isMutable: false)
+                    ? new HirBorrowPath(false, receiver, _types.ReferenceTo(structType, isMutable: false), member.Target.Span)
                     : new HirBorrowTemp(false, receiver, _types.ReferenceTo(structType, isMutable: false), member.Target.Span),
             _ => receiver.Type.IsMutableReference
                 ? Coerce(receiver, receiver.Type, member.Target.Span)
@@ -5390,6 +5562,10 @@ internal sealed class TypeChecker
             (Builtin.Console, "writeBytes") => (BuiltinFunction.ConsoleWriteBytes, 1, 1),
             (Builtin.Console, "writeError") => (BuiltinFunction.ConsoleWriteError, 1, 1),
             (Builtin.Console, "writeErrorLine") => (BuiltinFunction.ConsoleWriteErrorLine, 0, 1),
+            (Builtin.Cpu, "spinHint") => (BuiltinFunction.SpinHint, 0, 0),
+            (Builtin.Target, "isX86_64") => (BuiltinFunction.TargetIsX8664, 0, 0),
+            (Builtin.Target, "isAArch64") => (BuiltinFunction.TargetIsAArch64, 0, 0),
+            (Builtin.Target, "pointerBits") => (BuiltinFunction.TargetPointerBits, 0, 0),
             _ => null,
         };
         if (signature is not { } sig)
@@ -5416,6 +5592,12 @@ internal sealed class TypeChecker
         }
         switch (sig.Function)
         {
+            case BuiltinFunction.SpinHint:
+                return new HirBuiltinCall(sig.Function, [], _types.Void, call.Span);
+            case BuiltinFunction.TargetIsX8664 or BuiltinFunction.TargetIsAArch64:
+                return new HirBuiltinCall(sig.Function, [], _types.Bool, call.Span); // decided by the C compiler (§29.3)
+            case BuiltinFunction.TargetPointerBits:
+                return new HirIntConst(_types.Target.PointerBits, _types.U32, call.Span);
             case BuiltinFunction.ArgumentCount:
                 return new HirBuiltinCall(sig.Function, [], _types.USize, call.Span);
             case BuiltinFunction.ProcessRun:
