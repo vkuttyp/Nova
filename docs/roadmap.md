@@ -30,7 +30,7 @@ M0/C0 ─► M1 ─► C1 ─► M2 ─► M3 ─► C2 ─► M4 ─► M6 ─�
 | **M8** ✅ 2026-10-24 Systems/freestanding ([plan](milestone-8.md)) | core library split, FFI, raw pointers, MMIO types, custom entry points, `freestanding` profile | Freestanding object with no libc: verified by `llvm-nm -u` allowlist |
 | **C4** ✅ 2026-10-24 Freestanding in CosmoOS ([report](cosmoos/c4-report.md)) | Nova kernel-profile object built with kernel flags | Symbols, relocations and sections checked against the module loader allowlist. Frame sizes ≤ 2 KiB. No FP registers (disassembly check) |
 | **C5** ✅ 2026-10-24 Kernel memory adapter ([report](cosmoos/c5-report.md)) | `KernelHeap`, `ObjectCache<T>` bindings; isolated test component | In-kernel selftest: allocation, exhaustion (fault-injected), ownership transfer, cleanup. No allocator modifications |
-| **C6** Controlled kernel component (C6a LZ4 ✅ 2026-10-24, [report](cosmoos/c6-report.md); C6b fbvalid next) | One small, non-critical component reimplemented beside its C original (candidate chosen with the owner) | Same test suite passes for both. Performance compared (measured, reproducible) |
+| **C6** ✅ 2026-10-24 Controlled kernel component ([report](cosmoos/c6-report.md): LZ4, fbvalid) | One small, non-critical component reimplemented beside its C original (candidate chosen with the owner) | Same test suite passes for both. Performance compared (measured, reproducible) |
 | **C7** Kernel concurrency | Effects, `SpinLock<T>`/`Mutex<T>` guards, `KRef`, `QuiesceGuard`, `PerCpu`, deferred reclamation | Negative effect tests. Lockdep clean under QEMU stress. Real concurrency rules exercised |
 | **C8** Experimental module | Nova `.ko` with generated `shutdown()` | Load/unload loops (≥ 1000) with no zombie modules, leaks or lockdep reports, on both arches. Signing via `modsign.py` |
 | **M9** Performance | Optimisations with preconditions; benchmark suite vs C/C++/Rust/Zig/Goose | Each optimisation: equivalence tests + measured gain. Published methodology. **No claims without data** |
@@ -142,5 +142,11 @@ mismatch in 20,000 cases, and the object meets the kernel checks on both arches.
 offset check panics in Nova and goes unnoticed in sanitizer-free C. Performance is measured
 (`benchmarks/lz4/`): 0.48–0.78 of C for compression, lower for literal-heavy decompression.
 
-Next: **C6b**, the framebuffer validator (`kernel/core/fbvalid.c`), with ADR 0008's imported C structs
-specified and implemented first. **M9** (performance) may start in parallel once its benchmarks exist. In parallel, when the owner wants it: propose the S1 in-tree port for C1 (OD-20).
+**C6b is done, and with it C6** (2026-10-24; `cosmoos/c6-report.md`): imported C struct types
+(type-system §31, ADR 0008) and CosmoOS's framebuffer validator in Nova over CosmoOS's own
+`kernel/bootinfo.h`. CosmoOS's host test and fuzz target pass for both. The differential test reaches
+all 11 answers with no mismatch, and the object meets the kernel checks on both arches. A header that
+disagrees with a Nova declaration fails to compile, naming the field. With clang the port costs what C
+costs (`benchmarks/fbvalid/`).
+
+Next: **C7**, kernel concurrency: context effects, lock guards, `KRef`, `QuiesceGuard`, `PerCpu`. **M9** (performance) may start in parallel once its benchmarks exist. In parallel, when the owner wants it: propose the S1 in-tree port for C1 (OD-20).

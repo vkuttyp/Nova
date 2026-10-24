@@ -100,7 +100,8 @@ profile runtime.
 - **Kernel struct layouts come from the kernel's own headers** (ADR 0008; [KA impl 26]). Nova never
   writes down the layout of `spinlock_t`, `struct kobject`, `struct cosmoboot_info` or any other C
   type. It imports them: an `extern "C"` block with `@header("kernel/bootinfo.h")` declares
-  `struct cosmoboot_info { fb_base: u64; … }` with only the fields Nova uses, by their C names.
+  `struct cosmoboot_info { fb_phys: u64; … }` with only the fields Nova uses, by their C names
+  (type-system §31; implemented in C6b, whose `c6/fbvalid.nova` does exactly this).
   Generated C `#include`s the headers of the exact module ABI (currently 11) and accesses the real
   members, compiled with the build's own flags, so the layout is always the one of this
   configuration and architecture. Each declared field is checked at C compile time (it exists, and

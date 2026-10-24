@@ -1,10 +1,11 @@
 # C6 — A controlled kernel component in Nova (plan and report)
 
-Status: **C6a (LZ4) complete 2026-10-24**; C6b (the framebuffer validator, with ADR 0008's imported C
-structs) is next. Roadmap acceptance: *one small, non-critical component reimplemented beside its C
-original; the same test suite passes for both; performance compared (measured, reproducible)*
+Status: **complete 2026-10-24**: C6a (LZ4) and C6b (the framebuffer validator, the first user of ADR
+0008's imported C structs). Roadmap acceptance: *one small, non-critical component reimplemented beside its
+C original; the same test suite passes for both; performance compared (measured, reproducible)*
 (`roadmap.md`). Prompt: `cosmoos-native.md` C6. Stage S0 as before: out of tree, CosmoOS read-only.
-Scripts: `integrations/cosmoos/c6.py`, `benchmarks/lz4/run.py`.
+Scripts: `integrations/cosmoos/c6.py` (both components; `--component`), `benchmarks/lz4/run.py`,
+`benchmarks/fbvalid/run.py`.
 
 ## Choice of component (with the owner, 2026-10-24)
 
@@ -99,8 +100,97 @@ These are inputs for M9: a checked bulk slice copy, and bounds-check hoisting.
 - Not done: the CRC-32C warm-up from the survey. It was not needed once LZ4 covered the same ground.
 - Performance is below C, and the report says by how much. Parity is not part of the acceptance; M9 owns it.
 
-## C6b — framebuffer validator (next)
+## C6b — the framebuffer validator
 
-Specify ADR 0008 in `type-system.md`, implement imported C structs, and port `kernel/core/fbvalid.c`
-(`bootinfo_fb_validate(const struct cosmoboot_info *, struct bootinfo_framebuffer *, …)`). Then hold the
-port to CosmoOS's `test_fbvalid` and `fuzz_fbvalid` in the same way as C6a, and benchmark it.
+### Audit (CosmoOS `98040b9b`; read, not copied)
+
+| Interface | Where | What it says |
+|---|---|---|
+| API | `kernel/include/kernel/bootinfo.h:76-103` | `bool bootinfo_fb_validate(const struct cosmoboot_info *info, struct bootinfo_framebuffer *out, const char **why)`: "the whole trust boundary for the display"; `why` gets a static reason; each pointer may be NULL. `struct bootinfo_framebuffer` is defined there |
+| Boot protocol | `boot/protocol/cosmoboot.h:145-282` | `struct cosmoboot_info`, version 6 framebuffer fields `fb_phys`…`fb_blue_bits` (`:215-224`), with fields before and after them that the validator does not read |
+| Implementation | `kernel/core/fbvalid.c` (82 lines) | ten refusals in a fixed order; the wrap check is written `fb_phys + fb_size < fb_phys`, relying on unsigned wrap-around |
+| User | `kernel/core/bootinfo.c:124` | `bootinfo_init` validates the loader's framebuffer once; the console draws only inside what it accepted |
+| Host test | `tests/host/test_fbvalid.c` (Make: `HOST_FBVALID_SRCS`) | four groups: a real mode, absence, memory the framebuffer does not have, impossible pixels; it checks the answer, and the reason only for "no framebuffer" |
+| Fuzz target | `tests/fuzz/fuzz_fbvalid.c` (`FUZZ_FBVALID_SRCS`) | 40 input bytes become the framebuffer fields; an accepted description must keep every pixel the console can write inside the framebuffer |
+
+### What was built
+
+1. **Imported C struct types** (language; `type-system.md` §31, ADR 0008; grammar `ExternStruct`; N0294).
+   - In an `extern "C"` block marked `@header("…")`, `struct name { field: Type; }` declares the fields Nova
+     uses, by their C names. `struct name;` imports a type opaquely, and `@ctype` names a typedef.
+   - The generated C includes the headers and uses the real type. Nova emits no definition and has no
+     layout. Each declared field gets two `_Static_assert`s, on `_Generic` and on `sizeof`. A header that
+     disagrees fails to compile, naming the field and the Nova line.
+   - Imported types live only behind pointers and references (N0294 elsewhere, including pointer
+     arithmetic, `read` and `fromRaw`). Pointers to them are FFI-safe.
+   - Pointer and size fields convert through `uintptr_t` or a cast when read and written. They cannot be
+     borrowed, because their C type is not Nova's.
+   - The interpreter faults on their fields.
+   - Tests: `ffi/imports.nova` (a C-owned linked list walked through C's own `next` pointers, fields read
+     and written in place, an opaque type, a `@ctype` typedef, a `const char **` result, and a member Nova
+     does not declare, which keeps its value) in every C configuration; `check-fail/imported-c-types.nova`
+     (25 rejections); the AST snapshot; the interpreter fault.
+   - Negative controls (2026-10-24), each a C compile error naming the field and the Nova line: a field
+     declared `u32` where the header has `int32_t` (`novac import: struct geo_box.height is not uint32_t
+     (bad1.nova:4)`), `*mut CChar` for a `const char *`, and a field the header does not have.
+2. **`integrations/cosmoos/c6/fbvalid.nova`** (`--profile freestanding`): `refusal(info: borrow
+   cosmoboot_info) -> StringView?` holds the checks in safe Nova, in the C's order, with the C's reasons.
+   `bootinfo_fb_validate` is the export with bootinfo.h's prototype, the only `unsafe` code, which turns
+   the pointers into references. The header is CosmoOS's own, `kernel/bootinfo.h`: Nova names twelve of
+   `cosmoboot_info`'s fields and never mentions the rest. The wrap check cannot be written the C's way,
+   since the sum would panic, so it is `fb_size > U64_MAX - fb_phys`.
+3. **`c6/diff_fbvalid.c`**: both validators on the same descriptions (random fields, each check's
+   boundary values, and a valid mode with one field changed; one in 16 made absent; one in 8 with a NULL
+   argument). They must give the same answer, the same reason text, and the same copied-out description.
+   Every one of the 11 answers is reached.
+4. **`benchmarks/fbvalid/`**: `bench.c` and `run.py`; see its README.
+
+### Results (run 2026-10-24)
+
+`python3 integrations/cosmoos/c6.py --arch aarch64` and `--arch x86_64`, which now run both components:
+
+| Check | C original | Nova port |
+|---|---|---|
+| `tests/host/test_fbvalid.c` (`HOST_CFLAGS`: ASan, UBSan, `-Werror`) | PASS | PASS |
+| `tests/fuzz/fuzz_fbvalid.c`, 20,000 mutations, seed 1 (5 seeds) | no failure | no failure |
+| Differential test, 20,000 cases (3,119 accepted, all 11 answers reached) | 0 mismatches | |
+| AArch64 object under `MODULE_CFLAGS` with CosmoOS's `kernel/bootinfo.h`: C4's checks (relocations `ABS64`, `ADD_ABS_LO12_NC`, `ADR_PREL_PG_HI21`, `CALL26`; undefined `panic` only; largest frame 48 B) | | PASS |
+| x86-64 object, the same (relocations `32S`, `64`, `PLT32`; undefined `panic` only; largest frame 40 B) | | PASS |
+| CosmoOS working tree unchanged | PASS | |
+
+The same runs repeated C6a's results unchanged.
+
+**Negative controls** (2026-10-24; the Nova file restored after each):
+
+- *A dropped check.* With "the rows do not fit the framebuffer" removed, all three tests fail. The host
+  test fails at `test_fbvalid.c:93` and `:108`. The fuzz target fails on its second iteration, on its
+  assertion `pitch * height <= size`. The differential test reports 673 mismatches.
+- *The C's wrap check, written in Nova.* `fb_phys + fb_size < fb_phys` panics, `integer overflow at
+  fbvalid.nova:66:9`, as soon as the fuzz target or the differential test reaches a wrapping description.
+  Nova cannot express a check that depends on wrap-around without saying so.
+- **Finding in CosmoOS's tests** (reported here, not changed): with that panicking check, CosmoOS's host
+  test still passes, so it never reaches the wrap check. Its wrap case (`test_fbvalid.c:110-114`) keeps
+  `good()`'s 1280×800 geometry with `fb_size = 0x8000`, which "the rows do not fit" refuses first. The
+  test checks only that the answer is false, not why. Only the fuzz target covers the wrap check.
+
+**Performance** (`benchmarks/fbvalid/README.md`, ns per call, 4096 descriptions):
+
+| Machine, compiler | C | Nova | Nova/C |
+|---|---:|---:|---:|
+| Apple M1, Apple clang 21 | 4.69 | 4.58 | 0.98 |
+| Ryzen 5 PRO 3600, clang 18 | 6.42 | 6.60 | 1.03 |
+| Ryzen 5 PRO 3600, gcc 12 | 7.38 | 13.00 | 1.76 |
+
+With clang the port costs what the C costs. With gcc it takes 1.76 times as long. The cause is not
+established: gcc keeps two of the port's functions out of line, but forcing inlining made it slower. This
+is recorded for M9.
+
+### What C6b proves, and what it does not
+
+- Proved: Nova code can read and write a codebase's own C structs, which a configuration or ABI version may
+  lay out differently, with no layout written in Nova. The header that the kernel build uses decides every
+  offset, and a declaration that disagrees with it does not compile. The same port, unchanged, compiled
+  against CosmoOS's host-test flags and its kernel module flags on both arches.
+- Not done: embedded imported structs, C arrays, unions and bit-fields as fields (ADR 0008's later
+  additions). A Linux build of the same mechanism is designed (`profiles.md` §5), not run. Running the port
+  inside the kernel needs `bootinfo.c` to call it, so an in-tree change (S1).
