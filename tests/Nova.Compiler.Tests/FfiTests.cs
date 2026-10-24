@@ -82,8 +82,15 @@ public class FfiTests
     public void Exports_header_snapshot(string relativePath)
     {
         var (_, program) = Generate(relativePath);
-        var actual = program.Files.Single(f => f.Key == CProgram.ExportsHeaderName).Value;
         var snapshot = Path.ChangeExtension(Path.Combine(CorpusRoot, relativePath), ".h");
+        var header = program.Files.Where(f => f.Key == CProgram.ExportsHeaderName).ToList();
+        if (header.Count == 0)
+        {
+            // A program with no exports and no @repr types gets no header (c-backend.md §2.3), and has no snapshot.
+            Assert.False(File.Exists(snapshot), $"{snapshot} exists, but the program generates no {CProgram.ExportsHeaderName}");
+            return;
+        }
+        var actual = header.Single().Value;
         if (Environment.GetEnvironmentVariable("NOVA_BLESS") == "1")
         {
             File.WriteAllText(snapshot, actual);
@@ -128,5 +135,27 @@ public class FfiTests
         Assert.Equal("4096\n", outcome.Stdout.ReplaceLineEndings("\n"));
         Assert.Equal(Interpreter.NirInterpreter.FaultExitStatus, outcome.ExitCode);
         Assert.StartsWith("nova interp: fault: access to a field of the imported C type 'dev'", outcome.Stderr, StringComparison.Ordinal);
+    }
+    [Fact]
+    public void Interpreter_faults_on_C_state_embedded_by_value()
+    {
+        // Making a value that holds C state needs C's layout, which the interpreter does not have (type-system.md §33.4).
+        const string Program = """
+            @header("lock.h")
+            extern "C" {
+                struct lock_t;
+            }
+
+            struct Locked { raw: lock_t; value: u32; }
+
+            fn main() -> i32 {
+                let b = Box.create(Locked { value: 2 })!;
+                return truncate<i32>(b.value);
+            }
+            """;
+        var outcome = InterpreterTests.Interpret("t.nova", Program);
+        // The frame's locals are allocated on entry, and the literal's temporary is one of them.
+        Assert.Equal(Interpreter.NirInterpreter.FaultExitStatus, outcome.ExitCode);
+        Assert.StartsWith("nova interp: fault: a value of 'Locked', which holds C state", outcome.Stderr, StringComparison.Ordinal);
     }
 }

@@ -74,6 +74,7 @@ public sealed class Compilation
             // Generic code is checked once, in its generic version; instantiations repeat it (type-system.md §20.3).
             foreach (var function in nir.Functions.Where(f => !f.Source.IsInstantiation))
             {
+                InPlaceChecker.Check(function, symbols, diagnostics);
                 MoveChecker.Check(function, symbols, diagnostics);
                 BorrowChecker.Check(function, symbols, diagnostics);
             }

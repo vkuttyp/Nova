@@ -267,6 +267,7 @@ public sealed class Parser
         while (AtFunction || At(TokenKind.StructKeyword) || At(TokenKind.At) || At(TokenKind.PublicKeyword) || At(TokenKind.InternalKeyword) || At(TokenKind.PrivateKeyword))
         {
             var memberStart = Current.Span.Start;
+            var memberDoc = _stream.Docs.GetValueOrDefault(_pos); // before the attributes, if any (grammar.md §1.2)
             var attributes = ParseAttributes();
             var memberVisibility = ParseVisibility();
             if (At(TokenKind.StructKeyword))
@@ -280,7 +281,8 @@ public sealed class Parser
                 break;
             }
             _parsingSignatures = true;
-            functions.Add(ParseFunction(memberVisibility, memberStart) with { Attributes = attributes, IsExtern = true });
+            var externFunction = ParseFunction(memberVisibility, memberStart);
+            functions.Add(externFunction with { Attributes = attributes, IsExtern = true, Doc = memberDoc ?? externFunction.Doc });
             _parsingSignatures = false;
         }
         Expect(TokenKind.CloseBrace);
@@ -462,6 +464,7 @@ public sealed class Parser
         {
             var startPos = _pos;
             var memberStart = Current.Span.Start;
+            var memberDoc = _stream.Docs.GetValueOrDefault(_pos); // before the attributes, if any (grammar.md §1.2)
             var memberAttributes = ParseAttributes(); // on methods: @effects, @context (type-system.md §32)
             if (!memberAttributes.IsEmpty && !(AtFunction || ((At(TokenKind.PublicKeyword) || At(TokenKind.InternalKeyword) || At(TokenKind.PrivateKeyword)) && Peek(1).Kind is TokenKind.FnKeyword or TokenKind.UnsafeKeyword)))
             {
@@ -483,7 +486,8 @@ public sealed class Parser
             }
             else if (AtFunction)
             {
-                functions.Add(ParseFunction(memberVisibility, memberStart) with { Attributes = memberAttributes });
+                var method = ParseFunction(memberVisibility, memberStart);
+                functions.Add(method with { Attributes = memberAttributes, Doc = memberDoc ?? method.Doc });
             }
             else if (At(TokenKind.Identifier))
             {
@@ -549,9 +553,11 @@ public sealed class Parser
         while (AtFunction || At(TokenKind.PublicKeyword) || At(TokenKind.At))
         {
             var functionStart = Current.Span.Start;
+            var doc = _stream.Docs.GetValueOrDefault(_pos); // before the attributes, if any (grammar.md §1.2)
             var attributes = ParseAttributes(); // @effects, @context (type-system.md §32)
             var functionVisibility = ParseVisibility();
-            functions.Add(ParseFunction(functionVisibility, functionStart) with { Attributes = attributes });
+            var function = ParseFunction(functionVisibility, functionStart);
+            functions.Add(function with { Attributes = attributes, Doc = doc ?? function.Doc });
         }
         Expect(TokenKind.CloseBrace);
         var name = interfaceType is NamedType { Name.Parts: [var first, ..] } ? first

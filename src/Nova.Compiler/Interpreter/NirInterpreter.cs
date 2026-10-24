@@ -246,9 +246,14 @@ public sealed partial class NirInterpreter
     private Allocation NewLocal(NirLocal local) =>
         _memory.Allocate(AllocationKind.Local, SizeOf(local.Type), initialised: true, local.Name is null ? $"temporary _{local.Id}" : $"local _{local.Id}");
 
-    private static int SizeOf(NovaType type) => TypeTable.LayoutOf(type).Size;
+    private static int SizeOf(NovaType type) => CLayoutFault(type) ?? TypeTable.LayoutOf(type).Size;
 
-    private static int AlignOf(NovaType type) => TypeTable.LayoutOf(type).Align;
+    /// <summary>C state has the C compiler's layout, which the interpreter does not have (type-system.md §33.4).</summary>
+    private static int? CLayoutFault(NovaType type) => TypeTable.IsCLaidOut(type)
+        ? throw new InterpreterFault($"a value of '{type}', which holds C state laid out by the C compiler")
+        : null;
+
+    private static int AlignOf(NovaType type) => CLayoutFault(type) ?? TypeTable.LayoutOf(type).Align;
 
     // ---- Places ----
 
@@ -392,6 +397,8 @@ public sealed partial class NirInterpreter
                 return c.Type.Kind == TypeKind.Bool ? Value.Of(c.Value != 0 ? 1u : 0u, 1) : FromInteger(c.Value, c.Type);
             case NirString s:
                 return View(Literal(s.Value), (ulong)Encoding.UTF8.GetByteCount(s.Value));
+            case NirZero zero:
+                throw new InterpreterFault($"making C state of type '{zero.Type}', whose layout only the C compiler knows");
             default:
                 throw new InvalidOperationException($"cannot interpret operand {operand}");
         }

@@ -1,0 +1,58 @@
+// C state never moves (type-system.md §33.2): every move of a C-laid-out value, and every literal of one that is
+// not given to Box.create/createIn, is N0294. The same values borrowed in place are fine.
+@header("state.h")
+extern "C" {
+    @ctype("lock_t")
+    struct lock_t;
+}
+
+struct Locked {
+    raw: lock_t;
+    value: u32;
+}
+
+struct Pair {
+    left: Locked;
+    right: Locked;
+}
+
+fn identity<T>(x: T) -> T => x;
+
+fn make(v: u32) -> Result<Box<Locked>, AllocError> => Box.create(Locked { value: v });
+
+fn nested() -> Result<Box<Pair>, AllocError> => Box.create(Pair { left: Locked { value: 1 }, right: Locked { value: 2 } });
+
+fn inPlace(b: borrow mut Box<Pair>) -> u32 {
+    let left = borrow b.left;
+    b.right.value += 1;
+    return left.value + b.right.value;
+}
+
+fn intoLocal() -> u32 {
+    let l = Locked { value: 3 }; // error[N0294]
+    return 0;
+}
+
+fn intoOptional() -> bool {
+    let o = Some(Locked { value: 5 }); // error[N0294]
+    return true;
+}
+
+fn intoGeneric() -> u32 {
+    let x = identity(Locked { value: 6 }); // error[N0294]
+    return 0;
+}
+
+fn outOfBox(b: Box<Pair>) -> u32 {
+    let moved = b.left; // error[N0294]
+    return 0;
+}
+
+fn replace(b: borrow mut Box<Pair>, other: Box<Locked>) {
+    b.left = Locked { value: 7 }; // error[N0294]
+}
+
+fn main() -> i32 {
+    var p = nested()!;
+    return truncate<i32>(inPlace(mut p) + intoLocal());
+}

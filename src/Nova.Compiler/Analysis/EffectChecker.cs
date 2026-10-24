@@ -148,9 +148,20 @@ public sealed class EffectChecker
             case BuiltinFunction.BoxCreate:
             {
                 var box = builtin.Type.Enum?.ResultTypes?.Ok;
-                return box?.Allocator?.Struct?.AllocateMethod is { } allocate
+                var (effects, description, via) = box?.Allocator?.Struct?.AllocateMethod is { } allocate
                     ? (EffectsOf(allocate), $"allocates a '{box}'", allocate)
-                    : (Effects.Alloc, $"allocates a '{box?.Name ?? "Box"}' from the heap", null);
+                    : (Effects.Alloc, $"allocates a '{box?.Name ?? "Box"}' from the heap", (HirFunction?)null);
+                // Placing C state runs the `@placed` methods (type-system.md §33.3).
+                foreach (var placed in box is null ? [] : PlacedMethods(box.Pointee!))
+                {
+                    var extra = EffectsOf(placed) & ~effects;
+                    if (extra != Effects.None)
+                    {
+                        (description, via) = ($"places a '{box!.Pointee}', which runs {Describe(placed)}", placed);
+                    }
+                    effects |= extra;
+                }
+                return (effects, description, via);
             }
             case BuiltinFunction.ArenaAlloc or BuiltinFunction.ArenaAllocArray
                 when builtin.Arguments[0].Type is { IsReference: true, Pointee.Region: RegionKind.FixedBuffer }:
@@ -174,6 +185,11 @@ public sealed class EffectChecker
                 return (Effects.None, "", null);
         }
     }
+
+    private static IEnumerable<HirFunction> PlacedMethods(NovaType type) =>
+        type.Struct is { IsImported: false } definition && TypeTable.IsCLaidOut(type)
+            ? definition.Fields.SelectMany(f => PlacedMethods(f.Type)).Concat(definition.PlacedMethod is { } own ? [own] : [])
+            : [];
 
     private static string Builtin(BuiltinFunction function) => function switch
     {

@@ -8,7 +8,7 @@ extern "C" {
     struct cell { v: i32; }
     struct bad_fields {
         items: Slice<u8>; // error[N0270]
-        nested: dev; // error[N0294]
+        nested: dev; // an embedded member (type-system.md §33.1)
         pair: Pair; // error[N0291]
     }
     struct with_method { // error[N0290]
@@ -43,7 +43,7 @@ extern "C" {
 struct Pair { a: i32; b: i32; }
 
 struct Holder {
-    device: dev; // error[N0294]
+    device: dev; // C state embedded by value (§33.1)
     pointer: *dev;
 }
 

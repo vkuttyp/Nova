@@ -155,6 +155,11 @@ public sealed class PlacementAnalysis
                 Heap($"{box.Allocator.Name} is not placement-transparent");
                 return;
             }
+            if (TypeTable.IsCLaidOut(box.Pointee!))
+            {
+                Heap("it holds C state, which stays where it was placed (type-system.md §33.2)");
+                return;
+            }
             var size = TypeTable.LayoutOf(box.Pointee!).Size;
             if (size > MaxBoxSize)
             {

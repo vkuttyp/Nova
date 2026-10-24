@@ -39,6 +39,39 @@ KQ-2), Nova lock-order checking.
 
 ## Results
 
+### C7b — C state embedded by value (2026-10-24)
+
+`type-system.md` §33 (ADR 0009 §2). Imported types are now allowed by value as struct fields, as embedded members of
+imported structs (`struct emb_dev { lock: emb_lock; link: emb_list; }`, checked with `_Generic` only) and as a box's
+contents. A type that holds one is C-laid-out:
+
+- generated C defines it with the real member types and asserts nothing about its layout;
+- every other by-value use of it is N0294, checked once struct fields are known;
+- a new NIR pass, `Analysis/InPlaceChecker.cs`, run before move checking, accepts a value of it only on the way from
+  its literal into `Box.create`/`createIn`, or into an enclosing literal;
+- imported fields are left out of literals and zero-filled, through a new NIR operand, `NirZero`;
+- `@placed` methods run in field order, innermost first, from a generated `nvPL_<T>` helper right after the value is
+  stored in its box, and their effects count as the box's (§32);
+- the interpreter and placement analysis refuse such types instead of guessing a layout.
+
+`Ptr.containerOf` moved to C7d, whose generated callbacks are its only users. Doc comments before attributes now
+attach to methods and extern functions too, as they did to top-level items.
+
+Tests (run 2026-10-24, local suite, 1,967 tests):
+
+- `ffi/embedded.nova` in every C configuration. Two queues with self-pointing C list heads and a lock are nested in a
+  struct with a lock of its own; placement order is checked (1–4), and the rings are checked in C after linking one
+  into the other. Also an all-C-state struct that stays zero-filled, and an imported struct's embedded members passed
+  to C in place;
+- `check-fail/c-state-types.nova` (8 forbidden positions and 6 misused `@placed`, plus the array case's existing
+  N0259);
+- `check-fail/c-state-moves.nova` (5 moves and misplaced literals, with valid in-place uses in the same file);
+- `check-fail/effects.nova`, which now covers a sleeping `@placed` method under an atomic context;
+- the interpreter fault.
+
+The generated C of every existing program is unchanged (emit-c snapshots), so no guest runs were needed. Kernel flags
+are exercised with C7c's real CosmoOS types.
+
 ### C7a — context effects (2026-10-24)
 
 `type-system.md` §32. `@effects(sleep, alloc)` and `@context(atomic|irq)` on functions, methods and impl methods (which

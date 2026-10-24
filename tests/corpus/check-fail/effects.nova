@@ -1,5 +1,7 @@
 // Context effects (type-system.md §32): every operation whose effect its context forbids is N0295.
+@header("state.h")
 extern "C" {
+    struct raw_state;
     @effects(sleep)
     fn c_block(x: i32) -> i32;
     @effects(alloc)
@@ -128,5 +130,19 @@ fn generic<T>(value: T, n: i32) -> i32 => slower(n); // error[N0295]
 
 fn instances() -> i32 => generic(1u8, 1) + generic(true, 2) + generic(3i64, 3);
 
-fn main() -> i32 => instances() + atomicBody(1) + interrupt(1) + underGuard() + afterScope() + maybeLive(true) + handOff() + nested()
+/// C state whose initialiser sleeps, like a mutex that registers itself.
+struct SleepyInit {
+    raw: raw_state;
+    n: i32;
+    @placed
+    fn init(borrow mut this) { this.n = slow(this.n); }
+}
+
+@context(atomic)
+fn placesUnderAtomic() -> i32 {
+    let b = Box.create(SleepyInit { n: 1 })!; // error[N0295]
+    return b.n;
+}
+
+fn main() -> i32 => placesUnderAtomic() + instances() + atomicBody(1) + interrupt(1) + underGuard() + afterScope() + maybeLive(true) + handOff() + nested()
     + dropsUnderGuard() + bounded(1) + pure(1) + callsRecursive();

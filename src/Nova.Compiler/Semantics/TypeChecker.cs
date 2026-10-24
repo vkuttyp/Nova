@@ -251,6 +251,11 @@ internal sealed class TypeChecker
             }
         }
         _membersResolved = true;
+        foreach (var (type, span, source) in _layoutUses)
+        {
+            _source = source;
+            CheckLayoutUse(type, span);
+        }
         CheckStructRecursion();
         ComputeCopyAndDrop();
         _copyKnown = true;
@@ -778,6 +783,39 @@ internal sealed class TypeChecker
         var entry = new StructEntry(decl, _source, TypeTable.CreateStruct(text, decl, _source));
         _items.Add(name, entry);
         _structs.Add(entry);
+    }
+
+    /// <summary>Struct types written where a value of them would need a Nova layout, checked once fields are known (§33.1).</summary>
+    private readonly List<(NovaType Type, TextSpan Span, SourceText Source)> _layoutUses = [];
+
+    /// <summary>A C-laid-out type by value anywhere but a field or a box's contents is N0294 (§33.1).</summary>
+    private void CheckLayoutUse(NovaType type, TextSpan span)
+    {
+        if (TypeTable.IsCLaidOut(type))
+        {
+            Error(DiagnosticCodes.ImportedTypeByValue, span,
+                $"'{type}' holds C state, which the C compiler lays out and which never moves: it can only be a field or a box's contents, made in place by 'Box.createIn' (type-system.md §33.1)");
+        }
+    }
+
+    /// <summary>`@placed` methods (§33.3).</summary>
+    private readonly HashSet<FunctionDecl> _placedMethods = [];
+
+    /// <summary>
+    /// A box of a C-laid-out type runs the `@placed` methods of its fields' types and its own (§33.3): finds each one,
+    /// in this instance, and records it on the struct.
+    /// </summary>
+    private void EnsurePlaced(NovaType type)
+    {
+        if (type.Struct is not { IsImported: false } definition || !TypeTable.IsCLaidOut(type))
+        {
+            return;
+        }
+        foreach (var field in definition.Fields)
+        {
+            EnsurePlaced(field.Type);
+        }
+        definition.PlacedMethod ??= definition.Functions.Values.FirstOrDefault(f => _placedMethods.Contains(f.Syntax));
     }
 
     /// <summary>The `@header`s of `extern "C"` blocks, each once, in declaration order (§31.3).</summary>
@@ -1381,7 +1419,7 @@ internal sealed class TypeChecker
         var memberNames = new HashSet<Symbol>();
         foreach (var field in entry.Decl.Fields)
         {
-            var type = ResolveType(field.Type, allowVoid: false);
+            var type = ResolveType(field.Type, allowVoid: false, allowImported: true); // C state by value (§33.1)
             if (TypeTable.HoldsRegionValue(type))
             {
                 Error(DiagnosticCodes.ReferenceNotAllowed, field.Type.Span,
@@ -1541,6 +1579,18 @@ internal sealed class TypeChecker
                 $"'{type}' is a C type imported from a header, whose size only the C compiler knows: use it behind a pointer or a reference ('*{type}', 'borrow {type}'; type-system.md §31.2)");
             return _types.Error;
         }
+        if (!allowImported && type.Kind == TypeKind.Struct)
+        {
+            // Whether a struct holds C state is known once every struct's fields are (§33.1).
+            if (_membersResolved)
+            {
+                CheckLayoutUse(type, syntax.Span);
+            }
+            else
+            {
+                _layoutUses.Add((type, syntax.Span, _source));
+            }
+        }
         if (_profile == Profile.Freestanding && IsHostedOnly(type))
         {
             HostedOnly(syntax.Span, $"'{type}'");
@@ -1634,7 +1684,7 @@ internal sealed class TypeChecker
             }
             if (genericName == "Box" && generic.Arguments.Length is 1 or 2)
             {
-                var contents = ResolveType(generic.Arguments[0], allowVoid: false);
+                var contents = ResolveType(generic.Arguments[0], allowVoid: false, allowImported: true); // a box may hold C-laid-out contents (§33.1)
                 if (TypeTable.IsScoped(contents))
                 {
                     Error(DiagnosticCodes.ReferenceNotAllowed, generic.Arguments[0].Span, "a 'Box' cannot hold a reference or slice in v0");
@@ -1906,6 +1956,7 @@ internal sealed class TypeChecker
             return ErrorResult(call.Span);
         }
         arguments.Add(value);
+        EnsurePlaced(value.Type);
         var result = ResultOf(BoxOf(value.Type, allocator), Used(_allocError).Type);
         return new HirBuiltinCall(BuiltinFunction.BoxCreate, arguments.ToImmutable(), result, call.Span);
     }
@@ -2616,7 +2667,7 @@ internal sealed class TypeChecker
     }
 
     /// <summary>False if the type contains a recursive aggregate, which has no layout (N0227 was reported).</summary>
-    private static bool HasLayout(NovaType type) => !type.IsGeneric && Flatten(type).All(inner =>
+    private static bool HasLayout(NovaType type) => !type.IsGeneric && !TypeTable.IsCLaidOut(type) && Flatten(type).All(inner =>
         inner.Struct is not { IsRecursive: true } && inner.Enum is not { IsRecursive: true }
         && Contained(inner).All(c => HasLayout(c.Type)));
 
@@ -2856,7 +2907,7 @@ internal sealed class TypeChecker
             }
             else if (!known.Contains(name))
             {
-                AttributeError(attribute, name is "export" or "repr" or "effects" or "context" or "header" or "ctype" or "align" or "noncopy"
+                AttributeError(attribute, name is "export" or "repr" or "effects" or "context" or "header" or "ctype" or "align" or "noncopy" or "placed"
                     ? $"'@{name}' cannot be used on {where}"
                     : $"unknown attribute '@{name}'");
             }
@@ -3056,9 +3107,27 @@ internal sealed class TypeChecker
             }
             foreach (var s in unit.Items.OfType<StructDecl>())
             {
+                var placedCount = 0;
                 foreach (var member in s.Functions)
                 {
-                    ReadEffectAttributes(member, KnownAttributes(member.Attributes, "a method", "effects", "context"));
+                    var memberAttributes = KnownAttributes(member.Attributes, "a method", "effects", "context", "placed");
+                    ReadEffectAttributes(member, memberAttributes);
+                    foreach (var placed in memberAttributes.Where(a => Name(a.Name.Name) == "placed"))
+                    {
+                        var problem = placed.HasParentheses ? "takes no arguments"
+                            : member.Receiver is not { Kind: ReceiverKind.BorrowMut } || !member.Parameters.IsEmpty || member.ReturnType is not null
+                                || !member.TypeParameters.IsEmpty ? "needs the form 'fn name(borrow mut this)', with no other parameters and no result"
+                            : ++placedCount > 1 ? "is given to a second method; a struct has one placement initialiser"
+                            : null;
+                        if (problem is null)
+                        {
+                            _placedMethods.Add(member);
+                        }
+                        else
+                        {
+                            Error(DiagnosticCodes.InvalidAttribute, placed.Span, $"'@placed' {problem} (type-system.md §33.3)");
+                        }
+                    }
                 }
             }
         }
@@ -3201,10 +3270,11 @@ internal sealed class TypeChecker
             {
                 field.HasNovaCName = true;
                 CheckCName(Name(field.Name), syntax.Name.Span, "the C member name");
-                if (field.Type.Kind is not (TypeKind.Integer or TypeKind.Bool or TypeKind.Error) && !(field.Type.IsRawPointer && IsCPointee(field.Type.Pointee!)))
+                if (field.Type.Kind is not (TypeKind.Integer or TypeKind.Bool or TypeKind.Error) && !(field.Type.IsRawPointer && IsCPointee(field.Type.Pointee!))
+                    && field.Type.Struct is not { IsImported: true }) // an embedded member (§33.1)
                 {
                     Error(DiagnosticCodes.NotFfiSafe, syntax.Type.Span,
-                        $"a field of an imported C type cannot be a '{field.Type}': only integers, bool and raw pointers to C types are spelled alike in C and Nova (type-system.md §31.1)");
+                        $"a field of an imported C type cannot be a '{field.Type}': only integers, bool, raw pointers to C types and embedded imported types are spelled alike in C and Nova (type-system.md §31.1)");
                 }
             }
         }
@@ -4658,10 +4728,18 @@ internal sealed class TypeChecker
                 ok = false;
                 continue;
             }
+            if (field.Type.Struct is { IsImported: true })
+            {
+                Error(DiagnosticCodes.ImportedTypeByValue, init.Name.Span,
+                    $"field '{Name(field.Name)}' holds C state of type '{field.Type}', which is zero-filled when the value is made: leave it out (type-system.md §33.2)");
+                Synth(init.Value, null);
+                ok = false;
+                continue;
+            }
             fields.Add((field, CheckExpr(init.Value, field.Type)));
         }
 
-        var missing = definition.Fields.Where(f => !seen.Contains(f)).Select(f => $"'{Name(f.Name)}'").ToList();
+        var missing = definition.Fields.Where(f => !seen.Contains(f) && f.Type.Struct is not { IsImported: true }).Select(f => $"'{Name(f.Name)}'").ToList();
         if (missing.Count > 0 && ok)
         {
             Error(DiagnosticCodes.MissingField, literal.TypeName.Span,

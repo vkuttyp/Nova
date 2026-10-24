@@ -1,0 +1,68 @@
+// C state embedded by value (type-system.md §33): where a C-laid-out type may not appear (N0294), and misused
+// `@placed` (N0290).
+@header("state.h")
+extern "C" {
+    @ctype("lock_t")
+    struct lock_t;
+    struct node { next: *mut node; inner: lock_t; }
+}
+
+struct Locked {
+    raw: lock_t;
+    value: u32;
+}
+
+struct Outer {
+    locked: Locked; // a field: fine
+    many: [Locked; 2]; // error[N0294] // error[N0259]
+    maybe: Locked?; // error[N0294]
+    boxed: Box<Locked>; // a box's contents: fine
+}
+
+enum Holds {
+    One(Locked), // error[N0294]
+    None,
+}
+
+struct Wrapper<T> { item: T; }
+
+struct UsesWrapper {
+    wrapped: Wrapper<Locked>; // error[N0294]
+}
+
+fn param(l: Locked) {} // error[N0294]
+
+fn result(b: Box<Locked>) -> Locked { // error[N0294]
+    return result(b);
+}
+
+fn local(b: borrow Locked) -> u32 {
+    let copy: Locked = b; // error[N0294]
+    return b.value;
+}
+
+fn literal() -> Result<Box<Locked>, AllocError> =>
+    Box.create(Locked { raw: 0, value: 1 }); // error[N0294]
+
+struct Placed {
+    raw: lock_t;
+    @placed
+    fn first(borrow mut this) {}
+    @placed // error[N0290]
+    fn second(borrow mut this) {}
+}
+
+struct BadPlaced {
+    raw: lock_t;
+    @placed // error[N0290]
+    fn shared(borrow this) {}
+    @placed(now) // error[N0290]
+    fn withArgument(borrow mut this) {}
+    @placed // error[N0290]
+    fn withParameter(borrow mut this, x: u32) {}
+    @placed // error[N0290]
+    fn withResult(borrow mut this) -> u32 => 0;
+}
+
+@placed // error[N0290]
+fn topLevel() {}

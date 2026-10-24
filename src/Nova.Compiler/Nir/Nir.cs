@@ -166,6 +166,9 @@ public sealed record NirPlaceOperand(NirPlace Place, bool IsMove = false) : NirO
 /// <summary>An integer or bool constant (bools use 0/1).</summary>
 public sealed record NirConst(Int128 Value, NovaType Type) : NirOperand(Type);
 
+/// <summary>A field of imported C type in a struct literal: zero-filled, C's <c>{0}</c> (type-system.md §33.2).</summary>
+public sealed record NirZero(NovaType Type) : NirOperand(Type);
+
 /// <summary>A string literal; only as an argument of a Console built-in.</summary>
 public sealed record NirString(string Value, NovaType Type) : NirOperand(Type);
 

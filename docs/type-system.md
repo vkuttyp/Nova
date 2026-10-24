@@ -1530,6 +1530,7 @@ An item may be preceded by attributes `@name` or `@name(arguments)` (grammar §2
 | `@repr(u8)` … `@repr(i64)` | a non-generic enum without payloads | passed to and from C as that integer type, §28.5 |
 | `@effects(…)` | a function, method or `extern` function | the effects it may have (§32.2) |
 | `@context(atomic)`, `@context(irq)` | a function or method; `atomic` also a struct | a context that forbids effects (§32.3) |
+| `@placed` | a method `fn m(borrow mut this)` | the type's placement initialiser (§33.3) |
 | `@align(n)` | a non-generic struct | at least `n`-byte alignment (M8d, §29.4) |
 | `@noncopy` | a struct | a move type even if every field is Copy (OD-7; M8d) |
 
@@ -1785,8 +1786,9 @@ fn copyOut(info: borrow cosmoboot_info, out: borrow mut bootinfo_framebuffer) {
   instead, for a C typedef (`typedef struct {…} cname;`). The name, the `@ctype` name and every field
   name must be valid, unreserved C identifiers (§28.2, N0292).
 - Fields are declared with their C member names, in any order, and only those Nova uses. Their types
-  must be integers, `bool`, or raw pointers whose pointee C can name (§28.3, including imported types),
-  or N0291. A field's declared type must be exactly the member's C type, under §28.3's mapping (`u32`
+  must be integers, `bool`, raw pointers whose pointee C can name (§28.3, including imported types), or
+  (since C7b, §33.1) imported types, for embedded members; otherwise N0291. An embedded member is checked
+  with `_Generic` only, since Nova has no size for it. A field's declared type must be exactly the member's C type, under §28.3's mapping (`u32`
   is `uint32_t`, `usize` is `size_t`, `*CChar` is `const char *`, `*mut T` is `T *`). This is checked
   when the C is compiled (§31.3), not by novac.
 - An imported struct has no methods, `drop` block, type or region parameters, or other attributes
@@ -1795,8 +1797,9 @@ fn copyOut(info: borrow cosmoboot_info, out: borrow mut bootinfo_framebuffer) {
 ### 31.2 Use
 - Nova never knows an imported type's size, alignment or field offsets: they are the C compiler's,
   under the build's flags. So an imported type `T` appears only behind a pointer or a reference:
-  `*T`, `*mut T`, `borrow T`, `borrow mut T`. As the type of a local, parameter, result, field,
-  array element, optional, or type argument, it is N0294. No value of it exists in Nova: it is
+  `*T`, `*mut T`, `borrow T`, `borrow mut T`, and (since C7b, §33) by value as a struct field or a box's
+  contents. As the type of a local, parameter, result, array element, optional, or type argument, it is
+  N0294. No value of it exists in Nova: it is
   neither Copy nor movable, and has no struct literal (N0294) and no drop.
 - **Field places.** Through a reference, `r.f` is a place of the declared field type, as for any
   struct (§12): read it, assign it through `borrow mut`, or borrow it. The borrow checker treats
@@ -1905,3 +1908,67 @@ Effects are checked in every profile. Only `@context`, `@effects` bounds on Nova
 
 Diagnostics: N0295 (an operation with an effect its context or `@effects` bound forbids; the message names the
 chain of calls that leads to the operation), N0290 (misused `@effects` or `@context`).
+
+## 33. C state embedded by value (C7b; ADR 0009 §2)
+
+```nova
+@header("kernel/spinlock.h")
+extern "C" {
+    @ctype("spinlock_t")
+    struct spinlock_t;
+    @effects()
+    fn spinlock_init(lock: *mut spinlock_t, name: *CChar);
+}
+
+/// A lock and the data it protects; the C compiler lays it out, and it never moves.
+struct SpinLock<T> {
+    raw: spinlock_t;   // by value, zero-filled when made
+    name: *CChar;
+    data: T;
+
+    /// Runs at the lock's final address, before anything can use it.
+    @placed
+    fn init(borrow mut this) { unsafe { spinlock_init(borrow mut this.raw as *mut spinlock_t, this.name); } }
+}
+
+fn make(name: *CChar) -> Result<Box<SpinLock<u64>, KernelHeap>, AllocError> =>
+    Box.createIn(KernelHeap {}, SpinLock { name: name, data: 0 });   // `raw` is left out
+```
+
+### 33.1 C-laid-out types
+- A struct field may have an imported C type (§31) by value. In a Nova struct, it embeds that C state; in an
+  imported struct, it declares an embedded member (`struct mutex { lock: spinlock_t; }`).
+- A type is **C-laid-out** if it is an imported type, or a struct with a field of a C-laid-out type. Like
+  an imported type (§31.2), it has no Nova layout. Generated C defines a C-laid-out Nova struct with its
+  real member types, so the C compiler lays it out, and asserts nothing about its size, alignment or offsets.
+  Allocation sizes come from C's `sizeof`, as for every type.
+- A C-laid-out type appears by value only as a field of another struct, or as the contents of a `Box`.
+  As a local, parameter, result, array element, optional, enum payload or any other type argument,
+  it is N0294.
+
+### 33.2 Made in place, never moved
+- C state may point into itself once initialised (an empty list head points to itself), so a C-laid-out
+  value is never moved, copied or assigned. Every move of one is N0294.
+- The only way to make one is a **struct literal given directly to `Box.create` or `Box.createIn`**, or
+  nested as a field of such a literal. Fields of imported type are left out of the literal and are
+  **zero-filled** (C's `{0}`). Writing one is N0294: Nova has no values of imported types.
+- A C-laid-out value lives in its box until the box is dropped. Its contents are borrowed (`borrow`,
+  `borrow mut`, through `Ptr.toBorrow` of a pointer to them) but never moved out. Dropping the box runs the
+  contents' drop glue in place, then frees them.
+
+### 33.3 `@placed` methods
+- `@placed` on a method `fn m(borrow mut this)` with no other parameters and no result makes it the type's
+  **placement initialiser**. A struct has at most one. Misuse is N0290.
+- When `Box.create`/`Box.createIn` has placed a C-laid-out value in its box, and before it returns, the
+  compiler calls the `@placed` methods of the value's fields' types, depth first, innermost first, in field
+  order, and then the type's own. No other code can see the value before then. A `@placed` method runs C's
+  initialisers (`spinlock_init`, `mutex_init`, `kobject_init`) at the value's final address.
+- A box whose allocation fails runs no `@placed` method: the value is dropped, as in §18.2.
+- The effects of `Box.create`/`Box.createIn` (§32.1) include those of the `@placed` methods they run.
+
+### 33.4 The interpreter
+`run --interp` has no C layout, so making, allocating or accessing a C-laid-out value is an interpreter
+fault (exit status 70), as for imported types (§31.4).
+
+Diagnostics: N0294 (a C-laid-out type by value outside a field or a box; a move of one; a literal of one
+outside `Box.create`/`createIn`; an imported field in a literal), N0290 (a misused `@placed`).

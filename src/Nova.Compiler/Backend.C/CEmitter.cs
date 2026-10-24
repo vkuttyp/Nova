@@ -202,6 +202,7 @@ public sealed class CEmitter
             Line();
         }
         EmitDropGlue();
+        EmitPlacedHelpers();
         EmitBoxCreate();
         EmitBoxFree();
         EmitArenaHelpers();
@@ -237,7 +238,7 @@ public sealed class CEmitter
         var emitted = new HashSet<NovaType>();
         void Emit(NovaType type)
         {
-            if (!emitted.Add(type))
+            if (!emitted.Add(type) || type.Struct is { IsImported: true }) // an imported type is the header's (§31.3)
             {
                 return;
             }
@@ -258,7 +259,6 @@ public sealed class CEmitter
             }
 
             var name = CTypeName(type);
-            var (size, align) = TypeTable.LayoutOf(type);
             Line($"struct {StructTag(type)} {{");
             if (definition.Fields.Count == 0)
             {
@@ -269,6 +269,12 @@ public sealed class CEmitter
                 Line($"    {AlignPrefix(definition, field.Index)}{CType(field.Type)} {FieldName(field)};");
             }
             Line("};");
+            if (TypeTable.IsCLaidOut(type))
+            {
+                Line(); // it holds C state: the C compiler lays it out, and Nova has no layout to assert (§33.1)
+                return;
+            }
+            var (size, align) = TypeTable.LayoutOf(type);
             Line($"_Static_assert(sizeof({name}) == {size}, \"novac layout: sizeof({type})\");");
             Line($"_Static_assert(_Alignof({name}) == {align}, \"novac layout: alignof({type})\");");
             foreach (var field in definition.Fields)
@@ -301,7 +307,10 @@ public sealed class CEmitter
                 var where = $"{definition.Source.Path}:{definition.Source.GetLinePosition(field.Span.Start).Line}";
                 var name = $"{definition.CSpelling}.{FieldName(field)}";
                 Line($"_Static_assert(_Generic({member}, {cType}: 1, default: 0), {CStringLiteral($"novac import: {name} is not {cType} ({where})")});");
-                Line($"_Static_assert(sizeof {member} == {TypeTable.LayoutOf(field.Type).Size}, {CStringLiteral($"novac import: {name} is not {TypeTable.LayoutOf(field.Type).Size} bytes ({where})")});");
+                if (!TypeTable.IsCLaidOut(field.Type)) // an embedded member has only C's size (§31.1)
+                {
+                    Line($"_Static_assert(sizeof {member} == {TypeTable.LayoutOf(field.Type).Size}, {CStringLiteral($"novac import: {name} is not {TypeTable.LayoutOf(field.Type).Size} bytes ({where})")});");
+                }
             }
         }
         if (imported.Count > 0)
@@ -877,6 +886,61 @@ public sealed class CEmitter
         }
     }
 
+    /// <summary>Does placing a value of this type run any <c>@placed</c> method (type-system.md §33.3)?</summary>
+    private static bool HasPlacedMethods(NovaType type) =>
+        type.Struct is { IsImported: false } definition && TypeTable.IsCLaidOut(type)
+        && (definition.PlacedMethod is not null || definition.Fields.Any(f => HasPlacedMethods(f.Type)));
+
+    private static string PlacedName(NovaType type) => $"nvPL_{Mangle(type)}";
+
+    /// <summary>The C-laid-out types whose placement runs <c>@placed</c> methods: box contents and their fields' types.</summary>
+    private List<NovaType> PlacedTypes()
+    {
+        var result = new List<NovaType>();
+        void Visit(NovaType type)
+        {
+            if (!HasPlacedMethods(type) || result.Contains(type))
+            {
+                return;
+            }
+            foreach (var field in type.Struct!.Fields)
+            {
+                Visit(field.Type);
+            }
+            result.Add(type);
+        }
+        foreach (var result1 in BoxCreateResults)
+        {
+            Visit(result1.Enum!.ResultTypes!.Value.Ok.Pointee!);
+        }
+        return result;
+    }
+
+    /// <summary><c>nvPL_&lt;T&gt;(T *p)</c>: the fields' placement initialisers, in field order, then the type's own (§33.3).</summary>
+    private void EmitPlacedHelpers()
+    {
+        var types = PlacedTypes();
+        foreach (var type in types)
+        {
+            Line($"static void {PlacedName(type)}({CType(type)} *p);");
+        }
+        foreach (var type in types)
+        {
+            var definition = type.Struct!;
+            Line($"static void {PlacedName(type)}({CType(type)} *p) {{");
+            foreach (var field in definition.Fields.Where(f => HasPlacedMethods(f.Type)))
+            {
+                Line($"    {PlacedName(field.Type)}(&(*p).{FieldName(field)});");
+            }
+            if (definition.PlacedMethod is { } placed)
+            {
+                Line($"    {FunctionName(placed)}(p);");
+            }
+            Line("}");
+            Line();
+        }
+    }
+
     /// <summary>
     /// <c>Box.create</c> (type-system.md §18.2): allocate, then move the value in and return <c>Ok(box)</c>;
     /// on failure destroy the value and return <c>Err(AllocError.OutOfMemory)</c>.
@@ -911,6 +975,10 @@ public sealed class CEmitter
             Line($"        return (({name}){{ .tag = 1, .u.v_Err = {{ .f__0 = (({CTypeName(errorType)}){{ .tag = 0 }}) }} }});");
             Line("    }");
             Line("    *p = v;");
+            if (HasPlacedMethods(contents))
+            {
+                Line($"    {PlacedName(contents)}(p); /* C state is initialised at its final address (type-system.md §33.3) */");
+            }
             Line($"    return (({name}){{ .tag = 0, .u.v_Ok = {{ .f__0 = p }} }});");
             Line("}");
             Line();
@@ -2137,7 +2205,13 @@ public sealed class CEmitter
         {
             return $"(({CTypeName(aggregate.Type)}){{ .nv_empty = 0 }})";
         }
-        var inits = fields.Select((f, i) => $".{FieldName(f)} = {Operand(aggregate.Fields[i])}");
+        // Fields of C state are left to C's zero-filling of unnamed members (type-system.md §33.2).
+        var inits = fields.Select((f, i) => (Field: f, Value: aggregate.Fields[i])).Where(p => p.Value is not NirZero)
+            .Select(p => $".{FieldName(p.Field)} = {Operand(p.Value)}").ToList();
+        if (inits.Count == 0)
+        {
+            inits.Add($".{FieldName(fields[0])} = {{ 0 }}");
+        }
         return $"(({CTypeName(aggregate.Type)}){{ {string.Join(", ", inits)} }})";
     }
 

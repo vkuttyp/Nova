@@ -59,6 +59,7 @@ public static class NirPrinter
     {
         NirPlaceOperand p => Place(p.Place, symbols),
         NirConst c => $"const {c.Value.ToString(CultureInfo.InvariantCulture)}_{c.Type}",
+        NirZero z => $"zeroed {z.Type}",
         NirString s => $"const \"{s.Value}\"",
         _ => operand.ToString(),
     };

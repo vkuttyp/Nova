@@ -294,6 +294,9 @@ public sealed class StructDefinition
     /// </summary>
     public bool IsImported { get; internal set; }
 
+    /// <summary>The <c>@placed</c> method of this struct (or instance), once a box of it is made (type-system.md §33.3).</summary>
+    public Hir.HirFunction? PlacedMethod { get; internal set; }
+
     /// <summary>For an imported C type: <c>struct name</c>, or its <c>@ctype</c> name (type-system.md §31.1).</summary>
     public string? CSpelling { get; internal set; }
 
@@ -994,6 +997,20 @@ public sealed class TypeTable
             _ => true,
         };
     }
+
+    /// <summary>
+    /// An imported C type, or a struct holding one by value (type-system.md §33.1): the C compiler lays it out, so it
+    /// has no Nova layout, and it is never moved.
+    /// </summary>
+    public static bool IsCLaidOut(NovaType type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        return IsCLaidOut(type, 0);
+    }
+
+    private static bool IsCLaidOut(NovaType type, int depth) =>
+        type.Struct is { } definition && depth < 64 // a struct holding itself by value is N0227 already
+        && (definition.IsImported || definition.Fields.Any(f => IsCLaidOut(f.Type, depth + 1)));
 
     public static bool NeedsDrop(NovaType type)
     {

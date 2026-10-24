@@ -965,7 +965,8 @@ public sealed class NirBuilder
                 {
                     return null;
                 }
-                var ordered = new NirOperand[literal.Fields.Length];
+                // Fields of C state are left out of the literal and zero-filled (type-system.md §33.2).
+                var ordered = literal.Type.Struct!.Fields.Select(f => (NirOperand)new NirZero(f.Type)).ToArray();
                 for (var i = 0; i < literal.Fields.Length; i++)
                 {
                     ordered[literal.Fields[i].Field.Index] = values[i];

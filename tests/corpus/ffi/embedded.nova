@@ -1,0 +1,112 @@
+// C state embedded by value (type-system.md §33): Nova structs that hold C structs, made in place in boxes,
+// initialised at their final address by `@placed` methods, and never moved. A list head points to itself once
+// initialised, so if Nova moved it, or initialised it anywhere but in its box, the C checks in embedded.c fail.
+
+@header("embedded.types.h")
+extern "C" {
+    struct emb_list;
+    @ctype("emb_lock_t")
+    struct emb_lock { order: u32; }
+    struct emb_dev { id: u32; lock: emb_lock; link: emb_list; }
+    @effects()
+    fn emb_list_init(l: *mut emb_list);
+    @effects()
+    fn emb_list_empty(l: *emb_list) -> bool;
+    @effects()
+    fn emb_list_valid(l: *emb_list) -> bool;
+    @effects()
+    fn emb_list_add(head: *mut emb_list, node: *mut emb_list);
+    @effects()
+    fn emb_lock_init(l: *mut emb_lock, name: *CChar);
+    @effects()
+    fn emb_dev_get() -> *mut emb_dev;
+}
+
+/// A queue head and its lock, with Nova data beside them.
+struct Queue<T> {
+    head: emb_list;
+    lock: emb_lock;
+    name: *CChar;
+    payload: T;
+
+    /// Safety: `this` is at its final address, and nothing else uses it yet.
+    @placed
+    fn place(borrow mut this) {
+        unsafe {
+            emb_list_init(borrow mut this.head as *mut emb_list);
+            emb_lock_init(borrow mut this.lock as *mut emb_lock, this.name);
+        }
+    }
+
+    /// Safety: the head was initialised by `place`, and the node outlives the queue's use of it.
+    fn link(borrow mut this, node: *mut emb_list) {
+        unsafe { emb_list_add(borrow mut this.head as *mut emb_list, node); }
+    }
+
+    /// Safety: the head was initialised by `place`.
+    fn isEmpty(borrow this) -> bool => unsafe { emb_list_empty(borrow this.head as *emb_list) };
+
+    /// Safety: the head was initialised by `place`.
+    fn isValid(borrow this) -> bool => unsafe { emb_list_valid(borrow this.head as *emb_list) };
+}
+
+/// Two queues and a lock of its own: placement runs left's, then right's, then this one's.
+struct Pair {
+    left: Queue<u8>;
+    right: Queue<u64>;
+    lock: emb_lock;
+    tag: u32;
+
+    /// Safety: as Queue.place.
+    @placed
+    fn place(borrow mut this) {
+        unsafe { emb_lock_init(borrow mut this.lock as *mut emb_lock, "pair\0".ptr as *CChar); }
+    }
+}
+
+/// Only C state, and no `@placed` method: it stays zero-filled.
+struct Bare { raw: emb_lock; }
+
+fn makeQueue(payload: u64) -> Result<Box<Queue<u64>>, AllocError> =>
+    Box.create(Queue { name: "queue\0".ptr as *CChar, payload: payload });
+
+/// Safety: emb_dev_get returns a live device that only this program uses.
+fn main() -> i32 {
+    var q = makeQueue(7)!;
+    Console.writeLine(q.isEmpty());
+    Console.writeLine(q.isValid());
+    Console.writeLine(q.lock.order);
+    var p = Box.create(Pair {
+        left: Queue { name: "left\0".ptr as *CChar, payload: 1u8 },
+        right: Queue { name: "right\0".ptr as *CChar, payload: 2u64 },
+        tag: 9,
+    })!;
+    Console.writeLine(p.left.lock.order);
+    Console.writeLine(p.right.lock.order);
+    Console.writeLine(p.lock.order);
+    // Link one queue's head into the other's ring: both rings stay valid, since neither moves.
+    p.left.link(borrow mut q.head as *mut emb_list);
+    Console.writeLine(p.left.isEmpty());
+    Console.writeLine(p.left.isValid() && q.isValid());
+    Console.writeLine(p.right.payload + truncate<u64>(p.left.payload as u64) + q.payload + p.tag as u64);
+    let bare = Box.create(Bare {})!;
+    Console.writeLine(bare.raw.order);
+    // An imported struct's embedded members, read and passed in place.
+    let dev = unsafe { Ptr.toBorrow(emb_dev_get()) };
+    Console.writeLine(dev.id);
+    Console.writeLine(unsafe { emb_list_valid(borrow dev.link as *emb_list) });
+    return 0;
+}
+
+// expect-stdout: true
+// expect-stdout: true
+// expect-stdout: 1
+// expect-stdout: 2
+// expect-stdout: 3
+// expect-stdout: 4
+// expect-stdout: false
+// expect-stdout: true
+// expect-stdout: 19
+// expect-stdout: 0
+// expect-stdout: 41
+// expect-stdout: true
